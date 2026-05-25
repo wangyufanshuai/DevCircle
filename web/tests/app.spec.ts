@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 
+const mojibakePattern = new RegExp('[\\uFFFD\\u951F\\u9428\\u93BA\\u93C4\\u7039\\u9359]')
+
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/recommend/feed**', (route) =>
     route.fulfill({
@@ -98,7 +100,7 @@ test.beforeEach(async ({ page }) => {
 test('renders feed and filters by keyword without mojibake', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '推荐流' })).toBeVisible()
-  await expect(page.locator('body')).not.toContainText(new RegExp('[\\u9428\\u93ba\\u93c4\\u7ee0\\u7039\\u5a34\\u9359\\u6769\\u9a9e]'))
+  await expect(page.locator('body')).not.toContainText(mojibakePattern)
   await page.getByPlaceholder('搜索问题、文章和标签').fill('Redis')
   await expect(page.getByText('Redis 热点缓存、限流和点赞幂等的工程边界')).toBeVisible()
   await expect(page.getByText('Spring Cloud 微服务里的 Outbox 可靠事件实践')).not.toBeVisible()
@@ -115,7 +117,8 @@ test('publishes, likes and favorites a feed post', async ({ page }) => {
   await page.getByPlaceholder('标题').fill('测试发布文章')
   await page.getByPlaceholder('正文，提交后写入帖子和 Outbox 事件').fill('测试内容')
   await page.getByRole('button', { name: '发布文章' }).click()
-  await expect(page.getByText(/已提交/)).toBeVisible()
+  await expect(page.getByText('文章 #2001 已提交，状态：PENDING，已进入审核和事件队列')).toBeVisible()
+  await expect(page.locator('body')).not.toContainText(mojibakePattern)
   await page.getByRole('button', { name: '点赞' }).first().click()
   await expect(page.getByRole('button', { name: '已赞' }).first()).toBeVisible()
   await page.getByRole('button', { name: '收藏' }).first().click()
@@ -125,6 +128,7 @@ test('publishes, likes and favorites a feed post', async ({ page }) => {
 test('mobile viewport has no horizontal overflow', async ({ page, isMobile }) => {
   test.skip(!isMobile, 'mobile-only layout assertion')
   await page.goto('/')
+  await expect(page.locator('body')).not.toContainText(mojibakePattern)
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)
   expect(overflow).toBe(false)
 })

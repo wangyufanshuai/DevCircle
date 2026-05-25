@@ -5,6 +5,8 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
+import java.util.concurrent.ExecutionException;
+
 @Component
 public class JdbcOutboxPublisher implements OutboxPublisher {
     private final JdbcClient jdbcClient;
@@ -28,7 +30,16 @@ public class JdbcOutboxPublisher implements OutboxPublisher {
                 .query((rs, rowNum) -> new EventRow(rs.getLong("id"), rs.getString("topic"), rs.getString("aggregate_id"), rs.getString("payload")))
                 .list();
         for (EventRow event : events) {
-            kafkaTemplate.send(event.topic(), event.aggregateId(), event.payload());
+            try {
+                kafkaTemplate.send(event.topic(), event.aggregateId(), event.payload()).get();
+            } catch (RuntimeException ex) {
+                throw new IllegalStateException("Failed to publish outbox event " + event.id(), ex);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted while publishing outbox event " + event.id(), ex);
+            } catch (ExecutionException ex) {
+                throw new IllegalStateException("Failed to publish outbox event " + event.id(), ex);
+            }
             jdbcClient.sql("UPDATE outbox_event SET status = 'PUBLISHED', published_at = CURRENT_TIMESTAMP WHERE id = :id")
                     .param("id", event.id())
                     .update();
@@ -39,4 +50,3 @@ public class JdbcOutboxPublisher implements OutboxPublisher {
     private record EventRow(Long id, String topic, String aggregateId, String payload) {
     }
 }
-

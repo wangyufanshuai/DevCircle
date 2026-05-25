@@ -16,6 +16,12 @@ jobs:
           java-version: "21"
           cache: maven
       - run: ./mvnw -B test
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: surefire-reports
+          path: "**/target/surefire-reports/*"
+          if-no-files-found: ignore
 
   frontend:
     runs-on: ubuntu-latest

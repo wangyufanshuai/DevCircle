@@ -24,8 +24,10 @@ const rejected = ref<number[]>([])
 const auditMessage = ref('')
 const nextCursor = ref('')
 const hasMore = ref(false)
+const loadingFeed = ref(false)
 const publishing = ref(false)
 const publishMessage = ref('')
+const fallbackMessage = ref('')
 const draft = ref({ title: '', content: '', tags: 'Spring Cloud,Kafka' })
 
 const filteredPosts = computed(() => {
@@ -54,16 +56,22 @@ function reject(id: number) {
 }
 
 async function loadFeed(cursor?: string) {
-  const page = await fetchFeed(cursor)
-  feedItems.value = cursor ? [...feedItems.value, ...page.records] : page.records
-  nextCursor.value = page.nextCursor
-  hasMore.value = page.hasMore
-  await recordExposures(page.records.map((item) => item.post.id))
+  loadingFeed.value = true
+  try {
+    const page = await fetchFeed(cursor)
+    feedItems.value = cursor ? [...feedItems.value, ...page.records] : page.records
+    nextCursor.value = page.nextCursor
+    hasMore.value = page.hasMore
+    await recordExposures(page.records.map((item) => item.post.id))
+  } finally {
+    loadingFeed.value = false
+  }
 }
 
 async function refreshFeed() {
   searchResults.value = []
   keyword.value = ''
+  fallbackMessage.value = ''
   await loadFeed()
 }
 
@@ -95,24 +103,31 @@ async function toggleInteraction(postId: number, type: 'like' | 'favorite') {
 
 async function publishPost() {
   publishing.value = true
-  const post = await createPost({
-    title: draft.value.title,
-    content: draft.value.content,
-    tags: draft.value.tags.split(',').map((tag) => tag.trim()).filter(Boolean)
-  })
-  feedItems.value = [{ post, reason: '刚刚发布，已进入审核和事件队列', score: 100, liked: false, favorited: false }, ...feedItems.value]
-  publishMessage.value = `文章 #${post.id} 已提交，状态：${post.status}`
-  draft.value = { title: '', content: '', tags: 'Spring Cloud,Kafka' }
-  publishing.value = false
+  try {
+    const post = await createPost({
+      title: draft.value.title,
+      content: draft.value.content,
+      tags: draft.value.tags.split(',').map((tag) => tag.trim()).filter(Boolean)
+    })
+    feedItems.value = [{ post, reason: '刚刚发布，已进入审核和事件队列', score: 100, liked: false, favorited: false }, ...feedItems.value]
+    publishMessage.value = `文章 #${post.id} 已提交，状态：${post.status}，已进入审核和事件队列`
+    draft.value = { title: '', content: '', tags: 'Spring Cloud,Kafka' }
+  } finally {
+    publishing.value = false
+  }
 }
 
 onMounted(async () => {
-  const [auditData, notificationData] = await Promise.all([
-    fetchAudits(),
-    fetchNotifications()
-  ])
-  audits.value = auditData
-  notifications.value = notificationData
+  try {
+    const [auditData, notificationData] = await Promise.all([
+      fetchAudits(),
+      fetchNotifications()
+    ])
+    audits.value = auditData
+    notifications.value = notificationData
+  } catch {
+    fallbackMessage.value = '接口暂不可用，已切换到本地演示数据。'
+  }
   await loadFeed()
 })
 </script>
@@ -169,8 +184,10 @@ onMounted(async () => {
                 <h1>推荐流</h1>
                 <p>按关注标签、实时热度、内容新鲜度和曝光记录排序</p>
               </div>
-              <n-button type="primary" secondary @click="refreshFeed">刷新推荐</n-button>
+              <n-button type="primary" secondary :loading="loadingFeed" @click="refreshFeed">刷新推荐</n-button>
             </div>
+
+            <div v-if="fallbackMessage" class="audit-message">{{ fallbackMessage }}</div>
 
             <section class="post-card composer">
               <h2>写文章</h2>
@@ -202,7 +219,7 @@ onMounted(async () => {
               </footer>
             </article>
             <n-button v-if="hasMore && searchResults.length === 0" block secondary @click="loadMore">加载更多</n-button>
-            <div v-if="filteredPosts.length === 0" class="empty-state post-empty">没有匹配的内容</div>
+            <div v-if="!loadingFeed && filteredPosts.length === 0" class="empty-state post-empty">没有匹配的内容</div>
           </div>
 
           <aside class="right-rail">
@@ -240,14 +257,11 @@ onMounted(async () => {
               <div v-if="pendingPosts.length === 0" class="empty-state">审核队列已清空</div>
             </section>
 
-            <section class="mobile-preview">
-              <div class="phone">
-                <div class="phone-search">搜索</div>
-                <div class="phone-card"></div>
-                <div class="phone-card short"></div>
-                <div class="phone-tabs">
-                  <span></span><span></span><span></span>
-                </div>
+            <section class="rail-panel">
+              <h2>通知</h2>
+              <div v-for="item in notifications" :key="item.id" class="notification-row" :class="{ unread: !item.read }">
+                <strong>{{ item.title }}</strong>
+                <span>{{ item.content }}</span>
               </div>
             </section>
           </aside>

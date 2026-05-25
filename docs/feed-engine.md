@@ -1,6 +1,6 @@
 # Feed Engine
 
-DevCircle v0.4 的推荐流采用可解释工程规则。目标是先打通内容平台最关键的闭环：发布、Outbox、Kafka、搜索、互动、推荐和曝光去重。
+DevCircle v0.6 的推荐流采用可解释工程规则。目标是先打通内容平台最关键的闭环：发布、Outbox、Kafka、搜索、互动、推荐和曝光去重。
 
 ## 数据来源
 
@@ -40,6 +40,7 @@ Feed 卡片会返回简短推荐原因：
 
 - Redis 不可用：推荐服务使用默认兴趣标签和基础热度。
 - Elasticsearch 不可用：搜索服务返回演示 fallback 响应，Kafka 事件可重放。
+- Kafka 不可用：Outbox 事件保持 `NEW`，不会误标记为 `PUBLISHED`。
 - MySQL 不可用：内容服务保留演示数据路径，便于前端和接口结构展示。
 
 ## 后续演进
