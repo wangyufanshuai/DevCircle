@@ -3,6 +3,13 @@ server:
 spring:
   application:
     name: dc-file
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:dc_file}?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC
+    username: ${MYSQL_USER:devcircle}
+    password: ${MYSQL_PASSWORD:devcircle}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  flyway:
+    enabled: true
   servlet:
     multipart:
       max-file-size: 10MB

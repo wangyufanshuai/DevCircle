@@ -49,7 +49,7 @@ class FeedServiceRedisIntegrationTest {
 
         var firstPage = feedService.feedFromPosts(userId, List.of(redisPost, kafkaPost), null, 2);
         assertThat(firstPage.records().getFirst().post().id()).isEqualTo(1L);
-        assertThat(firstPage.records().getFirst().algorithm()).isEqualTo("LOCAL_LINEAR_MODEL");
+        assertThat(firstPage.records().getFirst().algorithm()).isEqualTo("THEME_LINEAR_MODEL");
         assertThat(firstPage.records().getFirst().features()).containsKeys("followedAuthor", "mutualFollowees");
 
         feedService.recordExposure(new ExposureRequest(userId, List.of(1L), "home_feed"));
@@ -69,5 +69,22 @@ class FeedServiceRedisIntegrationTest {
 
         assertThat(imageFeed.records()).extracting(item -> item.post().type()).containsExactly("IMAGE");
         assertThat(videoFeed.records()).extracting(item -> item.post().type()).containsExactly("VIDEO");
+    }
+
+    @Test
+    void sceneFiltersThemeFeeds() {
+        var deductionPost = new PostSummary(20L, "TEXT", "DEDUCTION", "CASE_FILE", "HARD", true, 4,
+                "雾港钟楼失踪案", "密室案件", "lin", List.of("密室"), List.of(), 1, 1, 100, "PUBLISHED", Instant.now());
+        var sciFiPost = new PostSummary(21L, "TEXT", "SCI_FI", "FICTION", "MEDIUM", false, 0,
+                "火星雨季", "科幻短篇", "chen", List.of("火星"), List.of(), 1, 1, 100, "PUBLISHED", Instant.now());
+        var cosmosPost = new PostSummary(22L, "TEXT", "COSMOS", "COSMIC_ARTICLE", "MEDIUM", false, 0,
+                "银河系旋臂档案", "宇宙档案", "wang", List.of("银河系"), List.of(), 1, 1, 100, "PUBLISHED", Instant.now());
+
+        assertThat(feedService.feedFromPosts(88L, List.of(deductionPost, sciFiPost, cosmosPost), null, 10, "deduction").records())
+                .extracting(item -> item.post().theme()).containsExactly("DEDUCTION");
+        assertThat(feedService.feedFromPosts(88L, List.of(deductionPost, sciFiPost, cosmosPost), null, 10, "sci_fi").records())
+                .extracting(item -> item.post().theme()).containsExactly("SCI_FI");
+        assertThat(feedService.feedFromPosts(88L, List.of(deductionPost, sciFiPost, cosmosPost), null, 10, "cosmos").records())
+                .extracting(item -> item.post().theme()).containsExactly("COSMOS");
     }
 }

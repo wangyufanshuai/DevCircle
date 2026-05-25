@@ -26,8 +26,11 @@ class PostController {
     @GetMapping
     ApiResponse<PageResponse<PostSummary>> list(@RequestParam(defaultValue = "1") int page,
                                                 @RequestParam(defaultValue = "10") int size,
-                                                @RequestParam(required = false) String type) {
-        return ApiResponse.ok(postService.list(page, size, type));
+                                                @RequestParam(required = false) String type,
+                                                @RequestParam(required = false) String theme,
+                                                @RequestParam(required = false) String contentKind,
+                                                @RequestParam(required = false) String difficulty) {
+        return ApiResponse.ok(postService.list(page, size, type, theme, contentKind, difficulty));
     }
 
     @GetMapping("/{id}")

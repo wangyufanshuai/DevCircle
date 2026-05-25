@@ -33,6 +33,11 @@ export type MediaAsset = {
 export type Post = {
   id: number
   type: 'TEXT' | 'IMAGE' | 'VIDEO'
+  theme: 'DEDUCTION' | 'SCI_FI' | 'COSMOS'
+  contentKind: 'CASE_FILE' | 'PUZZLE' | 'FICTION' | 'WORLDBUILDING' | 'COSMIC_ARTICLE' | 'OBSERVATION_LOG'
+  difficulty: 'EASY' | 'MEDIUM' | 'HARD'
+  solvable: boolean
+  solvedCount: number
   title: string
   excerpt: string
   author: string
@@ -78,6 +83,12 @@ export type CreatePostRequest = {
   tags: string[]
   type?: 'TEXT' | 'IMAGE' | 'VIDEO'
   mediaIds?: number[]
+  theme?: 'DEDUCTION' | 'SCI_FI' | 'COSMOS'
+  contentKind?: 'CASE_FILE' | 'PUZZLE' | 'FICTION' | 'WORLDBUILDING' | 'COSMIC_ARTICLE' | 'OBSERVATION_LOG'
+  difficulty?: 'EASY' | 'MEDIUM' | 'HARD'
+  solvable?: boolean
+  clues?: string
+  solution?: string
 }
 
 export type InteractionResult = {
@@ -94,4 +105,20 @@ export type FollowResult = {
   targetUserId: number
   followed: boolean
   duplicated: boolean
+}
+
+export type DeductionAnswerResult = {
+  postId: number
+  userId: number
+  correct: boolean
+  duplicated: boolean
+  points: number
+  explanation: string
+}
+
+export type LeaderboardEntry = {
+  userId: number
+  username: string
+  correctCount: number
+  totalPoints: number
 }

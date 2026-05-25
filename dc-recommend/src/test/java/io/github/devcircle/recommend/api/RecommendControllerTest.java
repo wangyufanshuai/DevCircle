@@ -17,7 +17,7 @@ class RecommendControllerTest {
 
         assertThat(response.data().records()).hasSize(2);
         assertThat(response.data().records().getFirst().reason()).isNotBlank();
-        assertThat(response.data().records().getFirst().algorithm()).isEqualTo("LOCAL_LINEAR_MODEL");
+        assertThat(response.data().records().getFirst().algorithm()).isEqualTo("THEME_LINEAR_MODEL");
         assertThat(response.data().nextCursor()).isEqualTo("2");
     }
 }

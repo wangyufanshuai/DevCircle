@@ -10,11 +10,10 @@ $topics = @(
 
 foreach ($topic in $topics) {
   docker compose exec kafka /opt/kafka/bin/kafka-topics.sh `
-    --bootstrap-server localhost:9092 `
+    --bootstrap-server kafka:9092 `
     --create `
     --if-not-exists `
     --topic $topic `
     --partitions 3 `
     --replication-factor 1
 }
-

@@ -10,24 +10,20 @@ Content-Type: application/json
 ### GitHub OAuth2 mock 回调
 GET http://localhost:8080/api/auth/oauth2/callback/github?code=demo-code&state=devcircle
 
-### 刷新令牌
-POST http://localhost:8080/api/auth/refresh
-Content-Type: application/json
-
-{
-  "refreshToken": "replace-with-refresh-token"
-}
-
-### 推荐流
-GET http://localhost:8080/api/recommend/feed?scene=home&size=3
+### 混合推荐
+GET http://localhost:8080/api/recommend/feed?scene=mixed&size=6
 Authorization: Bearer demo-access-token-demo
 
-### 图片流
-GET http://localhost:8080/api/recommend/feed?scene=image&size=3
+### 推理馆推荐
+GET http://localhost:8080/api/recommend/feed?scene=deduction&size=6
 Authorization: Bearer demo-access-token-demo
 
-### 视频流
-GET http://localhost:8080/api/recommend/feed?scene=video&size=3
+### 科幻馆推荐
+GET http://localhost:8080/api/recommend/feed?scene=sci_fi&size=6
+Authorization: Bearer demo-access-token-demo
+
+### 宇宙档案推荐
+GET http://localhost:8080/api/recommend/feed?scene=cosmos&size=6
 Authorization: Bearer demo-access-token-demo
 
 ### 推荐曝光
@@ -37,27 +33,53 @@ Content-Type: application/json
 
 {
   "postIds": [1001, 1003],
-  "scene": "home_feed"
+  "scene": "deduction_feed"
 }
 
-### 帖子列表
-GET http://localhost:8080/api/posts?type=IMAGE
+### 主题帖子列表
+GET http://localhost:8080/api/posts?theme=DEDUCTION&contentKind=CASE_FILE&difficulty=HARD
 Authorization: Bearer demo-access-token-demo
 
-### 创建图片帖子
+### 创建推理案件
 POST http://localhost:8080/api/posts
 Authorization: Bearer demo-access-token-demo
 Content-Type: application/json
 
 {
-  "type": "IMAGE",
-  "title": "Elasticsearch 搜索索引设计图解",
-  "content": "用多图说明字段映射、标签过滤、排序和补偿重建策略。",
-  "tags": ["Elasticsearch", "搜索"],
-  "mediaIds": [201, 202]
+  "type": "TEXT",
+  "theme": "DEDUCTION",
+  "contentKind": "CASE_FILE",
+  "difficulty": "HARD",
+  "solvable": true,
+  "title": "雾港钟楼失踪案",
+  "content": "凌晨零点钟声响起后，守夜人从封闭钟楼消失。",
+  "tags": ["密室", "时间线", "海港"],
+  "clues": "怀表停在 00:07；鞋印只到楼梯口；航海日志缺了一页",
+  "solution": "守夜人藏在钟楼夹层"
 }
 
-### 上传媒体，REST Client 需选择本地文件
+### 提交推理答案
+POST http://localhost:8080/api/deduction/cases/1001/answers
+Authorization: Bearer demo-access-token-demo
+Content-Type: application/json
+
+{
+  "answer": "守夜人藏在钟楼夹层"
+}
+
+### 查看我的答题状态
+GET http://localhost:8080/api/deduction/cases/1001/attempts/me
+Authorization: Bearer demo-access-token-demo
+
+### 解谜排行榜
+GET http://localhost:8080/api/deduction/leaderboard
+Authorization: Bearer demo-access-token-demo
+
+### 主题搜索
+GET http://localhost:8080/api/search/posts?keyword=钟楼&theme=DEDUCTION&contentKind=CASE_FILE&difficulty=HARD
+Authorization: Bearer demo-access-token-demo
+
+### 上传媒体
 POST http://localhost:8080/api/files
 Authorization: Bearer demo-access-token-demo
 Content-Type: multipart/form-data; boundary=boundary
@@ -81,14 +103,6 @@ Idempotency-Key: favorite-1001-demo
 
 ### 关注用户
 POST http://localhost:8080/api/users/42/follow
-Authorization: Bearer demo-access-token-demo
-
-### 用户二跳推荐
-GET http://localhost:8080/api/users/2/recommendations
-Authorization: Bearer demo-access-token-demo
-
-### 搜索
-GET http://localhost:8080/api/search/posts?keyword=Spring
 Authorization: Bearer demo-access-token-demo
 
 ### 重建搜索索引

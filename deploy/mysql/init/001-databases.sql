@@ -4,11 +4,14 @@ CREATE DATABASE IF NOT EXISTS dc_content DEFAULT CHARACTER SET utf8mb4 COLLATE u
 CREATE DATABASE IF NOT EXISTS dc_comment DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS dc_interaction DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS dc_notification DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS dc_file DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS dc_search DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 GRANT ALL PRIVILEGES ON dc_auth.* TO 'devcircle'@'%';
 GRANT ALL PRIVILEGES ON dc_user.* TO 'devcircle'@'%';
 GRANT ALL PRIVILEGES ON dc_content.* TO 'devcircle'@'%';
 GRANT ALL PRIVILEGES ON dc_comment.* TO 'devcircle'@'%';
 GRANT ALL PRIVILEGES ON dc_interaction.* TO 'devcircle'@'%';
 GRANT ALL PRIVILEGES ON dc_notification.* TO 'devcircle'@'%';
+GRANT ALL PRIVILEGES ON dc_file.* TO 'devcircle'@'%';
+GRANT ALL PRIVILEGES ON dc_search.* TO 'devcircle'@'%';
 FLUSH PRIVILEGES;
-

@@ -34,24 +34,41 @@ public class PostRepository {
     }
 
     public List<PostSummary> list(int page, int size) {
+        return list(page, size, null, null, null);
+    }
+
+    public List<PostSummary> list(int page, int size, String theme, String contentKind, String difficulty) {
         int offset = Math.max(page - 1, 0) * size;
         return jdbcClient.sql("""
-                        SELECT p.id, p.type, p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
+                        SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
+                               p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
                                p.like_count, p.comment_count, p.view_count, p.created_at,
                                GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR ',') AS tags
                         FROM post p
                         JOIN post_content pc ON pc.post_id = p.id
                         LEFT JOIN post_tag pt ON pt.post_id = p.id
                         LEFT JOIN tag t ON t.id = pt.tag_id
-                        GROUP BY p.id, p.type, p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count, p.view_count, p.created_at
+                        WHERE (:theme IS NULL OR p.theme = :theme)
+                          AND (:contentKind IS NULL OR p.content_kind = :contentKind)
+                          AND (:difficulty IS NULL OR p.difficulty = :difficulty)
+                        GROUP BY p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
+                                 p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count, p.view_count, p.created_at
                         ORDER BY p.created_at DESC
                         LIMIT :size OFFSET :offset
                         """)
                 .param("size", size)
                 .param("offset", offset)
+                .param("theme", normalizeNullableTheme(theme))
+                .param("contentKind", normalizeNullableContentKind(contentKind))
+                .param("difficulty", normalizeNullableDifficulty(difficulty))
                 .query((rs, rowNum) -> new PostSummary(
                         rs.getLong("id"),
                         rs.getString("type"),
+                        rs.getString("theme"),
+                        rs.getString("content_kind"),
+                        rs.getString("difficulty"),
+                        rs.getBoolean("solvable"),
+                        rs.getLong("solved_count"),
                         rs.getString("title"),
                         rs.getString("excerpt"),
                         "user-" + rs.getLong("author_id"),
@@ -73,7 +90,8 @@ public class PostRepository {
 
     public PostSummary detail(Long id) {
         return jdbcClient.sql("""
-                        SELECT p.id, p.type, p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
+                        SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
+                               p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
                                p.like_count, p.comment_count, p.view_count, p.created_at,
                                GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR ',') AS tags
                         FROM post p
@@ -81,12 +99,18 @@ public class PostRepository {
                         LEFT JOIN post_tag pt ON pt.post_id = p.id
                         LEFT JOIN tag t ON t.id = pt.tag_id
                         WHERE p.id = :id
-                        GROUP BY p.id, p.type, p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count, p.view_count, p.created_at
+                        GROUP BY p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
+                                 p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count, p.view_count, p.created_at
                         """)
                 .param("id", id)
                 .query((rs, rowNum) -> new PostSummary(
                         rs.getLong("id"),
                         rs.getString("type"),
+                        rs.getString("theme"),
+                        rs.getString("content_kind"),
+                        rs.getString("difficulty"),
+                        rs.getBoolean("solvable"),
+                        rs.getLong("solved_count"),
                         rs.getString("title"),
                         rs.getString("excerpt"),
                         "user-" + rs.getLong("author_id"),
@@ -106,12 +130,16 @@ public class PostRepository {
         var keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement(
-                    "INSERT INTO post(author_id, title, type, status) VALUES (?, ?, ?, 'PENDING')",
+                    "INSERT INTO post(author_id, title, type, theme, content_kind, difficulty, solvable, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING')",
                     Statement.RETURN_GENERATED_KEYS
             );
             statement.setLong(1, authorId);
             statement.setString(2, request.title());
             statement.setString(3, normalizeType(request.type()));
+            statement.setString(4, normalizeTheme(request.theme()));
+            statement.setString(5, normalizeContentKind(request.contentKind()));
+            statement.setString(6, normalizeDifficulty(request.difficulty()));
+            statement.setBoolean(7, Boolean.TRUE.equals(request.solvable()));
             return statement;
         }, keyHolder);
         Number generatedKey = keyHolder.getKey();
@@ -120,9 +148,11 @@ public class PostRepository {
             };
         }
         Long postId = generatedKey.longValue();
-        jdbcClient.sql("INSERT INTO post_content(post_id, markdown) VALUES (:postId, :markdown)")
+        jdbcClient.sql("INSERT INTO post_content(post_id, markdown, clues, solution) VALUES (:postId, :markdown, CAST(:clues AS JSON), :solution)")
                 .param("postId", postId)
                 .param("markdown", request.content())
+                .param("clues", cluesJson(request.clues()))
+                .param("solution", request.solution() == null ? "" : request.solution())
                 .update();
         for (String tagName : safeTags(request.tags())) {
             Long tagId = upsertTag(tagName);
@@ -140,7 +170,9 @@ public class PostRepository {
                     .update();
         }
         writeOutbox(postId, authorId, request);
-        return new PostSummary(postId, normalizeType(request.type()), request.title(), excerpt(request.content()), "user-" + authorId, safeTags(request.tags()), mediaAssets(postId), 0, 0, 0, "PENDING", Instant.now());
+        return new PostSummary(postId, normalizeType(request.type()), normalizeTheme(request.theme()), normalizeContentKind(request.contentKind()),
+                normalizeDifficulty(request.difficulty()), Boolean.TRUE.equals(request.solvable()), 0,
+                request.title(), excerpt(request.content()), "user-" + authorId, safeTags(request.tags()), mediaAssets(postId), 0, 0, 0, "PENDING", Instant.now());
     }
 
     private Long upsertTag(String name) {
@@ -155,7 +187,7 @@ public class PostRepository {
 
     private void writeOutbox(Long postId, Long authorId, CreatePostRequest request) {
         try {
-            String payload = objectMapper.writeValueAsString(new PostCreatedPayload(postId, authorId, request.title(), request.tags()));
+            String payload = objectMapper.writeValueAsString(new PostCreatedPayload(postId, authorId, request.title(), request.tags(), normalizeTheme(request.theme()), normalizeContentKind(request.contentKind())));
             jdbcClient.sql("""
                             INSERT INTO outbox_event(event_id, topic, aggregate_type, aggregate_id, payload)
                             VALUES (:eventId, :topic, 'POST', :aggregateId, CAST(:payload AS JSON))
@@ -209,6 +241,57 @@ public class PostRepository {
             return "TEXT";
         }
         return normalized;
+    }
+
+    private String normalizeTheme(String theme) {
+        String normalized = theme == null || theme.isBlank() ? "DEDUCTION" : theme.toUpperCase();
+        if (!List.of("DEDUCTION", "SCI_FI", "COSMOS").contains(normalized)) {
+            return "DEDUCTION";
+        }
+        return normalized;
+    }
+
+    private String normalizeContentKind(String contentKind) {
+        String normalized = contentKind == null || contentKind.isBlank() ? "CASE_FILE" : contentKind.toUpperCase();
+        if (!List.of("CASE_FILE", "PUZZLE", "FICTION", "WORLDBUILDING", "COSMIC_ARTICLE", "OBSERVATION_LOG").contains(normalized)) {
+            return "CASE_FILE";
+        }
+        return normalized;
+    }
+
+    private String normalizeDifficulty(String difficulty) {
+        String normalized = difficulty == null || difficulty.isBlank() ? "MEDIUM" : difficulty.toUpperCase();
+        if (!List.of("EASY", "MEDIUM", "HARD").contains(normalized)) {
+            return "MEDIUM";
+        }
+        return normalized;
+    }
+
+    private String normalizeNullableTheme(String theme) {
+        return theme == null || theme.isBlank() ? null : normalizeTheme(theme);
+    }
+
+    private String normalizeNullableContentKind(String contentKind) {
+        return contentKind == null || contentKind.isBlank() ? null : normalizeContentKind(contentKind);
+    }
+
+    private String normalizeNullableDifficulty(String difficulty) {
+        return difficulty == null || difficulty.isBlank() ? null : normalizeDifficulty(difficulty);
+    }
+
+    private String cluesJson(String clues) {
+        try {
+            if (clues == null || clues.isBlank()) {
+                return "[]";
+            }
+            List<String> values = Arrays.stream(clues.split("\\n|;|；"))
+                    .map(String::trim)
+                    .filter(value -> !value.isBlank())
+                    .toList();
+            return objectMapper.writeValueAsString(values);
+        } catch (JsonProcessingException ex) {
+            return "[]";
+        }
     }
 
     private List<String> safeTags(List<String> tags) {

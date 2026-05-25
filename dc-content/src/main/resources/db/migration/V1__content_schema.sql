@@ -16,6 +16,12 @@ CREATE TABLE IF NOT EXISTS post (
     author_id BIGINT NOT NULL,
     category_id BIGINT NULL,
     type VARCHAR(32) NOT NULL DEFAULT 'TEXT',
+    theme VARCHAR(32) NOT NULL DEFAULT 'DEDUCTION',
+    content_kind VARCHAR(48) NOT NULL DEFAULT 'CASE_FILE',
+    difficulty VARCHAR(16) NOT NULL DEFAULT 'MEDIUM',
+    solvable BOOLEAN NOT NULL DEFAULT FALSE,
+    solved_count BIGINT NOT NULL DEFAULT 0,
+    series_id VARCHAR(64) NULL,
     title VARCHAR(160) NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
     visibility VARCHAR(32) NOT NULL DEFAULT 'PUBLIC',
@@ -26,6 +32,7 @@ CREATE TABLE IF NOT EXISTS post (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_post_status_created (status, created_at),
     INDEX idx_post_type_created (type, created_at),
+    INDEX idx_post_theme_kind_created (theme, content_kind, created_at),
     INDEX idx_post_author_created (author_id, created_at)
 );
 
@@ -35,7 +42,30 @@ CREATE TABLE IF NOT EXISTS post (
 CREATE TABLE IF NOT EXISTS post_content (
     post_id BIGINT PRIMARY KEY,
     markdown MEDIUMTEXT NOT NULL,
-    html MEDIUMTEXT NULL
+    html MEDIUMTEXT NULL,
+    clues JSON NULL,
+    solution TEXT NULL
+);
+
+CREATE TABLE IF NOT EXISTS deduction_attempt (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    post_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    answer TEXT NOT NULL,
+    correct BOOLEAN NOT NULL,
+    points INT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_attempt_user_post (user_id, post_id),
+    INDEX idx_attempt_post (post_id),
+    INDEX idx_attempt_user_points (user_id, points)
+);
+
+CREATE TABLE IF NOT EXISTS deduction_score (
+    user_id BIGINT PRIMARY KEY,
+    username VARCHAR(64) NOT NULL,
+    correct_count BIGINT NOT NULL DEFAULT 0,
+    total_points BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS post_tag (

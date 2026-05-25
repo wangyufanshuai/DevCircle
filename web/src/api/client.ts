@@ -1,5 +1,5 @@
-import { mockAudits, mockNotifications, mockPosts, mockRecommendations } from './mock'
-import type { ApiResponse, AuditItem, CreatePostRequest, CursorPage, FeedItem, FileUploadResult, FollowResult, InteractionResult, NotificationItem, PageResponse, Post } from './types'
+import { mockAudits, mockLeaderboard, mockNotifications, mockPosts, mockRecommendations } from './mock'
+import type { ApiResponse, AuditItem, CreatePostRequest, CursorPage, DeductionAnswerResult, FeedItem, FileUploadResult, FollowResult, InteractionResult, LeaderboardEntry, NotificationItem, PageResponse, Post } from './types'
 
 const token = 'Bearer demo-access-token-admin'
 
@@ -26,9 +26,10 @@ async function postJson<T>(url: string, payload?: unknown, extraHeaders: Record<
 }
 
 function fallbackFeed(scene: string): CursorPage<FeedItem> {
-  const records = scene === 'home'
+  const themeMap: Record<string, string> = { deduction: 'DEDUCTION', sci_fi: 'SCI_FI', cosmos: 'COSMOS' }
+  const records = scene === 'home' || scene === 'mixed'
     ? mockRecommendations
-    : mockRecommendations.filter((item) => item.post.type.toLowerCase() === scene)
+    : mockRecommendations.filter((item) => item.post.theme === themeMap[scene])
   return { records, nextCursor: String(records.length), hasMore: false }
 }
 
@@ -43,7 +44,7 @@ export async function fetchPosts(type?: string): Promise<Post[]> {
 
 export async function fetchFeed(scene = 'home', cursor?: string): Promise<CursorPage<FeedItem>> {
   try {
-    return await getJson<CursorPage<FeedItem>>(`/api/recommend/feed?scene=${scene}&size=3${cursor ? `&cursor=${cursor}` : ''}`)
+    return await getJson<CursorPage<FeedItem>>(`/api/recommend/feed?scene=${scene}&size=12${cursor ? `&cursor=${cursor}` : ''}`)
   } catch {
     return fallbackFeed(scene)
   }
@@ -64,6 +65,11 @@ export async function createPost(payload: CreatePostRequest): Promise<Post> {
     return {
       id: Date.now(),
       type: payload.type ?? 'TEXT',
+      theme: payload.theme ?? 'DEDUCTION',
+      contentKind: payload.contentKind ?? 'CASE_FILE',
+      difficulty: payload.difficulty ?? 'MEDIUM',
+      solvable: payload.solvable ?? false,
+      solvedCount: 0,
       title: payload.title,
       excerpt: payload.content.slice(0, 140),
       author: 'demo',
@@ -134,6 +140,32 @@ export async function searchPosts(keyword: string): Promise<Post[]> {
     return mockPosts.filter((post) =>
       [post.title, post.excerpt, post.author, ...post.tags].some((value) => value.toLowerCase().includes(keyword.toLowerCase()))
     )
+  }
+}
+
+export async function submitDeductionAnswer(postId: number, answer: string): Promise<DeductionAnswerResult> {
+  try {
+    return await postJson<DeductionAnswerResult>(`/api/deduction/cases/${postId}/answers`, { answer })
+  } catch {
+    const correct = answer.includes('夹层') || answer.includes('钟楼')
+    return {
+      postId,
+      userId: 2,
+      correct,
+      duplicated: false,
+      points: correct ? 20 : 0,
+      explanation: correct
+        ? '推理成立：关键是停在 00:07 的怀表和钟楼夹层。'
+        : '线索还没有闭合，建议重新检查怀表、鞋印和航海日志。'
+    }
+  }
+}
+
+export async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
+  try {
+    return await getJson<LeaderboardEntry[]>('/api/deduction/leaderboard')
+  } catch {
+    return mockLeaderboard
   }
 }
 

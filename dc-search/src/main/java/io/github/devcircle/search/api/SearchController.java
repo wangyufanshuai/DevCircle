@@ -22,8 +22,11 @@ class SearchController {
     @GetMapping("/posts")
     ApiResponse<PageResponse<PostSummary>> posts(@RequestParam String keyword,
                                                  @RequestParam(required = false) String tag,
-                                                 @RequestParam(defaultValue = "relevance") String sort) {
-        return ApiResponse.ok(searchService.search(keyword, tag, sort));
+                                                 @RequestParam(defaultValue = "relevance") String sort,
+                                                 @RequestParam(required = false) String theme,
+                                                 @RequestParam(required = false) String contentKind,
+                                                 @RequestParam(required = false) String difficulty) {
+        return ApiResponse.ok(searchService.search(keyword, tag, sort, theme, contentKind, difficulty));
     }
 
     @PostMapping("/admin/reindex")
