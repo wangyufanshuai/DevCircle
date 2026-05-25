@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS post (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     author_id BIGINT NOT NULL,
     category_id BIGINT NULL,
+    type VARCHAR(32) NOT NULL DEFAULT 'TEXT',
     title VARCHAR(160) NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
     visibility VARCHAR(32) NOT NULL DEFAULT 'PUBLIC',
@@ -24,6 +25,7 @@ CREATE TABLE IF NOT EXISTS post (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_post_status_created (status, created_at),
+    INDEX idx_post_type_created (type, created_at),
     INDEX idx_post_author_created (author_id, created_at)
 );
 
@@ -41,6 +43,28 @@ CREATE TABLE IF NOT EXISTS post_tag (
     tag_id BIGINT NOT NULL,
     PRIMARY KEY (post_id, tag_id),
     INDEX idx_post_tag_tag (tag_id)
+);
+
+CREATE TABLE IF NOT EXISTS media_asset (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    object_key VARCHAR(512) NOT NULL UNIQUE,
+    url VARCHAR(1024) NOT NULL,
+    content_type VARCHAR(128) NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    width INT NULL,
+    height INT NULL,
+    duration_seconds INT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING_REVIEW',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_media_status_created (status, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS post_media (
+    post_id BIGINT NOT NULL,
+    media_id BIGINT NOT NULL,
+    sort_order INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (post_id, media_id),
+    INDEX idx_post_media_media (media_id)
 );
 
 CREATE TABLE IF NOT EXISTS post_audit_record (

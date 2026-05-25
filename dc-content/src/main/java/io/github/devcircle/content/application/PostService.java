@@ -14,19 +14,22 @@ import java.util.List;
 public class PostService {
     private final PostRepository postRepository;
     private final List<PostSummary> demoPosts = List.of(
-            new PostSummary(1001L, "Spring Cloud 微服务里的 Outbox 可靠事件实践", "用本地事务、Kafka 和消费端幂等替代 XA，保证内容发布、搜索索引和通知推送最终一致。", "lin", List.of("Spring Cloud", "Kafka", "MySQL"), 328, 42, 9150, "PUBLISHED", Instant.now().minusSeconds(7200)),
-            new PostSummary(1002L, "Elasticsearch 技术社区搜索索引怎么设计", "字段映射、标签过滤、排序和补偿重建策略。", "chen", List.of("Elasticsearch", "搜索"), 211, 27, 6020, "PENDING", Instant.now().minusSeconds(3600))
+            new PostSummary(1001L, "TEXT", "Spring Cloud 微服务里的 Outbox 可靠事件实践", "用本地事务、Kafka 和消费端幂等替代 XA。", "lin", List.of("Spring Cloud", "Kafka", "MySQL"), List.of(), 328, 42, 9150, "PUBLISHED", Instant.now().minusSeconds(7200)),
+            new PostSummary(1002L, "IMAGE", "Elasticsearch 搜索索引设计图解", "用多图说明字段映射、标签过滤、排序和补偿重建策略。", "chen", List.of("Elasticsearch", "搜索"), List.of(), 211, 27, 6020, "PENDING", Instant.now().minusSeconds(3600)),
+            new PostSummary(1003L, "VIDEO", "Kafka 事件驱动通知系统演示", "纵向视频讲解站内信、WebSocket 和重复消费处理。", "wang", List.of("Kafka", "WebSocket"), List.of(), 97, 14, 3100, "PUBLISHED", Instant.now().minusSeconds(900))
     );
 
     public PostService(PostRepository postRepository) {
         this.postRepository = postRepository;
     }
 
-    public PageResponse<PostSummary> list(int page, int size) {
+    public PageResponse<PostSummary> list(int page, int size, String type) {
         try {
-            return PageResponse.of(postRepository.list(page, size), postRepository.count(), page, size);
+            var records = filterByType(postRepository.list(page, size), type);
+            return PageResponse.of(records, records.size(), page, size);
         } catch (DataAccessException ex) {
-            return PageResponse.of(demoPosts, demoPosts.size(), page, size);
+            var records = filterByType(demoPosts, type);
+            return PageResponse.of(records, records.size(), page, size);
         }
     }
 
@@ -49,8 +52,19 @@ public class PostService {
         }
     }
 
+    private List<PostSummary> filterByType(List<PostSummary> posts, String type) {
+        if (type == null || type.isBlank()) {
+            return posts;
+        }
+        return posts.stream().filter(post -> post.type().equalsIgnoreCase(type)).toList();
+    }
+
     private PostSummary fallbackCreate(CreatePostRequest request) {
         String excerpt = request.content().substring(0, Math.min(60, request.content().length()));
-        return new PostSummary(2001L, request.title(), excerpt, "demo", request.tags(), 0, 0, 0, "PENDING", Instant.now());
+        return new PostSummary(2001L, normalizeType(request.type()), request.title(), excerpt, "demo", request.tags() == null ? List.of() : request.tags(), List.of(), 0, 0, 0, "PENDING", Instant.now());
+    }
+
+    private String normalizeType(String type) {
+        return type == null || type.isBlank() ? "TEXT" : type.toUpperCase();
     }
 }

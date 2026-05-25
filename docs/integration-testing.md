@@ -1,12 +1,12 @@
 # 集成测试说明
 
-DevCircle v0.6 使用 Testcontainers 验证核心依赖闭环。测试会在本地 Docker 中启动临时 MySQL、Redis、Kafka 和 Elasticsearch 容器，执行结束后自动清理。
+DevCircle v0.7 使用 Testcontainers 验证核心依赖闭环。默认 Maven 测试会启动临时 MySQL、Redis、Kafka、Elasticsearch 和 MinIO 容器，执行结束后自动清理。
 
 ## 前置条件
 
 - 已安装 Docker Desktop 或兼容 Docker Engine。
 - Docker daemon 正在运行。
-- 本机能拉取测试镜像：`alpine:3.22`、`mysql:8.4`、`redis:8.2`、`apache/kafka:4.1.1`、`docker.elastic.co/elasticsearch/elasticsearch:9.2.2`。
+- 本机能拉取测试镜像：`mysql:8.4`、`redis:8.2`、`apache/kafka:4.1.1`、`docker.elastic.co/elasticsearch/elasticsearch:9.2.2`、`minio/minio`。
 
 ## 运行命令
 
@@ -16,9 +16,9 @@ $env:Path="$env:JAVA_HOME\bin;$env:Path"
 .\mvnw.cmd -B test
 ```
 
-v0.6 起核心 Testcontainers 测试不再静默跳过。Docker 不可用时测试应失败，避免把“没有跑容器”误认为“容器链路通过”。
+v0.7 核心容器测试不静默跳过。Docker 不可用时测试应失败，避免把“没有跑容器”误认为“容器链路通过”。
 
-Windows Docker Desktop 29 在部分环境下会让旧的 Java named pipe 探测拿到空的 `/info` 响应。推荐先启动本地只绑定回环地址的 Docker socket 代理：
+Windows Docker Desktop 29 如遇 named pipe 探测失败，可启用本地只绑定回环地址的 Docker socket 代理：
 
 ```powershell
 .\scripts\dev\testcontainers-docker-proxy.ps1
@@ -26,26 +26,27 @@ $env:DOCKER_HOST='tcp://127.0.0.1:2375'
 .\mvnw.cmd -B test
 ```
 
-测试完成后可停止代理：
+测试完成后停止代理：
 
 ```powershell
 .\scripts\dev\testcontainers-docker-proxy.ps1 -Stop
 ```
 
-CI 环境使用默认 Docker Unix socket，不需要这个代理。
-
 ## 覆盖链路
 
-- Docker preflight：启动最小 Alpine 容器，确认 Testcontainers 能连接 Docker。
-- `dc-content`: 发帖写入帖子、正文、标签和 Outbox 事件；真实 Kafka 发送成功后事件才变为 `PUBLISHED`。
-- `dc-content`: Kafka 不可用时 Outbox 事件保持 `NEW`，等待后续重试。
-- `dc-interaction`: 重复点赞/收藏不会重复写记录或重复增加计数，Redis 热度会随首次互动变化。
+- Docker preflight：启动最小容器，确认 Testcontainers 能连接 Docker。
+- `dc-content`: 发帖写入帖子、正文、标签、媒体关联和 Outbox；真实 Kafka 发送成功后事件才变为 `PUBLISHED`。
+- `dc-interaction`: 重复点赞/收藏不重复写记录或重复增加计数，Redis 热度随首次互动变化。
 - `dc-search`: 内容事件可以写入 Elasticsearch 文档。
-- `dc-recommend`: Redis 兴趣、热度和曝光记录会影响 Feed 排序和去重。
+- `dc-recommend`: Redis 兴趣、热度、曝光和图谱信号影响 Feed 排序。
+- `dc-user`: 关注幂等、取消关注、粉丝/关注列表、共同关注和二跳推荐。
+- `dc-file`: 图片上传到 MinIO，媒体元数据写入 MySQL。
+- `dc-auth`/`dc-gateway`: OAuth2 mock 回调、JWT 签发、刷新令牌、Gateway 鉴权和透传。
 
 ## 排查建议
 
-- 拉取镜像慢：先手动执行 `docker pull` 拉取上述镜像。
+- 拉取镜像慢：先手动执行 `docker pull`。
 - 端口冲突：Testcontainers 默认使用随机宿主机端口，通常不受本地 Compose 端口影响。
 - Elasticsearch 启动慢：确认 Docker 可用内存不低于 4GB。
+- MinIO 上传失败：确认 endpoint、access key、secret key 和 bucket 配置一致。
 - Windows 路径问题：优先在仓库根目录执行 Maven 命令。

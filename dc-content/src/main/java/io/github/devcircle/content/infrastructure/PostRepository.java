@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.common.event.PostCreatedPayload;
+import io.github.devcircle.common.model.MediaAssetView;
 import io.github.devcircle.common.model.PostSummary;
 import io.github.devcircle.content.api.CreatePostRequest;
 import org.springframework.dao.DataAccessException;
@@ -35,14 +36,14 @@ public class PostRepository {
     public List<PostSummary> list(int page, int size) {
         int offset = Math.max(page - 1, 0) * size;
         return jdbcClient.sql("""
-                        SELECT p.id, p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
+                        SELECT p.id, p.type, p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
                                p.like_count, p.comment_count, p.view_count, p.created_at,
                                GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR ',') AS tags
                         FROM post p
                         JOIN post_content pc ON pc.post_id = p.id
                         LEFT JOIN post_tag pt ON pt.post_id = p.id
                         LEFT JOIN tag t ON t.id = pt.tag_id
-                        GROUP BY p.id, p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count, p.view_count, p.created_at
+                        GROUP BY p.id, p.type, p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count, p.view_count, p.created_at
                         ORDER BY p.created_at DESC
                         LIMIT :size OFFSET :offset
                         """)
@@ -50,10 +51,12 @@ public class PostRepository {
                 .param("offset", offset)
                 .query((rs, rowNum) -> new PostSummary(
                         rs.getLong("id"),
+                        rs.getString("type"),
                         rs.getString("title"),
                         rs.getString("excerpt"),
                         "user-" + rs.getLong("author_id"),
                         splitTags(rs.getString("tags")),
+                        mediaAssets(rs.getLong("id")),
                         rs.getLong("like_count"),
                         rs.getLong("comment_count"),
                         rs.getLong("view_count"),
@@ -70,7 +73,7 @@ public class PostRepository {
 
     public PostSummary detail(Long id) {
         return jdbcClient.sql("""
-                        SELECT p.id, p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
+                        SELECT p.id, p.type, p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
                                p.like_count, p.comment_count, p.view_count, p.created_at,
                                GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR ',') AS tags
                         FROM post p
@@ -78,15 +81,17 @@ public class PostRepository {
                         LEFT JOIN post_tag pt ON pt.post_id = p.id
                         LEFT JOIN tag t ON t.id = pt.tag_id
                         WHERE p.id = :id
-                        GROUP BY p.id, p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count, p.view_count, p.created_at
+                        GROUP BY p.id, p.type, p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count, p.view_count, p.created_at
                         """)
                 .param("id", id)
                 .query((rs, rowNum) -> new PostSummary(
                         rs.getLong("id"),
+                        rs.getString("type"),
                         rs.getString("title"),
                         rs.getString("excerpt"),
                         "user-" + rs.getLong("author_id"),
                         splitTags(rs.getString("tags")),
+                        mediaAssets(rs.getLong("id")),
                         rs.getLong("like_count"),
                         rs.getLong("comment_count"),
                         rs.getLong("view_count"),
@@ -101,11 +106,12 @@ public class PostRepository {
         var keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement(
-                    "INSERT INTO post(author_id, title, status) VALUES (?, ?, 'PENDING')",
+                    "INSERT INTO post(author_id, title, type, status) VALUES (?, ?, ?, 'PENDING')",
                     Statement.RETURN_GENERATED_KEYS
             );
             statement.setLong(1, authorId);
             statement.setString(2, request.title());
+            statement.setString(3, normalizeType(request.type()));
             return statement;
         }, keyHolder);
         Number generatedKey = keyHolder.getKey();
@@ -118,15 +124,23 @@ public class PostRepository {
                 .param("postId", postId)
                 .param("markdown", request.content())
                 .update();
-        for (String tagName : request.tags()) {
+        for (String tagName : safeTags(request.tags())) {
             Long tagId = upsertTag(tagName);
             jdbcClient.sql("INSERT IGNORE INTO post_tag(post_id, tag_id) VALUES (:postId, :tagId)")
                     .param("postId", postId)
                     .param("tagId", tagId)
                     .update();
         }
+        int index = 0;
+        for (Long mediaId : safeMediaIds(request.mediaIds())) {
+            jdbcClient.sql("INSERT IGNORE INTO post_media(post_id, media_id, sort_order) VALUES (:postId, :mediaId, :sortOrder)")
+                    .param("postId", postId)
+                    .param("mediaId", mediaId)
+                    .param("sortOrder", index++)
+                    .update();
+        }
         writeOutbox(postId, authorId, request);
-        return new PostSummary(postId, request.title(), excerpt(request.content()), "user-" + authorId, request.tags(), 0, 0, 0, "PENDING", Instant.now());
+        return new PostSummary(postId, normalizeType(request.type()), request.title(), excerpt(request.content()), "user-" + authorId, safeTags(request.tags()), mediaAssets(postId), 0, 0, 0, "PENDING", Instant.now());
     }
 
     private Long upsertTag(String name) {
@@ -161,6 +175,48 @@ public class PostRepository {
             return List.of();
         }
         return Arrays.asList(tags.split(","));
+    }
+
+    private List<MediaAssetView> mediaAssets(Long postId) {
+        return jdbcClient.sql("""
+                        SELECT m.id, m.object_key, m.url, m.content_type, m.size_bytes, m.width, m.height, m.duration_seconds, m.status
+                        FROM post_media pm
+                        JOIN media_asset m ON m.id = pm.media_id
+                        WHERE pm.post_id = :postId
+                        ORDER BY pm.sort_order, m.id
+                        """)
+                .param("postId", postId)
+                .query((rs, rowNum) -> new MediaAssetView(
+                        rs.getLong("id"),
+                        rs.getString("object_key"),
+                        rs.getString("url"),
+                        rs.getString("content_type"),
+                        rs.getLong("size_bytes"),
+                        (Integer) rs.getObject("width"),
+                        (Integer) rs.getObject("height"),
+                        (Integer) rs.getObject("duration_seconds"),
+                        rs.getString("status")
+                ))
+                .list();
+    }
+
+    private String normalizeType(String type) {
+        if (type == null || type.isBlank()) {
+            return "TEXT";
+        }
+        String normalized = type.toUpperCase();
+        if (!List.of("TEXT", "IMAGE", "VIDEO").contains(normalized)) {
+            return "TEXT";
+        }
+        return normalized;
+    }
+
+    private List<String> safeTags(List<String> tags) {
+        return tags == null ? List.of() : tags;
+    }
+
+    private List<Long> safeMediaIds(List<Long> mediaIds) {
+        return mediaIds == null ? List.of() : mediaIds;
     }
 
     private String excerpt(String content) {

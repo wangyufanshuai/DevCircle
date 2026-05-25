@@ -18,12 +18,26 @@ export type CursorPage<T> = {
   hasMore: boolean
 }
 
+export type MediaAsset = {
+  mediaId: number
+  objectKey: string
+  url: string
+  contentType: string
+  size: number
+  width?: number
+  height?: number
+  durationSeconds?: number
+  status: string
+}
+
 export type Post = {
   id: number
+  type: 'TEXT' | 'IMAGE' | 'VIDEO'
   title: string
   excerpt: string
   author: string
   tags: string[]
+  mediaAssets: MediaAsset[]
   likes: number
   comments: number
   views: number
@@ -37,6 +51,9 @@ export type FeedItem = {
   score: number
   liked: boolean
   favorited: boolean
+  algorithm: string
+  mediaType: string
+  features: Record<string, number>
 }
 
 export type AuditItem = {
@@ -59,6 +76,8 @@ export type CreatePostRequest = {
   title: string
   content: string
   tags: string[]
+  type?: 'TEXT' | 'IMAGE' | 'VIDEO'
+  mediaIds?: number[]
 }
 
 export type InteractionResult = {
@@ -67,4 +86,12 @@ export type InteractionResult = {
   active: boolean
   duplicated: boolean
   idempotencyKey: string
+}
+
+export type FileUploadResult = MediaAsset
+
+export type FollowResult = {
+  targetUserId: number
+  followed: boolean
+  duplicated: boolean
 }

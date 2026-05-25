@@ -25,8 +25,9 @@ class RecommendController {
     @GetMapping("/feed")
     ApiResponse<CursorPage<FeedItem>> feed(@RequestHeader(value = "X-User-Id", defaultValue = "2") Long userId,
                                            @RequestParam(required = false) String cursor,
-                                           @RequestParam(defaultValue = "10") int size) {
-        return ApiResponse.ok(feedService.feed(userId, cursor, Math.min(size, 50)));
+                                           @RequestParam(defaultValue = "10") int size,
+                                           @RequestParam(defaultValue = "home") String scene) {
+        return ApiResponse.ok(feedService.feed(userId, cursor, Math.min(size, 50), scene));
     }
 
     @PostMapping("/exposures")

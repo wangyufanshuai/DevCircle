@@ -1,4 +1,4 @@
-### 登录
+### 密码登录
 POST http://localhost:8080/api/auth/login
 Content-Type: application/json
 
@@ -7,8 +7,27 @@ Content-Type: application/json
   "password": "devcircle"
 }
 
+### GitHub OAuth2 mock 回调
+GET http://localhost:8080/api/auth/oauth2/callback/github?code=demo-code&state=devcircle
+
+### 刷新令牌
+POST http://localhost:8080/api/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "replace-with-refresh-token"
+}
+
 ### 推荐流
-GET http://localhost:8080/api/recommend/feed?size=3
+GET http://localhost:8080/api/recommend/feed?scene=home&size=3
+Authorization: Bearer demo-access-token-demo
+
+### 图片流
+GET http://localhost:8080/api/recommend/feed?scene=image&size=3
+Authorization: Bearer demo-access-token-demo
+
+### 视频流
+GET http://localhost:8080/api/recommend/feed?scene=video&size=3
 Authorization: Bearer demo-access-token-demo
 
 ### 推荐曝光
@@ -22,19 +41,33 @@ Content-Type: application/json
 }
 
 ### 帖子列表
-GET http://localhost:8080/api/posts
+GET http://localhost:8080/api/posts?type=IMAGE
 Authorization: Bearer demo-access-token-demo
 
-### 创建帖子
+### 创建图片帖子
 POST http://localhost:8080/api/posts
 Authorization: Bearer demo-access-token-demo
 Content-Type: application/json
 
 {
-  "title": "Spring Cloud Gateway 鉴权过滤器实践",
-  "content": "这是一篇用于演示 DevCircle 内容发布链路的文章。",
-  "tags": ["Spring Cloud", "Gateway"]
+  "type": "IMAGE",
+  "title": "Elasticsearch 搜索索引设计图解",
+  "content": "用多图说明字段映射、标签过滤、排序和补偿重建策略。",
+  "tags": ["Elasticsearch", "搜索"],
+  "mediaIds": [201, 202]
 }
+
+### 上传媒体，REST Client 需选择本地文件
+POST http://localhost:8080/api/files
+Authorization: Bearer demo-access-token-demo
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="file"; filename="cover.png"
+Content-Type: image/png
+
+< ./cover.png
+--boundary--
 
 ### 点赞，带幂等键
 POST http://localhost:8080/api/posts/1001/like
@@ -45,6 +78,14 @@ Idempotency-Key: like-1001-demo
 POST http://localhost:8080/api/posts/1001/favorite
 Authorization: Bearer demo-access-token-demo
 Idempotency-Key: favorite-1001-demo
+
+### 关注用户
+POST http://localhost:8080/api/users/42/follow
+Authorization: Bearer demo-access-token-demo
+
+### 用户二跳推荐
+GET http://localhost:8080/api/users/2/recommendations
+Authorization: Bearer demo-access-token-demo
 
 ### 搜索
 GET http://localhost:8080/api/search/posts?keyword=Spring

@@ -11,9 +11,11 @@ devcircle:
   s3:
     endpoint: ${S3_ENDPOINT:http://localhost:9000}
     bucket: ${S3_BUCKET:devcircle}
+    access-key: ${S3_ACCESS_KEY:minioadmin}
+    secret-key: ${S3_SECRET_KEY:minioadmin}
+    public-base-url: ${S3_PUBLIC_BASE_URL:http://localhost:9000/devcircle}
 management:
   endpoints:
     web:
       exposure:
         include: health,info,prometheus
-
