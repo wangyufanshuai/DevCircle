@@ -49,6 +49,13 @@ docker compose up -d mysql redis kafka elasticsearch minio prometheus grafana
 .\deploy\kafka\create-topics.ps1
 ```
 
+Windows Docker Desktop 29 如遇 Testcontainers named pipe 探测失败，先启动本地 Docker socket 代理：
+
+```powershell
+.\scripts\dev\testcontainers-docker-proxy.ps1
+$env:DOCKER_HOST='tcp://127.0.0.1:2375'
+```
+
 运行后端测试：
 
 ```powershell
@@ -135,6 +142,6 @@ CI 会执行后端测试、前端构建、Playwright 冒烟测试、Helm lint �
 ## 常见问题
 
 - 如果后端提示不支持 `--release 21`，说明当前 `java` 不是 JDK 21。
-- Testcontainers 需要本机 Docker 可用；Docker 不可用时，相关测试会给出明确跳过信息。
+- Testcontainers 需要本机 Docker 可用；v0.5 起核心容器测试不会静默跳过。
 - 如果前端 API 请求失败，界面会 fallback 到本地 mock 数据，方便只查看 UI。
 - 本项目默认使用本地事务 + Outbox + Kafka + 消费端幂等，不引入 XA 或 Seata。

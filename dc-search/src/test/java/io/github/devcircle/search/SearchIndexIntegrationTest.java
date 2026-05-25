@@ -1,10 +1,13 @@
 package io.github.devcircle.search;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.search.application.SearchService;
 import io.github.devcircle.search.infrastructure.PostSearchDocument;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Bean;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -14,7 +17,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 @SpringBootTest(properties = {
         "spring.kafka.bootstrap-servers=localhost:65535"
 })
@@ -34,6 +37,14 @@ class SearchIndexIntegrationTest {
 
     @Autowired
     ElasticsearchOperations elasticsearchOperations;
+
+    @TestConfiguration
+    static class TestBeans {
+        @Bean
+        ObjectMapper objectMapper() {
+            return new ObjectMapper();
+        }
+    }
 
     @Test
     void postEventCanBeIndexedAndSearched() throws Exception {

@@ -108,11 +108,12 @@ public class PostRepository {
             statement.setString(2, request.title());
             return statement;
         }, keyHolder);
-        Long postId = keyHolder.getKeyAs(Long.class);
-        if (postId == null) {
+        Number generatedKey = keyHolder.getKey();
+        if (generatedKey == null) {
             throw new DataAccessException("Failed to create post") {
             };
         }
+        Long postId = generatedKey.longValue();
         jdbcClient.sql("INSERT INTO post_content(post_id, markdown) VALUES (:postId, :markdown)")
                 .param("postId", postId)
                 .param("markdown", request.content())
@@ -166,4 +167,3 @@ public class PostRepository {
         return content.substring(0, Math.min(140, content.length()));
     }
 }
-

@@ -16,7 +16,23 @@ $env:Path="$env:JAVA_HOME\bin;$env:Path"
 .\mvnw.cmd -B test
 ```
 
-如果 Docker 不可用，带 `@Testcontainers(disabledWithoutDocker = true)` 的测试会跳过，并在测试输出中说明原因。CI 环境应提供 Docker，因此这些测试会正常执行。
+v0.5 起核心 Testcontainers 测试不再静默跳过。Docker 不可用时测试应失败，避免把“没有跑容器”误认为“容器链路通过”。
+
+Windows Docker Desktop 29 在部分环境下会让旧的 Java named pipe 探测拿到空的 `/info` 响应。推荐先启动本地只绑定回环地址的 Docker socket 代理：
+
+```powershell
+.\scripts\dev\testcontainers-docker-proxy.ps1
+$env:DOCKER_HOST='tcp://127.0.0.1:2375'
+.\mvnw.cmd -B test
+```
+
+测试完成后可停止代理：
+
+```powershell
+.\scripts\dev\testcontainers-docker-proxy.ps1 -Stop
+```
+
+CI 环境使用默认 Docker Unix socket，不需要这个代理。
 
 ## 覆盖链路
 

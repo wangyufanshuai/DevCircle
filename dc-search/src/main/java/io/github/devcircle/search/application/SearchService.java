@@ -60,6 +60,7 @@ public class SearchService {
                     new PostSearchDocument(1001L, "Spring Cloud 微服务里的 Outbox 可靠事件实践", "用本地事务、Kafka 和消费端幂等替代 XA。", "lin", List.of("Spring Cloud", "Kafka"), "PUBLISHED", Instant.now()),
                     new PostSearchDocument(1003L, "Redis 热点缓存、限流和点赞幂等的工程边界", "详情缓存、布隆过滤、令牌桶和幂等键设计。", "zhou", List.of("Redis", "限流"), "PUBLISHED", Instant.now())
             ));
+            elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
             return 2;
         } catch (RuntimeException ex) {
             return 0;
@@ -78,6 +79,7 @@ public class SearchService {
             String title = root.path("title").asText();
             List<String> tags = objectMapper.convertValue(root.path("tags"), objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
             elasticsearchOperations.save(new PostSearchDocument(postId, title, title, "event", tags, "PENDING", Instant.now()));
+            elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
         } catch (RuntimeException | java.io.IOException ignored) {
             // Failed events are replayable from Kafka or the manual reindex endpoint.
         }
