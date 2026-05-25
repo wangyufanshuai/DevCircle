@@ -36,4 +36,3 @@ public class RecommendationScorer {
         return Math.max(0, 24.0 - hours) * 0.6;
     }
 }
-

@@ -41,7 +41,6 @@ const filteredPosts = computed(() => {
 })
 
 const pendingPosts = computed(() => audits.value.filter((post) => !approved.value.includes(post.postId) && !rejected.value.includes(post.postId)))
-
 const unreadCount = computed(() => notifications.value.filter((item) => !item.read).length)
 
 function approve(id: number) {
@@ -141,7 +140,7 @@ onMounted(async () => {
             <span>{{ item.label }}</span>
           </button>
         </nav>
-        <button class="write-button">
+        <button class="write-button" @click="selectedNav = 'write'">
           <n-icon :component="Plus" />
           写文章
         </button>
@@ -168,7 +167,7 @@ onMounted(async () => {
             <div class="section-heading">
               <div>
                 <h1>推荐流</h1>
-                <p>按关注标签、实时热度和互动质量排序</p>
+                <p>按关注标签、实时热度、内容新鲜度和曝光记录排序</p>
               </div>
               <n-button type="primary" secondary @click="refreshFeed">刷新推荐</n-button>
             </div>
@@ -196,6 +195,7 @@ onMounted(async () => {
                 <span>{{ post.likes }} 赞</span>
                 <span>{{ post.comments }} 评论</span>
                 <span>{{ post.views }} 浏览</span>
+                <span>分数 {{ Math.round(post.score) }}</span>
                 <button class="text-action" @click="toggleInteraction(post.id, 'like')">{{ post.liked ? '已赞' : '点赞' }}</button>
                 <button class="text-action" @click="toggleInteraction(post.id, 'favorite')">{{ post.favorited ? '已收藏' : '收藏' }}</button>
                 <span class="reason">{{ post.reason }}</span>

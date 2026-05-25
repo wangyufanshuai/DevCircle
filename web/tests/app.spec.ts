@@ -30,7 +30,7 @@ test.beforeEach(async ({ page }) => {
               post: {
                 id: 1003,
                 title: 'Redis 热点缓存、限流和点赞幂等的工程边界',
-                excerpt: '从详情缓存、布隆过滤、令桶到互动服务的幂等键设计。',
+                excerpt: '从详情缓存、布隆过滤、令牌桶到互动服务的幂等键设计。',
                 author: 'zhou',
                 tags: ['Redis', '限流'],
                 likes: 156,
@@ -79,6 +79,9 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/posts/*/like', (route) =>
     route.fulfill({ contentType: 'application/json', body: JSON.stringify({ code: 'OK', message: 'success', data: { targetId: 1001, type: 'LIKE', active: true, duplicated: false, idempotencyKey: 'test' }, timestamp: new Date().toISOString() }) })
   )
+  await page.route('**/api/posts/*/favorite', (route) =>
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ code: 'OK', message: 'success', data: { targetId: 1001, type: 'FAVORITE', active: true, duplicated: false, idempotencyKey: 'test' }, timestamp: new Date().toISOString() }) })
+  )
   await page.route('**/api/posts', (route) =>
     route.fulfill({
       contentType: 'application/json',
@@ -92,9 +95,10 @@ test.beforeEach(async ({ page }) => {
   )
 })
 
-test('renders feed and filters by keyword', async ({ page }) => {
+test('renders feed and filters by keyword without mojibake', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '推荐流' })).toBeVisible()
+  await expect(page.locator('body')).not.toContainText(new RegExp('[\\u9428\\u93ba\\u93c4\\u7ee0\\u7039\\u5a34\\u9359\\u6769\\u9a9e]'))
   await page.getByPlaceholder('搜索问题、文章和标签').fill('Redis')
   await expect(page.getByText('Redis 热点缓存、限流和点赞幂等的工程边界')).toBeVisible()
   await expect(page.getByText('Spring Cloud 微服务里的 Outbox 可靠事件实践')).not.toBeVisible()
@@ -106,7 +110,7 @@ test('approves pending audit item', async ({ page }) => {
   await expect(page.getByText(/已通过内容/)).toBeVisible()
 })
 
-test('publishes and likes a feed post', async ({ page }) => {
+test('publishes, likes and favorites a feed post', async ({ page }) => {
   await page.goto('/')
   await page.getByPlaceholder('标题').fill('测试发布文章')
   await page.getByPlaceholder('正文，提交后写入帖子和 Outbox 事件').fill('测试内容')
@@ -114,6 +118,8 @@ test('publishes and likes a feed post', async ({ page }) => {
   await expect(page.getByText(/已提交/)).toBeVisible()
   await page.getByRole('button', { name: '点赞' }).first().click()
   await expect(page.getByRole('button', { name: '已赞' }).first()).toBeVisible()
+  await page.getByRole('button', { name: '收藏' }).first().click()
+  await expect(page.getByRole('button', { name: '已收藏' }).first()).toBeVisible()
 })
 
 test('mobile viewport has no horizontal overflow', async ({ page, isMobile }) => {

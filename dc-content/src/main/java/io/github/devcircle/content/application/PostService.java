@@ -14,7 +14,7 @@ import java.util.List;
 public class PostService {
     private final PostRepository postRepository;
     private final List<PostSummary> demoPosts = List.of(
-            new PostSummary(1001L, "Spring Cloud 微服务里的 Outbox 可靠事件实践", "用本地事务、Kafka 和消费端幂等替代 XA。", "lin", List.of("Spring Cloud", "Kafka", "MySQL"), 328, 42, 9150, "PUBLISHED", Instant.now().minusSeconds(7200)),
+            new PostSummary(1001L, "Spring Cloud 微服务里的 Outbox 可靠事件实践", "用本地事务、Kafka 和消费端幂等替代 XA，保证内容发布、搜索索引和通知推送最终一致。", "lin", List.of("Spring Cloud", "Kafka", "MySQL"), 328, 42, 9150, "PUBLISHED", Instant.now().minusSeconds(7200)),
             new PostSummary(1002L, "Elasticsearch 技术社区搜索索引怎么设计", "字段映射、标签过滤、排序和补偿重建策略。", "chen", List.of("Elasticsearch", "搜索"), 211, 27, 6020, "PENDING", Instant.now().minusSeconds(3600))
     );
 
