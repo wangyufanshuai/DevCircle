@@ -30,7 +30,13 @@ public class DemoAuthFilter implements GlobalFilter, Ordered {
             exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
             return exchange.getResponse().setComplete();
         }
-        return chain.filter(exchange);
+        var roles = ADMIN_TOKEN.equals(authorization) ? "ADMIN,USER" : "USER";
+        var userId = ADMIN_TOKEN.equals(authorization) ? "1" : "2";
+        var request = exchange.getRequest().mutate()
+                .header("X-User-Id", userId)
+                .header("X-Roles", roles)
+                .build();
+        return chain.filter(exchange.mutate().request(request).build());
     }
 
     @Override
@@ -38,4 +44,3 @@ public class DemoAuthFilter implements GlobalFilter, Ordered {
         return -90;
     }
 }
-

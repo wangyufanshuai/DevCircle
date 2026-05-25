@@ -8,8 +8,18 @@ Content-Type: application/json
 }
 
 ### 推荐流
-GET http://localhost:8080/api/recommend/feed
+GET http://localhost:8080/api/recommend/feed?size=3
 Authorization: Bearer demo-access-token-demo
+
+### 推荐曝光
+POST http://localhost:8080/api/recommend/exposures
+Authorization: Bearer demo-access-token-demo
+Content-Type: application/json
+
+{
+  "postIds": [1001, 1003],
+  "scene": "home_feed"
+}
 
 ### 帖子列表
 GET http://localhost:8080/api/posts
@@ -31,9 +41,22 @@ POST http://localhost:8080/api/posts/1001/like
 Authorization: Bearer demo-access-token-demo
 Idempotency-Key: like-1001-demo
 
+### 收藏，带幂等键
+POST http://localhost:8080/api/posts/1001/favorite
+Authorization: Bearer demo-access-token-demo
+Idempotency-Key: favorite-1001-demo
+
 ### 搜索
 GET http://localhost:8080/api/search/posts?keyword=Spring
 Authorization: Bearer demo-access-token-demo
+
+### 重建搜索索引
+POST http://localhost:8080/api/search/admin/reindex
+Authorization: Bearer demo-access-token-admin
+
+### 发布 Outbox 事件
+POST http://localhost:8080/api/content/admin/outbox/publish?batchSize=100
+Authorization: Bearer demo-access-token-admin
 
 ### 审核列表
 GET http://localhost:8080/api/admin/audits/posts
@@ -42,4 +65,3 @@ Authorization: Bearer demo-access-token-admin
 ### 审核通过
 POST http://localhost:8080/api/admin/audits/posts/1002/approve
 Authorization: Bearer demo-access-token-admin
-

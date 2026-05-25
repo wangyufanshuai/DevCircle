@@ -42,6 +42,23 @@ class DemoAuthFilterTest {
         assertThat(called).isTrue();
     }
 
+    @Test
+    void propagatesDemoUserContext() {
+        AtomicBoolean called = new AtomicBoolean(false);
+        var exchange = MockServerWebExchange.from(MockServerHttpRequest.get("/api/posts")
+                .header(HttpHeaders.AUTHORIZATION, DemoAuthFilter.ADMIN_TOKEN)
+                .build());
+
+        filter.filter(exchange, mutated -> {
+            called.set(true);
+            assertThat(mutated.getRequest().getHeaders().getFirst("X-User-Id")).isEqualTo("1");
+            assertThat(mutated.getRequest().getHeaders().getFirst("X-Roles")).isEqualTo("ADMIN,USER");
+            return Mono.empty();
+        }).block();
+
+        assertThat(called).isTrue();
+    }
+
     private GatewayFilterChain passThrough() {
         return exchange -> Mono.empty();
     }
@@ -53,4 +70,3 @@ class DemoAuthFilterTest {
         };
     }
 }
-

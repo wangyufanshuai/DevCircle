@@ -6,6 +6,7 @@ import io.github.devcircle.common.model.PostSummary;
 import io.github.devcircle.content.application.PostService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -34,7 +35,8 @@ class PostController {
     }
 
     @PostMapping
-    ApiResponse<PostSummary> create(@Valid @RequestBody CreatePostRequest request) {
-        return ApiResponse.ok(postService.create(request));
+    ApiResponse<PostSummary> create(@RequestHeader(value = "X-User-Id", defaultValue = "2") Long userId,
+                                    @Valid @RequestBody CreatePostRequest request) {
+        return ApiResponse.ok(postService.create(userId, request));
     }
 }

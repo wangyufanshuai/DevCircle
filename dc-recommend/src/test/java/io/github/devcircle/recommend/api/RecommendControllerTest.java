@@ -1,17 +1,22 @@
 package io.github.devcircle.recommend.api;
 
+import io.github.devcircle.recommend.application.FeedService;
+import io.github.devcircle.recommend.application.RecommendationScorer;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 class RecommendControllerTest {
     @Test
-    void feedReturnsExplainableRecommendations() {
-        var response = new RecommendController().feed();
+    void feedReturnsCursorPageWithReasons() {
+        var service = new FeedService(new RecommendationScorer(), mock(StringRedisTemplate.class));
+        var response = new RecommendController(service).feed(2L, null, 2);
 
-        assertThat(response.data()).hasSize(2);
-        assertThat(response.data().getFirst().reason()).contains("关注");
-        assertThat(response.data().getFirst().score()).isGreaterThan(0.8);
+        assertThat(response.data().records()).hasSize(2);
+        assertThat(response.data().records().getFirst().reason()).isNotBlank();
+        assertThat(response.data().nextCursor()).isEqualTo("2");
     }
 }
 

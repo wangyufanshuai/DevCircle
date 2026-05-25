@@ -118,9 +118,20 @@ npx playwright test
 
 CI 会执行后端测试、前端构建、Playwright 冒烟测试和 Helm lint。
 
+## v0.3 Feed Engine
+
+v0.3 增加真实推荐流主线：
+
+- `dc-content` 使用 JDBC 写入帖子、标签和 Outbox 事件。
+- `dc-interaction` 使用 MySQL 唯一索引保证互动幂等，并写入 Redis 热度。
+- `dc-recommend` 提供游标 Feed、可解释排序和曝光去重。
+- `dc-search` 增加 Elasticsearch 文档、手动重建索引和 Kafka 消费者。
+- 前端首页支持刷新推荐、加载更多、发布文章、点赞、收藏和搜索。
+
+详细设计见 [docs/feed-engine.md](docs/feed-engine.md)。
+
 ## 常见问题
 
 - 如果后端提示不支持 `--release 21`，说明当前 `java` 不是 JDK 21。
 - 如果前端 API 请求失败，界面会自动 fallback 到本地 mock 数据，方便只看 UI。
 - 本地未安装 Helm 不影响开发；Helm lint 可在 GitHub Actions 中验证。
-

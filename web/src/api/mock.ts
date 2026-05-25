@@ -1,4 +1,4 @@
-import type { AuditItem, NotificationItem, Post, RecommendedPost } from './types'
+import type { AuditItem, FeedItem, NotificationItem, Post } from './types'
 
 export const mockPosts: Post[] = [
   {
@@ -36,10 +36,12 @@ export const mockPosts: Post[] = [
   }
 ]
 
-export const mockRecommendations: RecommendedPost[] = mockPosts.map((post, index) => ({
+export const mockRecommendations: FeedItem[] = mockPosts.map((post, index) => ({
   post,
   reason: ['你关注了 Spring Cloud 和可靠消息', '近期搜索热度上升', '与你收藏的缓存文章相似'][index],
-  score: 0.92 - index * 0.08
+  score: 92 - index * 8,
+  liked: false,
+  favorited: false
 }))
 
 export const mockAudits: AuditItem[] = [
@@ -50,4 +52,3 @@ export const mockNotifications: NotificationItem[] = [
   { id: 1, type: 'AUDIT', title: '文章审核通过', content: '你的文章已经进入推荐流。', read: false, createdAt: new Date().toISOString() },
   { id: 2, type: 'INTERACTION', title: '收到新的评论', content: 'zhou 评论了你的文章。', read: true, createdAt: new Date().toISOString() }
 ]
-

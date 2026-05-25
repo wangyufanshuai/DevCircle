@@ -12,6 +12,12 @@ export type PageResponse<T> = {
   size: number
 }
 
+export type CursorPage<T> = {
+  records: T[]
+  nextCursor: string
+  hasMore: boolean
+}
+
 export type Post = {
   id: number
   title: string
@@ -25,10 +31,12 @@ export type Post = {
   createdAt?: string
 }
 
-export type RecommendedPost = {
+export type FeedItem = {
   post: Post
   reason: string
   score: number
+  liked: boolean
+  favorited: boolean
 }
 
 export type AuditItem = {
@@ -47,3 +55,16 @@ export type NotificationItem = {
   createdAt: string
 }
 
+export type CreatePostRequest = {
+  title: string
+  content: string
+  tags: string[]
+}
+
+export type InteractionResult = {
+  targetId: number
+  type: string
+  active: boolean
+  duplicated: boolean
+  idempotencyKey: string
+}

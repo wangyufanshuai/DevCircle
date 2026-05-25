@@ -225,6 +225,15 @@ p {
   margin-bottom: 14px;
 }
 
+.composer {
+  display: grid;
+  gap: 12px;
+}
+
+.composer h2 {
+  font-size: 18px;
+}
+
 .post-meta,
 .post-card footer {
   display: flex;
@@ -257,6 +266,16 @@ p {
 
 .post-card footer {
   padding-top: 16px;
+}
+
+.text-action {
+  border: 0;
+  padding: 0;
+  color: #2563eb;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .reason {
