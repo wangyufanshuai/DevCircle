@@ -1,0 +1,21 @@
+image:
+  registry: ghcr.io/example/devcircle
+  tag: 0.1.0
+services:
+  gateway: { port: 8080 }
+  auth: { port: 8101 }
+  user: { port: 8102 }
+  content: { port: 8103 }
+  comment: { port: 8104 }
+  interaction: { port: 8105 }
+  search: { port: 8106 }
+  recommend: { port: 8107 }
+  notification: { port: 8108 }
+  file: { port: 8109 }
+  admin: { port: 8110 }
+env:
+  MYSQL_HOST: mysql
+  REDIS_HOST: redis
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  ELASTICSEARCH_URIS: http://elasticsearch:9200
+

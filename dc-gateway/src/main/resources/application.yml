@@ -1,0 +1,45 @@
+server:
+  port: 8080
+spring:
+  application:
+    name: dc-gateway
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: auth
+              uri: ${DC_AUTH_URI:http://localhost:8101}
+              predicates: [ Path=/api/auth/** ]
+            - id: user
+              uri: ${DC_USER_URI:http://localhost:8102}
+              predicates: [ Path=/api/users/** ]
+            - id: interaction
+              uri: ${DC_INTERACTION_URI:http://localhost:8105}
+              predicates: [ Path=/api/posts/*/like,/api/posts/*/favorite ]
+            - id: content
+              uri: ${DC_CONTENT_URI:http://localhost:8103}
+              predicates: [ Path=/api/posts/** ]
+            - id: comment
+              uri: ${DC_COMMENT_URI:http://localhost:8104}
+              predicates: [ Path=/api/comments/** ]
+            - id: search
+              uri: ${DC_SEARCH_URI:http://localhost:8106}
+              predicates: [ Path=/api/search/** ]
+            - id: recommend
+              uri: ${DC_RECOMMEND_URI:http://localhost:8107}
+              predicates: [ Path=/api/recommend/** ]
+            - id: notification
+              uri: ${DC_NOTIFICATION_URI:http://localhost:8108}
+              predicates: [ Path=/api/notifications/**,/ws/notifications/** ]
+            - id: file
+              uri: ${DC_FILE_URI:http://localhost:8109}
+              predicates: [ Path=/api/files/** ]
+            - id: admin
+              uri: ${DC_ADMIN_URI:http://localhost:8110}
+              predicates: [ Path=/api/admin/** ]
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus

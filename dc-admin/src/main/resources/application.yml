@@ -1,0 +1,10 @@
+server:
+  port: 8110
+spring:
+  application:
+    name: dc-admin
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus

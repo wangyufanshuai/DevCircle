@@ -1,0 +1,7 @@
+apiVersion: v2
+name: devcircle
+description: DevCircle programmer community microservices.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+

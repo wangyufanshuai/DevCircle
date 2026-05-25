@@ -1,0 +1,45 @@
+### 登录
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "devcircle"
+}
+
+### 推荐流
+GET http://localhost:8080/api/recommend/feed
+Authorization: Bearer demo-access-token-demo
+
+### 帖子列表
+GET http://localhost:8080/api/posts
+Authorization: Bearer demo-access-token-demo
+
+### 创建帖子
+POST http://localhost:8080/api/posts
+Authorization: Bearer demo-access-token-demo
+Content-Type: application/json
+
+{
+  "title": "Spring Cloud Gateway 鉴权过滤器实践",
+  "content": "这是一篇用于演示 DevCircle 内容发布链路的文章。",
+  "tags": ["Spring Cloud", "Gateway"]
+}
+
+### 点赞，带幂等键
+POST http://localhost:8080/api/posts/1001/like
+Authorization: Bearer demo-access-token-demo
+Idempotency-Key: like-1001-demo
+
+### 搜索
+GET http://localhost:8080/api/search/posts?keyword=Spring
+Authorization: Bearer demo-access-token-demo
+
+### 审核列表
+GET http://localhost:8080/api/admin/audits/posts
+Authorization: Bearer demo-access-token-admin
+
+### 审核通过
+POST http://localhost:8080/api/admin/audits/posts/1002/approve
+Authorization: Bearer demo-access-token-admin
+

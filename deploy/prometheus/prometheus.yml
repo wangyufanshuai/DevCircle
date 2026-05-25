@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: devcircle
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - host.docker.internal:8080
+          - host.docker.internal:8101
+          - host.docker.internal:8102
+          - host.docker.internal:8103
+          - host.docker.internal:8104
+          - host.docker.internal:8105
+          - host.docker.internal:8106
+          - host.docker.internal:8107
+          - host.docker.internal:8108
+          - host.docker.internal:8109
+          - host.docker.internal:8110
+

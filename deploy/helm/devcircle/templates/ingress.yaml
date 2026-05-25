@@ -1,0 +1,17 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: devcircle
+spec:
+  rules:
+    - host: devcircle.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dc-gateway
+                port:
+                  number: 8080
+

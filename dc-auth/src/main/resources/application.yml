@@ -1,0 +1,17 @@
+server:
+  port: 8101
+spring:
+  application:
+    name: dc-auth
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:3306/dc_auth?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: ${MYSQL_USER:devcircle}
+    password: ${MYSQL_PASSWORD:devcircle}
+  flyway:
+    enabled: true
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+

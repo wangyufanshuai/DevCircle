@@ -1,0 +1,45 @@
+{{- range $name, $svc := .Values.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dc-{{ $name }}
+  labels:
+    app.kubernetes.io/name: dc-{{ $name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dc-{{ $name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dc-{{ $name }}
+    spec:
+      containers:
+        - name: dc-{{ $name }}
+          image: "{{ $.Values.image.registry }}/dc-{{ $name }}:{{ $.Values.image.tag }}"
+          ports:
+            - containerPort: {{ $svc.port }}
+          env:
+            {{- range $key, $value := $.Values.env }}
+            - name: {{ $key }}
+              value: "{{ $value }}"
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: {{ $svc.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dc-{{ $name }}
+spec:
+  selector:
+    app.kubernetes.io/name: dc-{{ $name }}
+  ports:
+    - port: {{ $svc.port }}
+      targetPort: {{ $svc.port }}
+{{- end }}
+

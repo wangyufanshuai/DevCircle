@@ -1,0 +1,19 @@
+server:
+  port: 8109
+spring:
+  application:
+    name: dc-file
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
+devcircle:
+  s3:
+    endpoint: ${S3_ENDPOINT:http://localhost:9000}
+    bucket: ${S3_BUCKET:devcircle}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+
