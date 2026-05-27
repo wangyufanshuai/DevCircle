@@ -143,6 +143,26 @@ export async function searchPosts(keyword: string): Promise<Post[]> {
   }
 }
 
+export async function fetchPostDetail(postId: number): Promise<Post> {
+  try {
+    return await getJson<Post>(`/api/posts/${postId}`)
+  } catch {
+    return mockPosts.find((post) => post.id === postId) ?? mockPosts[0]
+  }
+}
+
+export async function fetchRelatedPosts(postId: number): Promise<Post[]> {
+  try {
+    return await getJson<Post[]>(`/api/posts/${postId}/related?size=6`)
+  } catch {
+    const current = mockPosts.find((post) => post.id === postId) ?? mockPosts[0]
+    return mockPosts
+      .filter((post) => post.id !== postId)
+      .filter((post) => post.theme === current.theme || post.tags.some((tag) => current.tags.includes(tag)))
+      .slice(0, 6)
+  }
+}
+
 export async function submitDeductionAnswer(postId: number, answer: string): Promise<DeductionAnswerResult> {
   try {
     return await postJson<DeductionAnswerResult>(`/api/deduction/cases/${postId}/answers`, { answer })

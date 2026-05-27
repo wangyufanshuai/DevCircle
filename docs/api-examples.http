@@ -40,6 +40,14 @@ Content-Type: application/json
 GET http://localhost:8080/api/posts?theme=DEDUCTION&contentKind=CASE_FILE&difficulty=HARD
 Authorization: Bearer demo-access-token-demo
 
+### 主题帖子详情
+GET http://localhost:8080/api/posts/1001
+Authorization: Bearer demo-access-token-demo
+
+### 相关内容召回
+GET http://localhost:8080/api/posts/1001/related?size=6
+Authorization: Bearer demo-access-token-demo
+
 ### 创建推理案件
 POST http://localhost:8080/api/posts
 Authorization: Bearer demo-access-token-demo

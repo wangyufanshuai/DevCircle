@@ -2,6 +2,7 @@ package io.github.devcircle.content.application;
 
 import io.github.devcircle.content.api.DeductionAnswerResult;
 import io.github.devcircle.content.api.LeaderboardEntry;
+import io.github.devcircle.common.seed.ThemeContentLibrary;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -12,7 +13,6 @@ import java.util.List;
 
 @Service
 public class DeductionService {
-    private static final String DEMO_SOLUTION = "守夜人藏在钟楼夹层";
     private final JdbcClient jdbcClient;
 
     public DeductionService(JdbcClient jdbcClient) {
@@ -21,7 +21,7 @@ public class DeductionService {
 
     @Transactional
     public DeductionAnswerResult submitAnswer(Long userId, Long postId, String answer) {
-        boolean correct = isCorrect(answer);
+        boolean correct = isCorrect(postId, answer);
         int points = correct ? 20 : 0;
         try {
             jdbcClient.sql("""
@@ -48,11 +48,11 @@ public class DeductionService {
                         .param("points", points)
                         .update();
             }
-            return new DeductionAnswerResult(postId, userId, correct, false, points, explanation(correct));
+            return new DeductionAnswerResult(postId, userId, correct, false, points, explanation(postId, correct));
         } catch (DuplicateKeyException ex) {
             return existingAttempt(userId, postId);
         } catch (DataAccessException ex) {
-            return new DeductionAnswerResult(postId, userId, correct, false, points, explanation(correct));
+            return new DeductionAnswerResult(postId, userId, correct, false, points, explanation(postId, correct));
         }
     }
 
@@ -107,17 +107,21 @@ public class DeductionService {
                 .single();
     }
 
-    private boolean isCorrect(String answer) {
+    private boolean isCorrect(Long postId, String answer) {
         if (answer == null) {
             return false;
         }
         String normalized = answer.replace(" ", "").toLowerCase();
-        return normalized.contains("夹层") || normalized.contains("钟楼") || normalized.contains(DEMO_SOLUTION.replace(" ", "").toLowerCase());
+        return ThemeContentLibrary.find(postId)
+                .map(seed -> seed.answerKeywords().stream().anyMatch(keyword -> normalized.contains(keyword.replace(" ", "").toLowerCase())))
+                .orElse(normalized.contains("夹层") || normalized.contains("钟楼"));
     }
 
-    private String explanation(boolean correct) {
+    private String explanation(Long postId, boolean correct) {
         if (correct) {
-            return "推理成立：潮湿鞋印是误导，真正关键是停在 00:07 的怀表和被撕掉的航海日志，守夜人利用钟楼夹层躲过搜查。";
+            return ThemeContentLibrary.find(postId).map(seed -> seed.explanation().isBlank()
+                    ? "推理成立，关键线索已经闭合。"
+                    : seed.explanation()).orElse("推理成立，关键线索已经闭合。");
         }
         return "线索还没有闭合。建议重新检查怀表时间、潮湿鞋印方向和航海日志缺页。";
     }

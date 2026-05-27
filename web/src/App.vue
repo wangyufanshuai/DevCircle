@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { NButton, NConfigProvider, NIcon, NInput, NSelect, NTag } from 'naive-ui'
-import { Bell, BookOpen, Check, Compass, FileText, Heart, Orbit, PenLine, Search, Shield, Sparkles, Telescope, UserPlus, X } from 'lucide-vue-next'
-import { createPost, demoOAuthLogin, fetchAudits, fetchFeed, fetchLeaderboard, fetchNotifications, followUser, interact, recordExposures, searchPosts, submitDeductionAnswer } from './api/client'
+import { Bell, BookOpen, Check, Compass, Heart, Orbit, PenLine, Search, Shield, Sparkles, Telescope, UserPlus, X } from 'lucide-vue-next'
+import { createPost, demoOAuthLogin, fetchAudits, fetchFeed, fetchLeaderboard, fetchNotifications, fetchPostDetail, fetchRelatedPosts, followUser, interact, recordExposures, searchPosts, submitDeductionAnswer } from './api/client'
 import type { AuditItem, FeedItem, LeaderboardEntry, NotificationItem, Post } from './api/types'
 
 const navItems = [
@@ -54,6 +54,8 @@ const loadingFeed = ref(false)
 const publishing = ref(false)
 const answerText = ref('守夜人藏在钟楼夹层')
 const answerMessage = ref('')
+const selectedPost = ref<Post | null>(null)
+const relatedPosts = ref<Post[]>([])
 const draft = ref({
   title: '',
   content: '',
@@ -70,11 +72,12 @@ const draft = ref({
 const unreadCount = computed(() => notifications.value.filter((item) => !item.read).length)
 const pendingPosts = computed(() => audits.value.filter((post) => !approved.value.includes(post.postId) && !rejected.value.includes(post.postId)))
 const visibleFeed = computed(() => searchResults.value.length > 0 ? searchResults.value.map((post) => wrapPost(post, '主题搜索命中', 'SEARCH')) : feedItems.value)
+const firstSolvableCase = computed(() => visibleFeed.value.find((item) => item.post.solvable)?.post)
 const themeStats = computed(() => [
   { label: '推理案件', value: visibleFeed.value.filter((item) => item.post.theme === 'DEDUCTION').length, hint: '可答题、可积分' },
   { label: '科幻创作', value: visibleFeed.value.filter((item) => item.post.theme === 'SCI_FI').length, hint: '短篇与世界观' },
   { label: '宇宙档案', value: visibleFeed.value.filter((item) => item.post.theme === 'COSMOS').length, hint: '观测和科普' },
-  { label: '未读通知', value: unreadCount.value, hint: '互动与审核反馈' }
+  { label: '候选内容', value: visibleFeed.value.length, hint: '当前频道可见' }
 ])
 const activeTitle = computed(() => {
   if (selectedNav.value === 'deduction') return '推理馆'
@@ -85,7 +88,6 @@ const activeTitle = computed(() => {
   if (selectedNav.value === 'search') return '搜索结果'
   return '星环首页'
 })
-const firstSolvableCase = computed(() => visibleFeed.value.find((item) => item.post.solvable)?.post)
 
 function wrapPost(post: Post, reason: string, algorithm: string): FeedItem {
   return { post, reason, score: 0, liked: false, favorited: false, algorithm, mediaType: post.type, features: {} }
@@ -118,11 +120,18 @@ async function loadFeed(cursor?: string) {
 
 async function switchNav(key: string) {
   selectedNav.value = key
+  selectedPost.value = null
+  relatedPosts.value = []
   searchResults.value = []
   if (['mixed', 'deduction', 'sci_fi', 'cosmos'].includes(key)) {
     scene.value = key
     await loadFeed()
   }
+}
+
+async function openDetail(post: Post) {
+  selectedPost.value = await fetchPostDetail(post.id)
+  relatedPosts.value = await fetchRelatedPosts(post.id)
 }
 
 async function runSearch() {
@@ -132,6 +141,7 @@ async function runSearch() {
     searchResults.value = searchResults.value.filter((post) => post.theme === map[selectedSearchTheme.value])
   }
   selectedNav.value = 'search'
+  selectedPost.value = null
 }
 
 async function toggleInteraction(postId: number, type: 'like' | 'favorite') {
@@ -162,8 +172,10 @@ async function publishPost() {
   }
 }
 
-async function answerCase(postId: number) {
-  const result = await submitDeductionAnswer(postId, answerText.value)
+async function answerCase(postId?: number) {
+  const targetId = postId ?? firstSolvableCase.value?.id
+  if (!targetId) return
+  const result = await submitDeductionAnswer(targetId, answerText.value)
   answerMessage.value = `${result.correct ? '推理正确' : '推理未闭合'}，获得 ${result.points} 分。${result.explanation}`
   leaderboard.value = await fetchLeaderboard()
 }
@@ -239,9 +251,9 @@ onMounted(async () => {
 
         <section class="hero-panel">
           <div>
-            <p class="eyebrow">DevCircle v0.8 产品重塑</p>
-            <h1>把普通社交 Feed 改造成推理、科幻与宇宙的内容宇宙</h1>
-            <p>案件可提交答案，科幻可沉淀世界观，宇宙档案可按主题检索；推荐模型用主题偏好、热度、难度、曝光记录和解谜状态排序。</p>
+            <p class="eyebrow">DevCircle v0.9 内容库升级</p>
+            <h1>120 条主题实例，把推理馆、科幻馆和宇宙档案做成可读的内容平台</h1>
+            <p>每个主题约 40 条内容，详情页包含线索板、世界观设定、宇宙观测事实和相关内容召回。</p>
           </div>
           <div class="hero-actions">
             <n-select v-model:value="scene" :options="themeOptions" size="medium" @update:value="loadFeed()" />
@@ -254,7 +266,7 @@ onMounted(async () => {
             <div class="section-heading">
               <div>
                 <h2>{{ activeTitle }}</h2>
-                <p>内容按主题、类型、难度和互动信号组织，不再是空泛的通用社交列表。</p>
+                <p>主题、类型、难度、推荐理由和详情字段统一来自内容库。</p>
               </div>
               <n-button v-if="hasMore && searchResults.length === 0" secondary @click="loadFeed(nextCursor)">加载更多</n-button>
             </div>
@@ -291,7 +303,7 @@ onMounted(async () => {
               <div v-if="answerMessage" class="audit-message">{{ answerMessage }}</div>
             </section>
 
-            <article v-for="item in visibleFeed" :key="item.post.id" class="post-card" :class="`theme-${item.post.theme.toLowerCase()}`">
+            <article v-for="item in visibleFeed" :key="item.post.id" class="post-card" :class="`theme-${item.post.theme.toLowerCase()}`" @click="openDetail(item.post)">
               <div class="post-meta">
                 <span>{{ themeLabel(item.post.theme) }}</span>
                 <span>{{ kindLabel(item.post.contentKind) }}</span>
@@ -311,17 +323,52 @@ onMounted(async () => {
                 <span>{{ item.post.comments }} 评论</span>
                 <span>{{ item.post.views }} 浏览</span>
                 <span v-if="item.post.solvable">{{ item.post.solvedCount }} 人解出</span>
-                <span>分数 {{ Math.round(item.score) }}</span>
-                <button class="text-action" @click="toggleInteraction(item.post.id, 'like')"><n-icon :component="Heart" /> {{ item.liked ? '已赞' : '点赞' }}</button>
-                <button class="text-action" @click="toggleInteraction(item.post.id, 'favorite')">{{ item.favorited ? '已收藏' : '收藏' }}</button>
-                <button class="text-action" @click="follow(item.post.author)"><n-icon :component="UserPlus" /> 关注</button>
+                <button class="text-action" @click.stop="toggleInteraction(item.post.id, 'like')"><n-icon :component="Heart" /> {{ item.liked ? '已赞' : '点赞' }}</button>
+                <button class="text-action" @click.stop="toggleInteraction(item.post.id, 'favorite')">{{ item.favorited ? '已收藏' : '收藏' }}</button>
+                <button class="text-action" @click.stop="follow(item.post.author)"><n-icon :component="UserPlus" /> 关注</button>
+                <button class="text-action" @click.stop="openDetail(item.post)">查看详情</button>
                 <span class="reason">{{ item.reason }}</span>
               </footer>
             </article>
-            <div v-if="!loadingFeed && visibleFeed.length === 0" class="empty-state post-empty">没有匹配的主题内容</div>
           </div>
 
           <aside class="right-rail">
+            <section v-if="selectedPost" class="rail-panel detail-panel">
+              <div class="panel-title"><h2>内容详情</h2><button class="text-action" @click="selectedPost = null">关闭</button></div>
+              <p class="eyebrow">{{ themeLabel(selectedPost.theme) }} / {{ kindLabel(selectedPost.contentKind) }}</p>
+              <h2>{{ selectedPost.title }}</h2>
+              <p>{{ selectedPost.excerpt }}</p>
+              <div class="detail-list" v-if="selectedPost.clues?.length">
+                <strong>线索板</strong>
+                <span v-for="clue in selectedPost.clues" :key="clue">{{ clue }}</span>
+              </div>
+              <div class="detail-list" v-if="selectedPost.suspects?.length">
+                <strong>嫌疑人</strong>
+                <span v-for="suspect in selectedPost.suspects" :key="suspect">{{ suspect }}</span>
+              </div>
+              <div class="detail-list" v-if="selectedPost.timeline?.length">
+                <strong>时间线</strong>
+                <span v-for="time in selectedPost.timeline" :key="time">{{ time }}</span>
+              </div>
+              <div class="detail-list" v-if="selectedPost.worldbuilding?.length">
+                <strong>世界观设定</strong>
+                <span v-for="entry in selectedPost.worldbuilding" :key="entry">{{ entry }}</span>
+              </div>
+              <div class="detail-list" v-if="selectedPost.cosmicFacts?.length">
+                <strong>宇宙档案</strong>
+                <span v-for="fact in selectedPost.cosmicFacts" :key="fact">{{ fact }}</span>
+              </div>
+              <div v-if="selectedPost.solvable" class="answer-box compact-answer">
+                <n-input v-model:value="answerText" placeholder="提交详情页推理答案" />
+                <n-button type="primary" @click="answerCase(selectedPost.id)">提交</n-button>
+              </div>
+              <div v-if="answerMessage" class="audit-message">{{ answerMessage }}</div>
+              <div class="detail-list" v-if="relatedPosts.length">
+                <strong>相关内容</strong>
+                <button v-for="post in relatedPosts" :key="post.id" class="related-item" @click="openDetail(post)">{{ post.title }}</button>
+              </div>
+            </section>
+
             <section class="rail-panel metric-panel">
               <h2>主题概览</h2>
               <div class="metric-grid">
@@ -352,7 +399,6 @@ onMounted(async () => {
                   <button class="reject" @click="reject(post.postId)" aria-label="驳回"><n-icon :component="X" /></button>
                 </div>
               </div>
-              <div v-if="pendingPosts.length === 0" class="empty-state">审核队列已清空</div>
             </section>
             <section class="rail-panel">
               <h2>通知</h2>

@@ -30,6 +30,14 @@ spring:
               uri: ${DC_CONTENT_URI:http://localhost:8103}
               predicates:
                 - Path=/api/posts/**
+            - id: deduction
+              uri: ${DC_CONTENT_URI:http://localhost:8103}
+              predicates:
+                - Path=/api/deduction/**
+            - id: content-admin
+              uri: ${DC_CONTENT_URI:http://localhost:8103}
+              predicates:
+                - Path=/api/content/**
             - id: comment
               uri: ${DC_COMMENT_URI:http://localhost:8104}
               predicates:

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/wangyufanshuai/DevCircle/actions/workflows/ci.yml/badge.svg)](https://github.com/wangyufanshuai/DevCircle/actions/workflows/ci.yml)
 
-DevCircle 是工程代号，v0.8 前台产品名为 **MysticVerse**：一个围绕“推理、科幻、宇宙”的主题内容平台。它不再是普通社交 Feed，而是把案件解谜、科幻创作、世界观设定、宇宙档案、主题搜索、推荐排序、审核和通知组织成一条可运行的开源演示链路。
+DevCircle 是工程代号，v0.9 前台产品名为 **MysticVerse**：一个围绕“推理、科幻、宇宙”的主题内容平台。它不再是普通社交 Feed，而是把案件解谜、科幻创作、世界观设定、宇宙档案、主题搜索、推荐排序、详情阅读、相关内容召回、审核和通知组织成一条可运行的开源演示链路。
 
 项目定位是“生产预备级工程样板”：可以本地运行、自动测试、演示核心链路，但不承诺直接承载真实大规模生产流量。
 
@@ -14,16 +14,17 @@ DevCircle 是工程代号，v0.8 前台产品名为 **MysticVerse**：一个围�
 - Docker Compose, Helm, Prometheus, Grafana, GitHub Actions
 - JUnit 5, Mockito, Testcontainers
 
-## v0.8 能力矩阵
+## v0.9 能力矩阵
 
 | 能力 | 当前状态 |
 | --- | --- |
-| 三主题内容 | `DEDUCTION`、`SCI_FI`、`COSMOS` 三类主题，覆盖案件档案、逻辑谜题、科幻短篇、世界观设定、宇宙档案、观测日志 |
-| 推理解谜 | `POST /api/deduction/cases/{id}/answers` 支持提交答案、正确性反馈、积分和排行榜，重复提交不重复加分 |
-| 主题推荐 | `GET /api/recommend/feed?scene=deduction|sci_fi|cosmos|mixed`，融合主题偏好、热度、新鲜度、曝光和解谜状态 |
-| 主题搜索 | 搜索接口支持 `theme`、`contentKind`、`difficulty` 筛选，fallback 数据也按主题返回 |
-| 内容发布 | `POST /api/posts` 支持主题、内容类型、难度、线索、隐藏答案和媒体关联，写入 Outbox |
-| 前端体验 | MysticVerse 首页、推理馆、科幻馆、宇宙档案、创作台、解谜提交、排行榜、审核台、通知 |
+| 主题内容库 | 共享种子库内置 120 条示例内容，推理馆、科幻馆、宇宙档案各 40 条，统一供前端 mock、推荐 fallback、搜索 fallback 和详情页使用 |
+| 详情体验 | `GET /api/posts/{id}` 返回线索板、嫌疑人、时间线、世界观设定、宇宙观测事实和解析摘要 |
+| 相关内容 | `GET /api/posts/{id}/related?size=6` 按主题、标签和系列召回相关内容 |
+| 推理解谜 | `POST /api/deduction/cases/{id}/answers` 支持答案关键词判定、积分反馈和幂等提交 |
+| 主题推荐 | `GET /api/recommend/feed?scene=deduction|sci_fi|cosmos|mixed`，候选池来自 120 条主题内容库，推荐理由贴合主题 |
+| 主题搜索 | 搜索接口支持 `theme`、`contentKind`、`difficulty`、关键词和标签过滤；Elasticsearch 不可用时使用主题库 fallback |
+| 前端体验 | 首页、推理馆、科幻馆、宇宙档案、详情页、排行榜、创作台、审核台和移动端布局均有 Playwright 覆盖 |
 | 可靠链路 | MySQL、Redis、Kafka、Elasticsearch、MinIO Testcontainers 进入默认 Maven 测试 |
 
 ## 模块
@@ -54,7 +55,7 @@ docker compose up -d mysql redis kafka elasticsearch minio prometheus grafana
 .\deploy\kafka\create-topics.ps1
 ```
 
-运行后端测试。本机 Docker Desktop 如 `desktop-linux` context 的 pipe 不可用，使用 `default` engine：
+运行后端测试。本机 Docker Desktop 如 `desktop-linux` context 的 pipe 不可用，使用 default engine：
 
 ```powershell
 $env:DOCKER_HOST='npipe:////./pipe/docker_engine'
@@ -97,6 +98,7 @@ docker compose config
 
 ## 文档
 
+- [DevCircle / MysticVerse 技术说明文档](docs/technical-specification.md)
 - [主题平台设计](docs/theme-platform.md)
 - [架构设计](docs/architecture.md)
 - [推荐引擎](docs/feed-engine.md)

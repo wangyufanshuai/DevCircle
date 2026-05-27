@@ -20,8 +20,40 @@ public record PostSummary(
         long comments,
         long views,
         String status,
-        Instant createdAt
+        Instant createdAt,
+        List<String> clues,
+        List<String> suspects,
+        List<String> timeline,
+        String question,
+        List<String> answerKeywords,
+        String explanation,
+        List<String> worldbuilding,
+        List<String> cosmicFacts,
+        List<Long> relatedPostIds
 ) {
+    public PostSummary(
+            Long id,
+            String type,
+            String theme,
+            String contentKind,
+            String difficulty,
+            boolean solvable,
+            long solvedCount,
+            String title,
+            String excerpt,
+            String author,
+            List<String> tags,
+            List<MediaAssetView> mediaAssets,
+            long likes,
+            long comments,
+            long views,
+            String status,
+            Instant createdAt
+    ) {
+        this(id, type, theme, contentKind, difficulty, solvable, solvedCount, title, excerpt, author, tags, mediaAssets, likes, comments, views, status, createdAt,
+                List.of(), List.of(), List.of(), "", List.of(), "", List.of(), List.of(), List.of());
+    }
+
     public PostSummary(
             Long id,
             String type,

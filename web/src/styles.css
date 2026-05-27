@@ -282,8 +282,22 @@ p {
 }
 
 .post-card {
+  position: relative;
   padding: 20px;
   margin-bottom: 14px;
+}
+
+.card-hit {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.post-card > :not(.card-hit) {
+  position: relative;
+  z-index: 1;
 }
 
 .theme-deduction {
@@ -335,6 +349,52 @@ p {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
+}
+
+.compact-answer {
+  margin-top: 14px;
+}
+
+.detail-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.detail-panel h2 {
+  margin-top: 4px;
+}
+
+.detail-panel p {
+  color: #526071;
+  line-height: 1.7;
+}
+
+.detail-list {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.detail-list strong {
+  color: #172033;
+  font-size: 13px;
+}
+
+.detail-list span,
+.related-item {
+  color: #526071;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.related-item {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
 }
 
 .upload-box {

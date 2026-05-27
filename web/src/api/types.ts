@@ -48,6 +48,15 @@ export type Post = {
   views: number
   status: 'PUBLISHED' | 'PENDING'
   createdAt?: string
+  clues?: string[]
+  suspects?: string[]
+  timeline?: string[]
+  question?: string
+  answerKeywords?: string[]
+  explanation?: string
+  worldbuilding?: string[]
+  cosmicFacts?: string[]
+  relatedPostIds?: number[]
 }
 
 export type FeedItem = {

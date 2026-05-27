@@ -14,6 +14,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/posts")
 class PostController {
@@ -36,6 +38,12 @@ class PostController {
     @GetMapping("/{id}")
     ApiResponse<PostSummary> detail(@PathVariable Long id) {
         return ApiResponse.ok(postService.detail(id));
+    }
+
+    @GetMapping("/{id}/related")
+    ApiResponse<List<PostSummary>> related(@PathVariable Long id,
+                                           @RequestParam(defaultValue = "6") int size) {
+        return ApiResponse.ok(postService.related(id, Math.min(size, 12)));
     }
 
     @PostMapping

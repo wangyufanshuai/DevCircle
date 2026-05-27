@@ -20,4 +20,17 @@ class RecommendControllerTest {
         assertThat(response.data().records().getFirst().algorithm()).isEqualTo("THEME_LINEAR_MODEL");
         assertThat(response.data().nextCursor()).isEqualTo("2");
     }
+
+    @Test
+    void feedUsesExpandedThemeLibrary() {
+        var service = new FeedService(new RecommendationScorer(), new LightweightMlRanker(), mock(StringRedisTemplate.class));
+
+        var firstPage = new RecommendController(service).feed(2L, null, 50, "mixed");
+        var secondPage = new RecommendController(service).feed(2L, firstPage.data().nextCursor(), 50, "mixed");
+        var thirdPage = new RecommendController(service).feed(2L, secondPage.data().nextCursor(), 50, "mixed");
+
+        assertThat(firstPage.data().records()).hasSize(50);
+        assertThat(secondPage.data().records()).hasSize(50);
+        assertThat(thirdPage.data().records()).hasSize(20);
+    }
 }
