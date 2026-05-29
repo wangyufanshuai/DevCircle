@@ -1,5 +1,7 @@
 global:
   scrape_interval: 15s
+rule_files:
+  - /etc/prometheus/alerts.yml
 scrape_configs:
   - job_name: devcircle
     metrics_path: /actuator/prometheus
@@ -16,4 +18,3 @@ scrape_configs:
           - host.docker.internal:8108
           - host.docker.internal:8109
           - host.docker.internal:8110
-

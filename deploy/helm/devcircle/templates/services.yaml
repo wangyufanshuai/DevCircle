@@ -7,7 +7,7 @@ metadata:
   labels:
     app.kubernetes.io/name: dc-{{ $name }}
 spec:
-  replicas: 1
+  replicas: {{ $.Values.replicaCount }}
   selector:
     matchLabels:
       app.kubernetes.io/name: dc-{{ $name }}
@@ -19,6 +19,7 @@ spec:
       containers:
         - name: dc-{{ $name }}
           image: "{{ $.Values.image.registry }}/dc-{{ $name }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
           ports:
             - containerPort: {{ $svc.port }}
           env:
@@ -26,10 +27,25 @@ spec:
             - name: {{ $key }}
               value: "{{ $value }}"
             {{- end }}
+            {{- range $key, $value := $.Values.secretEnv }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: devcircle-secrets
+                  key: {{ $key }}
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /actuator/health
               port: {{ $svc.port }}
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: {{ $svc.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            {{- toYaml $.Values.resources | nindent 12 }}
 ---
 apiVersion: v1
 kind: Service
@@ -42,4 +58,3 @@ spec:
     - port: {{ $svc.port }}
       targetPort: {{ $svc.port }}
 {{- end }}
-

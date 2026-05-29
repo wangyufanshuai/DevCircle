@@ -67,3 +67,6 @@ management:
     web:
       exposure:
         include: health,info,prometheus
+devcircle:
+  gateway:
+    demo-token-enabled: ${GATEWAY_DEMO_TOKEN_ENABLED:true}

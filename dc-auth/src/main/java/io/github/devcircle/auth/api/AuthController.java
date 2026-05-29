@@ -1,10 +1,12 @@
 package io.github.devcircle.auth.api;
 
+import io.github.devcircle.auth.application.AuthTokenRepository;
 import io.github.devcircle.auth.application.JwtService;
 import io.github.devcircle.common.api.ApiResponse;
 import io.jsonwebtoken.Claims;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,23 +29,63 @@ import java.util.Map;
 class AuthController {
     private final JwtService jwtService;
     private final String publicBaseUrl;
+    private final AuthTokenRepository tokenRepository;
 
     AuthController(JwtService jwtService,
                    @Value("${devcircle.auth.public-base-url:http://localhost:8080}") String publicBaseUrl) {
+        this(jwtService, publicBaseUrl, null);
+    }
+
+    @Autowired
+    AuthController(JwtService jwtService,
+                   @Value("${devcircle.auth.public-base-url:http://localhost:8080}") String publicBaseUrl,
+                   AuthTokenRepository tokenRepository) {
         this.jwtService = jwtService;
         this.publicBaseUrl = publicBaseUrl;
+        this.tokenRepository = tokenRepository;
     }
 
     @PostMapping("/login")
-    ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
+    ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request,
+                                     @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
         var roles = "admin".equalsIgnoreCase(request.username()) ? List.of("USER", "ADMIN") : List.of("USER");
-        return ApiResponse.ok(tokens(2L, request.username(), roles));
+        Long userId = "admin".equalsIgnoreCase(request.username()) ? 1L : 2L;
+        LoginResponse response = tokens(userId, request.username(), roles);
+        audit(userId, "LOGIN", "USER", String.valueOf(userId), traceId, Map.of("username", request.username()));
+        return ApiResponse.ok(response);
+    }
+
+    ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
+        return login(request, null);
     }
 
     @PostMapping("/refresh")
-    ApiResponse<LoginResponse> refresh(@Valid @RequestBody RefreshRequest request) {
+    ApiResponse<LoginResponse> refresh(@Valid @RequestBody RefreshRequest request,
+                                       @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+        if (tokenRepository != null && !tokenRepository.refreshTokenActive(request.refreshToken())) {
+            throw new IllegalArgumentException("Refresh token is revoked or expired");
+        }
         Claims claims = jwtService.parse(request.refreshToken());
-        return ApiResponse.ok(tokens(Long.valueOf(claims.getSubject()), claims.get("username", String.class), List.of("USER")));
+        Long userId = Long.valueOf(claims.getSubject());
+        String roles = claims.get("roles", String.class);
+        LoginResponse response = tokens(userId, claims.get("username", String.class), Arrays.asList(roles.split(",")));
+        audit(userId, "REFRESH_TOKEN", "USER", String.valueOf(userId), traceId, Map.of());
+        return ApiResponse.ok(response);
+    }
+
+    ApiResponse<LoginResponse> refresh(@Valid @RequestBody RefreshRequest request) {
+        return refresh(request, null);
+    }
+
+    @PostMapping("/logout")
+    ApiResponse<Void> logout(@Valid @RequestBody RefreshRequest request,
+                             @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+        Claims claims = jwtService.parse(request.refreshToken());
+        if (tokenRepository != null) {
+            tokenRepository.revokeRefreshToken(request.refreshToken());
+        }
+        audit(Long.valueOf(claims.getSubject()), "LOGOUT", "USER", claims.getSubject(), traceId, Map.of());
+        return ApiResponse.ok();
     }
 
     @GetMapping("/me")
@@ -79,19 +121,33 @@ class AuthController {
                                         @RequestParam(defaultValue = "devcircle-demo-state") String state) {
         validateProvider(provider);
         String username = provider + "-user";
-        return ApiResponse.ok(tokens(provider.equals("github") ? 101L : 102L, username, List.of("USER")));
+        Long userId = provider.equals("github") ? 101L : 102L;
+        LoginResponse response = tokens(userId, username, List.of("USER"));
+        audit(userId, "OAUTH2_LOGIN", "OAUTH2_PROVIDER", provider, null, Map.of("state", state, "mockProfile", code == null || code.isBlank()));
+        return ApiResponse.ok(response);
     }
 
     private LoginResponse tokens(Long userId, String username, List<String> roles) {
         Instant accessExpiresAt = Instant.now().plusSeconds(3600);
         Instant refreshExpiresAt = Instant.now().plusSeconds(604800);
+        String accessToken = jwtService.issue(userId, username, roles, accessExpiresAt);
+        String refreshToken = jwtService.issue(userId, username, roles, refreshExpiresAt);
+        if (tokenRepository != null) {
+            tokenRepository.saveRefreshToken(userId, refreshToken, refreshExpiresAt);
+        }
         return new LoginResponse(
-                jwtService.issue(userId, username, roles, accessExpiresAt),
-                jwtService.issue(userId, username, roles, refreshExpiresAt),
+                accessToken,
+                refreshToken,
                 username,
                 roles,
                 accessExpiresAt
         );
+    }
+
+    private void audit(Long userId, String action, String targetType, String targetId, String traceId, Map<String, Object> metadata) {
+        if (tokenRepository != null) {
+            tokenRepository.audit(userId, action, targetType, targetId, traceId, metadata);
+        }
     }
 
     private void validateProvider(String provider) {

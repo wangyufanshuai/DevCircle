@@ -1,0 +1,21 @@
+image:
+  registry: ghcr.io/wangyufanshuai/devcircle
+  tag: dev
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+env:
+  GATEWAY_DEMO_TOKEN_ENABLED: "true"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 192Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+ingress:
+  enabled: true
+  host: devcircle.local

@@ -1,0 +1,21 @@
+image:
+  registry: ghcr.io/wangyufanshuai/devcircle
+  tag: latest
+  pullPolicy: Always
+
+replicaCount: 2
+
+env:
+  GATEWAY_DEMO_TOKEN_ENABLED: "false"
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 384Mi
+  limits:
+    cpu: 1500m
+    memory: 1Gi
+
+ingress:
+  enabled: true
+  host: mysticverse.example.com

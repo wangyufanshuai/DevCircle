@@ -2,17 +2,21 @@ package io.github.devcircle.search.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.devcircle.common.api.ApiResponse;
 import io.github.devcircle.common.api.PageResponse;
 import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.common.model.PostSummary;
 import io.github.devcircle.common.seed.ThemeContentLibrary;
 import io.github.devcircle.search.infrastructure.PostSearchDocument;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.elasticsearch.client.elc.NativeQuery;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.SearchHit;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClient;
 
 import java.time.Instant;
 import java.util.List;
@@ -21,10 +25,14 @@ import java.util.List;
 public class SearchService {
     private final ElasticsearchOperations elasticsearchOperations;
     private final ObjectMapper objectMapper;
+    private final RestClient contentClient;
 
-    public SearchService(ElasticsearchOperations elasticsearchOperations, ObjectMapper objectMapper) {
+    public SearchService(ElasticsearchOperations elasticsearchOperations,
+                         ObjectMapper objectMapper,
+                         @Value("${devcircle.content.base-url:http://localhost:8103}") String contentBaseUrl) {
         this.elasticsearchOperations = elasticsearchOperations;
         this.objectMapper = objectMapper;
+        this.contentClient = RestClient.builder().baseUrl(contentBaseUrl).build();
     }
 
     public PageResponse<PostSummary> search(String keyword, String tag, String sort) {
@@ -46,7 +54,7 @@ public class SearchService {
                         }
                         return b;
                     }))
-                    .withPageable(PageRequest.of(0, 10))
+                    .withPageable(PageRequest.of(0, 20))
                     .build();
             List<PostSummary> records = elasticsearchOperations.search(query, PostSearchDocument.class).stream()
                     .map(SearchHit::getContent)
@@ -55,20 +63,24 @@ public class SearchService {
                     .filter(post -> contentKind == null || contentKind.isBlank() || post.contentKind().equalsIgnoreCase(contentKind))
                     .filter(post -> difficulty == null || difficulty.isBlank() || post.difficulty().equalsIgnoreCase(difficulty))
                     .toList();
-            return PageResponse.of(records, records.size(), 1, 10);
+            return PageResponse.of(records, records.size(), 1, 20);
         } catch (RuntimeException ex) {
             List<PostSummary> records = ThemeContentLibrary.search(keyword, theme, contentKind, difficulty).stream().limit(20).toList();
-            return PageResponse.of(records, records.size(), 1, 10);
+            return PageResponse.of(records, records.size(), 1, 20);
         }
     }
 
     public int reindexSeedPosts() {
+        List<PostSummary> posts = loadPostsFromContent();
+        if (posts.isEmpty()) {
+            posts = ThemeContentLibrary.summaries();
+        }
         try {
-            elasticsearchOperations.save(ThemeContentLibrary.posts().stream()
-                    .map(post -> new PostSearchDocument(post.id(), post.title(), post.excerpt(), post.author(), post.tags(), "PUBLISHED", post.createdAt()))
+            elasticsearchOperations.save(posts.stream()
+                    .map(post -> new PostSearchDocument(post.id(), post.title(), post.excerpt(), post.author(), post.tags(), post.status(), post.createdAt()))
                     .toList());
             elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
-            return ThemeContentLibrary.posts().size();
+            return posts.size();
         } catch (RuntimeException ex) {
             return 0;
         }
@@ -101,6 +113,24 @@ public class SearchService {
         }
     }
 
+    private List<PostSummary> loadPostsFromContent() {
+        try {
+            ApiResponse<PageResponse<PostSummary>> response = contentClient.get()
+                    .uri(uriBuilder -> uriBuilder.path("/api/posts")
+                            .queryParam("page", 1)
+                            .queryParam("size", 500)
+                            .build())
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            if (response != null && response.data() != null) {
+                return response.data().records();
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return List.of();
+    }
+
     private PostSummary toSummary(PostSearchDocument document) {
         return new PostSummary(document.getId(), "TEXT", inferTheme(document.getTags()), inferContentKind(document.getTags()), "MEDIUM", false, 0,
                 document.getTitle(), document.getExcerpt(), document.getAuthor(), document.getTags(), List.of(), 0, 0, 0, document.getStatus(), document.getCreatedAt());
@@ -108,13 +138,13 @@ public class SearchService {
 
     private String inferTheme(List<String> tags) {
         if (tags.stream().anyMatch(tag -> tag.contains("科幻") || tag.contains("世界观"))) return "SCI_FI";
-        if (tags.stream().anyMatch(tag -> tag.contains("宇宙") || tag.contains("档案"))) return "COSMOS";
+        if (tags.stream().anyMatch(tag -> tag.contains("宇宙") || tag.contains("星云") || tag.contains("观测"))) return "COSMOS";
         return "DEDUCTION";
     }
 
     private String inferContentKind(List<String> tags) {
         if (tags.stream().anyMatch(tag -> tag.contains("世界观"))) return "WORLDBUILDING";
-        if (tags.stream().anyMatch(tag -> tag.contains("宇宙") || tag.contains("档案"))) return "COSMIC_ARTICLE";
+        if (tags.stream().anyMatch(tag -> tag.contains("宇宙") || tag.contains("星云") || tag.contains("观测"))) return "COSMIC_ARTICLE";
         return "CASE_FILE";
     }
 }

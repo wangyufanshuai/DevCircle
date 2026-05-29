@@ -3,6 +3,10 @@ import type { ApiResponse, AuditItem, CreatePostRequest, CursorPage, DeductionAn
 
 const token = 'Bearer demo-access-token-admin'
 
+function markDegraded(feature: string): void {
+  window.dispatchEvent(new CustomEvent('devcircle-api-degraded', { detail: feature }))
+}
+
 async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { headers: { Authorization: token } })
   if (!response.ok) throw new Error(`Request failed: ${response.status}`)
@@ -30,7 +34,7 @@ function fallbackFeed(scene: string): CursorPage<FeedItem> {
   const records = scene === 'home' || scene === 'mixed'
     ? mockRecommendations
     : mockRecommendations.filter((item) => item.post.theme === themeMap[scene])
-  return { records, nextCursor: String(records.length), hasMore: false }
+  return { records, nextCursor: String(records.length), hasMore: false, degraded: true, source: 'SEED_FALLBACK' }
 }
 
 export async function fetchPosts(type?: string): Promise<Post[]> {
@@ -38,6 +42,7 @@ export async function fetchPosts(type?: string): Promise<Post[]> {
     const query = type ? `?type=${encodeURIComponent(type)}` : ''
     return (await getJson<PageResponse<Post>>(`/api/posts${query}`)).records
   } catch {
+    markDegraded('posts')
     return type ? mockPosts.filter((post) => post.type === type) : mockPosts
   }
 }
@@ -46,6 +51,7 @@ export async function fetchFeed(scene = 'home', cursor?: string): Promise<Cursor
   try {
     return await getJson<CursorPage<FeedItem>>(`/api/recommend/feed?scene=${scene}&size=12${cursor ? `&cursor=${cursor}` : ''}`)
   } catch {
+    markDegraded('feed')
     return fallbackFeed(scene)
   }
 }
@@ -62,6 +68,7 @@ export async function createPost(payload: CreatePostRequest): Promise<Post> {
   try {
     return await postJson<Post>('/api/posts', payload)
   } catch {
+    markDegraded('create-post')
     return {
       id: Date.now(),
       type: payload.type ?? 'TEXT',
@@ -92,6 +99,7 @@ export async function uploadMedia(file: File): Promise<FileUploadResult> {
     const body = (await response.json()) as ApiResponse<FileUploadResult>
     return body.data
   } catch {
+    markDegraded('upload')
     return {
       mediaId: Date.now(),
       objectKey: `demo/${file.name}`,
@@ -111,6 +119,7 @@ export async function interact(postId: number, type: 'like' | 'favorite'): Promi
   try {
     return await postJson<InteractionResult>(`/api/posts/${postId}/${type}`, undefined, { 'Idempotency-Key': idempotencyKey })
   } catch {
+    markDegraded('interaction')
     return { targetId: postId, type: type.toUpperCase(), active: true, duplicated: false, idempotencyKey }
   }
 }
@@ -119,6 +128,7 @@ export async function followUser(userId: number): Promise<FollowResult> {
   try {
     return await postJson<FollowResult>(`/api/users/${userId}/follow`)
   } catch {
+    markDegraded('follow')
     return { targetUserId: userId, followed: true, duplicated: false }
   }
 }
@@ -128,6 +138,7 @@ export async function demoOAuthLogin(provider: 'github' | 'gitee'): Promise<stri
     const response = await getJson<{ username: string }>(`/api/auth/oauth2/callback/${provider}?code=demo-code&state=devcircle`)
     return `${provider} 登录成功：${response.username}`
   } catch {
+    markDegraded('oauth2')
     return `${provider} 演示登录成功：${provider}-user`
   }
 }
@@ -137,6 +148,7 @@ export async function searchPosts(keyword: string): Promise<Post[]> {
   try {
     return (await getJson<PageResponse<Post>>(`/api/search/posts?keyword=${encodeURIComponent(keyword)}`)).records
   } catch {
+    markDegraded('search')
     return mockPosts.filter((post) =>
       [post.title, post.excerpt, post.author, ...post.tags].some((value) => value.toLowerCase().includes(keyword.toLowerCase()))
     )
@@ -147,6 +159,7 @@ export async function fetchPostDetail(postId: number): Promise<Post> {
   try {
     return await getJson<Post>(`/api/posts/${postId}`)
   } catch {
+    markDegraded('post-detail')
     return mockPosts.find((post) => post.id === postId) ?? mockPosts[0]
   }
 }
@@ -155,6 +168,7 @@ export async function fetchRelatedPosts(postId: number): Promise<Post[]> {
   try {
     return await getJson<Post[]>(`/api/posts/${postId}/related?size=6`)
   } catch {
+    markDegraded('related')
     const current = mockPosts.find((post) => post.id === postId) ?? mockPosts[0]
     return mockPosts
       .filter((post) => post.id !== postId)
@@ -167,6 +181,7 @@ export async function submitDeductionAnswer(postId: number, answer: string): Pro
   try {
     return await postJson<DeductionAnswerResult>(`/api/deduction/cases/${postId}/answers`, { answer })
   } catch {
+    markDegraded('deduction-answer')
     const correct = answer.includes('夹层') || answer.includes('钟楼')
     return {
       postId,
@@ -185,6 +200,7 @@ export async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
   try {
     return await getJson<LeaderboardEntry[]>('/api/deduction/leaderboard')
   } catch {
+    markDegraded('leaderboard')
     return mockLeaderboard
   }
 }
@@ -193,6 +209,7 @@ export async function fetchAudits(): Promise<AuditItem[]> {
   try {
     return await getJson<AuditItem[]>('/api/admin/audits/posts')
   } catch {
+    markDegraded('audits')
     return mockAudits
   }
 }
@@ -201,6 +218,7 @@ export async function fetchNotifications(): Promise<NotificationItem[]> {
   try {
     return await getJson<NotificationItem[]>('/api/notifications')
   } catch {
+    markDegraded('notifications')
     return mockNotifications
   }
 }

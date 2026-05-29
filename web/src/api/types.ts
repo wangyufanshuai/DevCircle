@@ -16,6 +16,8 @@ export type CursorPage<T> = {
   records: T[]
   nextCursor: string
   hasMore: boolean
+  degraded?: boolean
+  source?: 'DB' | 'ES' | 'SEED_FALLBACK' | string
 }
 
 export type MediaAsset = {

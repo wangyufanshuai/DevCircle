@@ -9,6 +9,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Arrays;
 import java.util.List;
 
 @Service
@@ -112,9 +113,31 @@ public class DeductionService {
             return false;
         }
         String normalized = answer.replace(" ", "").toLowerCase();
+        List<String> keywords = answerKeywords(postId);
+        if (!keywords.isEmpty()) {
+            return keywords.stream().anyMatch(keyword -> normalized.contains(keyword.replace(" ", "").toLowerCase()));
+        }
         return ThemeContentLibrary.find(postId)
                 .map(seed -> seed.answerKeywords().stream().anyMatch(keyword -> normalized.contains(keyword.replace(" ", "").toLowerCase())))
                 .orElse(normalized.contains("夹层") || normalized.contains("钟楼"));
+    }
+
+    private List<String> answerKeywords(Long postId) {
+        try {
+            String json = jdbcClient.sql("SELECT answer_keywords FROM post_content WHERE post_id = :postId")
+                    .param("postId", postId)
+                    .query(String.class)
+                    .single();
+            if (json == null || json.isBlank()) {
+                return List.of();
+            }
+            return Arrays.stream(json.replace("[", "").replace("]", "").replace("\"", "").split(","))
+                    .map(String::trim)
+                    .filter(value -> !value.isBlank())
+                    .toList();
+        } catch (DataAccessException ex) {
+            return List.of();
+        }
     }
 
     private String explanation(Long postId, boolean correct) {

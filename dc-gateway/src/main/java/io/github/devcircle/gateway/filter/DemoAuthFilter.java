@@ -21,13 +21,16 @@ public class DemoAuthFilter implements GlobalFilter, Ordered {
     static final String USER_TOKEN = "Bearer demo-access-token-demo";
     static final String ADMIN_TOKEN = "Bearer demo-access-token-admin";
     private final SecretKey jwtKey;
+    private final boolean demoTokenEnabled;
 
     public DemoAuthFilter() {
-        this("devcircle-local-demo-secret-devcircle-local-demo-secret");
+        this("devcircle-local-demo-secret-devcircle-local-demo-secret", true);
     }
 
-    public DemoAuthFilter(@Value("${devcircle.jwt.secret:devcircle-local-demo-secret-devcircle-local-demo-secret}") String secret) {
+    public DemoAuthFilter(@Value("${devcircle.jwt.secret:devcircle-local-demo-secret-devcircle-local-demo-secret}") String secret,
+                          @Value("${devcircle.gateway.demo-token-enabled:true}") boolean demoTokenEnabled) {
         this.jwtKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+        this.demoTokenEnabled = demoTokenEnabled;
     }
 
     @Override
@@ -59,10 +62,10 @@ public class DemoAuthFilter implements GlobalFilter, Ordered {
     }
 
     private UserContext userContext(String authorization) {
-        if (ADMIN_TOKEN.equals(authorization)) {
+        if (demoTokenEnabled && ADMIN_TOKEN.equals(authorization)) {
             return new UserContext("1", "ADMIN,USER");
         }
-        if (USER_TOKEN.equals(authorization)) {
+        if (demoTokenEnabled && USER_TOKEN.equals(authorization)) {
             return new UserContext("2", "USER");
         }
         try {

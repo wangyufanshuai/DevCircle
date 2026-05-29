@@ -1,5 +1,9 @@
+@baseUrl = http://localhost:8080
+@userToken = Bearer demo-access-token-demo
+@adminToken = Bearer demo-access-token-admin
+
 ### 密码登录
-POST http://localhost:8080/api/auth/login
+POST {{baseUrl}}/api/auth/login
 Content-Type: application/json
 
 {
@@ -7,50 +11,71 @@ Content-Type: application/json
   "password": "devcircle"
 }
 
-### GitHub OAuth2 mock 回调
-GET http://localhost:8080/api/auth/oauth2/callback/github?code=demo-code&state=devcircle
-
-### 混合推荐
-GET http://localhost:8080/api/recommend/feed?scene=mixed&size=6
-Authorization: Bearer demo-access-token-demo
-
-### 推理馆推荐
-GET http://localhost:8080/api/recommend/feed?scene=deduction&size=6
-Authorization: Bearer demo-access-token-demo
-
-### 科幻馆推荐
-GET http://localhost:8080/api/recommend/feed?scene=sci_fi&size=6
-Authorization: Bearer demo-access-token-demo
-
-### 宇宙档案推荐
-GET http://localhost:8080/api/recommend/feed?scene=cosmos&size=6
-Authorization: Bearer demo-access-token-demo
-
-### 推荐曝光
-POST http://localhost:8080/api/recommend/exposures
-Authorization: Bearer demo-access-token-demo
+### 刷新令牌
+POST {{baseUrl}}/api/auth/refresh
 Content-Type: application/json
 
 {
+  "refreshToken": "replace-with-refresh-token"
+}
+
+### 退出登录
+POST {{baseUrl}}/api/auth/logout
+Content-Type: application/json
+
+{
+  "refreshToken": "replace-with-refresh-token"
+}
+
+### 当前用户
+GET {{baseUrl}}/api/auth/me
+Authorization: {{adminToken}}
+
+### GitHub OAuth2 mock 回调
+GET {{baseUrl}}/api/auth/oauth2/callback/github?code=demo-code&state=devcircle
+
+### 混合推荐
+GET {{baseUrl}}/api/recommend/feed?scene=mixed&size=6
+Authorization: {{userToken}}
+
+### 推理馆推荐
+GET {{baseUrl}}/api/recommend/feed?scene=deduction&size=6
+Authorization: {{userToken}}
+
+### 科幻馆推荐
+GET {{baseUrl}}/api/recommend/feed?scene=sci_fi&size=6
+Authorization: {{userToken}}
+
+### 宇宙档案推荐
+GET {{baseUrl}}/api/recommend/feed?scene=cosmos&size=6
+Authorization: {{userToken}}
+
+### 推荐曝光
+POST {{baseUrl}}/api/recommend/exposures
+Authorization: {{userToken}}
+Content-Type: application/json
+
+{
+  "userId": 2,
   "postIds": [1001, 1003],
   "scene": "deduction_feed"
 }
 
 ### 主题帖子列表
-GET http://localhost:8080/api/posts?theme=DEDUCTION&contentKind=CASE_FILE&difficulty=HARD
-Authorization: Bearer demo-access-token-demo
+GET {{baseUrl}}/api/posts?theme=DEDUCTION&contentKind=CASE_FILE&difficulty=HARD
+Authorization: {{userToken}}
 
 ### 主题帖子详情
-GET http://localhost:8080/api/posts/1001
-Authorization: Bearer demo-access-token-demo
+GET {{baseUrl}}/api/posts/1001
+Authorization: {{userToken}}
 
 ### 相关内容召回
-GET http://localhost:8080/api/posts/1001/related?size=6
-Authorization: Bearer demo-access-token-demo
+GET {{baseUrl}}/api/posts/1001/related?size=6
+Authorization: {{userToken}}
 
 ### 创建推理案件
-POST http://localhost:8080/api/posts
-Authorization: Bearer demo-access-token-demo
+POST {{baseUrl}}/api/posts
+Authorization: {{userToken}}
 Content-Type: application/json
 
 {
@@ -67,8 +92,8 @@ Content-Type: application/json
 }
 
 ### 提交推理答案
-POST http://localhost:8080/api/deduction/cases/1001/answers
-Authorization: Bearer demo-access-token-demo
+POST {{baseUrl}}/api/deduction/cases/1001/answers
+Authorization: {{userToken}}
 Content-Type: application/json
 
 {
@@ -76,20 +101,20 @@ Content-Type: application/json
 }
 
 ### 查看我的答题状态
-GET http://localhost:8080/api/deduction/cases/1001/attempts/me
-Authorization: Bearer demo-access-token-demo
+GET {{baseUrl}}/api/deduction/cases/1001/attempts/me
+Authorization: {{userToken}}
 
 ### 解谜排行榜
-GET http://localhost:8080/api/deduction/leaderboard
-Authorization: Bearer demo-access-token-demo
+GET {{baseUrl}}/api/deduction/leaderboard
+Authorization: {{userToken}}
 
 ### 主题搜索
-GET http://localhost:8080/api/search/posts?keyword=钟楼&theme=DEDUCTION&contentKind=CASE_FILE&difficulty=HARD
-Authorization: Bearer demo-access-token-demo
+GET {{baseUrl}}/api/search/posts?keyword=钟楼&theme=DEDUCTION&contentKind=CASE_FILE&difficulty=HARD
+Authorization: {{userToken}}
 
 ### 上传媒体
-POST http://localhost:8080/api/files
-Authorization: Bearer demo-access-token-demo
+POST {{baseUrl}}/api/files
+Authorization: {{userToken}}
 Content-Type: multipart/form-data; boundary=boundary
 
 --boundary
@@ -100,31 +125,35 @@ Content-Type: image/png
 --boundary--
 
 ### 点赞，带幂等键
-POST http://localhost:8080/api/posts/1001/like
-Authorization: Bearer demo-access-token-demo
+POST {{baseUrl}}/api/posts/1001/like
+Authorization: {{userToken}}
 Idempotency-Key: like-1001-demo
 
 ### 收藏，带幂等键
-POST http://localhost:8080/api/posts/1001/favorite
-Authorization: Bearer demo-access-token-demo
+POST {{baseUrl}}/api/posts/1001/favorite
+Authorization: {{userToken}}
 Idempotency-Key: favorite-1001-demo
 
 ### 关注用户
-POST http://localhost:8080/api/users/42/follow
-Authorization: Bearer demo-access-token-demo
+POST {{baseUrl}}/api/users/42/follow
+Authorization: {{userToken}}
 
 ### 重建搜索索引
-POST http://localhost:8080/api/search/admin/reindex
-Authorization: Bearer demo-access-token-admin
+POST {{baseUrl}}/api/search/admin/reindex
+Authorization: {{adminToken}}
 
 ### 发布 Outbox 事件
-POST http://localhost:8080/api/content/admin/outbox/publish?batchSize=100
-Authorization: Bearer demo-access-token-admin
+POST {{baseUrl}}/api/content/admin/outbox/publish?batchSize=100
+Authorization: {{adminToken}}
 
 ### 审核列表
-GET http://localhost:8080/api/admin/audits/posts
-Authorization: Bearer demo-access-token-admin
+GET {{baseUrl}}/api/admin/audits/posts
+Authorization: {{adminToken}}
 
 ### 审核通过
-POST http://localhost:8080/api/admin/audits/posts/1002/approve
-Authorization: Bearer demo-access-token-admin
+POST {{baseUrl}}/api/admin/audits/posts/1001/approve
+Authorization: {{adminToken}}
+
+### 审计日志
+GET {{baseUrl}}/api/admin/audit-logs?page=1&size=20
+Authorization: {{adminToken}}

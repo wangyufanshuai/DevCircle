@@ -28,6 +28,9 @@ class FeedServiceRedisIntegrationTest {
     static void registerProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.data.redis.host", redis::getHost);
         registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
+        registry.add("spring.datasource.url", () -> "jdbc:h2:mem:recommend;MODE=MySQL;DATABASE_TO_LOWER=TRUE");
+        registry.add("spring.datasource.username", () -> "sa");
+        registry.add("spring.datasource.password", () -> "");
     }
 
     @Autowired

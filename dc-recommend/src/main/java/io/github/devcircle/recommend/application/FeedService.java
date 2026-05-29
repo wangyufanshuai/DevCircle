@@ -1,12 +1,17 @@
 package io.github.devcircle.recommend.application;
 
+import io.github.devcircle.common.api.ApiResponse;
 import io.github.devcircle.common.api.CursorPage;
+import io.github.devcircle.common.api.PageResponse;
 import io.github.devcircle.common.model.ExposureRequest;
 import io.github.devcircle.common.model.FeedItem;
 import io.github.devcircle.common.model.PostSummary;
 import io.github.devcircle.common.seed.ThemeContentLibrary;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
 import java.util.Comparator;
@@ -19,13 +24,24 @@ public class FeedService {
     private final RecommendationScorer scorer;
     private final LightweightMlRanker mlRanker;
     private final StringRedisTemplate redisTemplate;
-
+    private final RecommendationImpressionRepository impressionRepository;
+    private final RestClient contentClient;
     private final List<PostSummary> seedPosts = ThemeContentLibrary.summaries();
 
     public FeedService(RecommendationScorer scorer, LightweightMlRanker mlRanker, StringRedisTemplate redisTemplate) {
+        this(scorer, mlRanker, redisTemplate, null, "http://localhost:8103");
+    }
+
+    public FeedService(RecommendationScorer scorer,
+                       LightweightMlRanker mlRanker,
+                       StringRedisTemplate redisTemplate,
+                       RecommendationImpressionRepository impressionRepository,
+                       @Value("${devcircle.content.base-url:http://localhost:8103}") String contentBaseUrl) {
         this.scorer = scorer;
         this.mlRanker = mlRanker;
         this.redisTemplate = redisTemplate;
+        this.impressionRepository = impressionRepository;
+        this.contentClient = RestClient.builder().baseUrl(contentBaseUrl).build();
     }
 
     public CursorPage<FeedItem> feed(Long userId, String cursor, int size) {
@@ -33,14 +49,23 @@ public class FeedService {
     }
 
     public CursorPage<FeedItem> feed(Long userId, String cursor, int size, String scene) {
-        return feedFromPosts(userId, seedPosts, cursor, size, scene);
+        CandidateSet candidates = loadCandidates(scene, Math.max(size * 4, 80));
+        CursorPage<FeedItem> page = feedFromPosts(userId, candidates.posts(), cursor, size, scene, candidates.source(), candidates.degraded());
+        if (page.records().isEmpty() && !"SEED_FALLBACK".equals(candidates.source())) {
+            return feedFromPosts(userId, seedPosts, cursor, size, scene, "SEED_FALLBACK", true);
+        }
+        return page;
     }
 
     public CursorPage<FeedItem> feedFromPosts(Long userId, List<PostSummary> candidates, String cursor, int size) {
-        return feedFromPosts(userId, candidates, cursor, size, "mixed");
+        return feedFromPosts(userId, candidates, cursor, size, "mixed", "DB", false);
     }
 
     public CursorPage<FeedItem> feedFromPosts(Long userId, List<PostSummary> candidates, String cursor, int size, String scene) {
+        return feedFromPosts(userId, candidates, cursor, size, scene, "DB", false);
+    }
+
+    private CursorPage<FeedItem> feedFromPosts(Long userId, List<PostSummary> candidates, String cursor, int size, String scene, String source, boolean degraded) {
         int offset = parseCursor(cursor);
         String normalizedScene = normalizeScene(scene);
         Set<String> interests = interests(userId);
@@ -52,6 +77,7 @@ public class FeedService {
                 .sorted(Comparator.comparingDouble(FeedItem::score).reversed())
                 .toList();
         if (ranked.isEmpty() && !exposed.isEmpty()) {
+            degraded = true;
             ranked = candidates.stream()
                     .filter(post -> matchesScene(post, normalizedScene))
                     .map(post -> toFeedItem(userId, post, interests, Set.of(), normalizedScene))
@@ -59,8 +85,9 @@ public class FeedService {
                     .toList();
         }
         List<FeedItem> page = ranked.stream().skip(offset).limit(size).toList();
+        recordImpressions(userId, normalizedScene, page);
         int nextOffset = offset + page.size();
-        return CursorPage.of(page, String.valueOf(nextOffset), nextOffset < ranked.size());
+        return CursorPage.of(page, String.valueOf(nextOffset), nextOffset < ranked.size(), degraded, source);
     }
 
     public int recordExposure(ExposureRequest request) {
@@ -75,6 +102,26 @@ public class FeedService {
         } catch (RuntimeException ignored) {
         }
         return request.postIds().size();
+    }
+
+    private CandidateSet loadCandidates(String scene, int size) {
+        try {
+            String theme = sceneToQueryTheme(normalizeScene(scene));
+            ApiResponse<PageResponse<PostSummary>> response = contentClient.get()
+                    .uri(uriBuilder -> uriBuilder.path("/api/posts")
+                            .queryParam("page", 1)
+                            .queryParam("size", size)
+                            .queryParamIfPresent("theme", java.util.Optional.ofNullable(theme))
+                            .build())
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            if (response != null && response.data() != null && !response.data().records().isEmpty()) {
+                return new CandidateSet(response.data().records(), "DB", false);
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return new CandidateSet(seedPosts, "SEED_FALLBACK", true);
     }
 
     private FeedItem toFeedItem(Long userId, PostSummary post, Set<String> interests, Set<Long> exposed, String scene) {
@@ -98,7 +145,7 @@ public class FeedService {
         if (!seedReason.isBlank()) return seedReason;
         if (post.solvable()) return "可解谜案件，已有 " + post.solvedCount() + " 人完成推理";
         if (followedAuthor) return "来自你关注的创作者";
-        if (mutualFollowees > 0) return "你们有共同关注，图谱亲密度较高";
+        if (mutualFollowees > 0) return "存在共同关注，社交图谱亲密度较高";
         if (post.tags().stream().anyMatch(interests::contains)) return "与你最近关注的主题标签相关";
         if (hotScore > 20 || post.likes() > 300) return "近期互动热度较高";
         return switch (post.theme()) {
@@ -106,6 +153,21 @@ public class FeedService {
             case "COSMOS" -> "宇宙档案与观测日志推荐";
             default -> "推理馆编辑精选";
         };
+    }
+
+    private void recordImpressions(Long userId, String scene, List<FeedItem> page) {
+        for (FeedItem item : page) {
+            try {
+                String key = "recommend:impression:" + userId + ":" + scene;
+                redisTemplate.opsForList().leftPush(key, item.post().id() + "|" + item.algorithm() + "|" + item.score());
+                redisTemplate.opsForList().trim(key, 0, 199);
+                redisTemplate.expire(key, Duration.ofDays(7));
+                if (impressionRepository != null) {
+                    impressionRepository.save(userId, scene, item);
+                }
+            } catch (RuntimeException ignored) {
+            }
+        }
     }
 
     private boolean matchesScene(PostSummary post, String scene) {
@@ -116,6 +178,13 @@ public class FeedService {
             return post.type().equalsIgnoreCase(scene);
         }
         return post.theme().equalsIgnoreCase(sceneToTheme(scene));
+    }
+
+    private String sceneToQueryTheme(String scene) {
+        if ("deduction".equals(scene) || "sci_fi".equals(scene) || "cosmos".equals(scene)) {
+            return sceneToTheme(scene);
+        }
+        return null;
     }
 
     private String sceneToTheme(String scene) {
@@ -190,4 +259,6 @@ public class FeedService {
         }
     }
 
+    private record CandidateSet(List<PostSummary> posts, String source, boolean degraded) {
+    }
 }

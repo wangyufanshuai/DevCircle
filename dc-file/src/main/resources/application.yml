@@ -15,6 +15,8 @@ spring:
       max-file-size: 10MB
       max-request-size: 12MB
 devcircle:
+  upload:
+    max-bytes: ${UPLOAD_MAX_BYTES:10485760}
   s3:
     endpoint: ${S3_ENDPOINT:http://localhost:9000}
     bucket: ${S3_BUCKET:devcircle}

@@ -3,6 +3,10 @@ server:
 spring:
   application:
     name: dc-recommend
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${CONTENT_MYSQL_DATABASE:dc_content}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: ${MYSQL_USER:devcircle}
+    password: ${MYSQL_PASSWORD:devcircle}
   data:
     redis:
       host: ${REDIS_HOST:localhost}

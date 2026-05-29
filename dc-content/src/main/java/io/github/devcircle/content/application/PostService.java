@@ -42,7 +42,12 @@ public class PostService {
     }
 
     public List<PostSummary> related(Long id, int size) {
-        return ThemeContentLibrary.related(id, size);
+        try {
+            var records = postRepository.related(id, size);
+            return records.isEmpty() ? ThemeContentLibrary.related(id, size) : records;
+        } catch (DataAccessException ex) {
+            return ThemeContentLibrary.related(id, size);
+        }
     }
 
     public PostSummary create(Long authorId, CreatePostRequest request) {
@@ -73,7 +78,7 @@ public class PostService {
         return new PostSummary(2001L, normalizeType(request.type()), normalizeTheme(request.theme()), normalizeContentKind(request.contentKind()),
                 normalizeDifficulty(request.difficulty()), Boolean.TRUE.equals(request.solvable()), 0,
                 request.title(), excerpt, "demo", request.tags() == null ? List.of() : request.tags(), List.of(), 0, 0, 0, "PENDING", java.time.Instant.now(),
-                splitDetails(request.clues()), List.of(), List.of(), request.solvable() ? "请根据线索提交你的推理结论。" : "", splitDetails(request.solution()), request.solution() == null ? "" : request.solution(), List.of(), List.of(), List.of());
+                splitDetails(request.clues()), List.of(), List.of(), Boolean.TRUE.equals(request.solvable()) ? "请根据线索提交你的推理结论。" : "", splitDetails(request.solution()), request.solution() == null ? "" : request.solution(), List.of(), List.of(), List.of());
     }
 
     private String normalizeType(String type) {
@@ -96,7 +101,7 @@ public class PostService {
         if (value == null || value.isBlank()) {
             return List.of();
         }
-        return java.util.Arrays.stream(value.split("\\n|;|；"))
+        return java.util.Arrays.stream(value.split("\\R|;|；"))
                 .map(String::trim)
                 .filter(item -> !item.isBlank())
                 .toList();

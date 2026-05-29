@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { NButton, NConfigProvider, NIcon, NInput, NSelect, NTag } from 'naive-ui'
-import { Bell, BookOpen, Check, Compass, Heart, Orbit, PenLine, Search, Shield, Sparkles, Telescope, UserPlus, X } from 'lucide-vue-next'
+import { Bell, Check, Compass, Heart, Orbit, PenLine, Search, Shield, Sparkles, Telescope, UserPlus, X } from 'lucide-vue-next'
 import { createPost, demoOAuthLogin, fetchAudits, fetchFeed, fetchLeaderboard, fetchNotifications, fetchPostDetail, fetchRelatedPosts, followUser, interact, recordExposures, searchPosts, submitDeductionAnswer } from './api/client'
 import type { AuditItem, FeedItem, LeaderboardEntry, NotificationItem, Post } from './api/types'
 
@@ -48,6 +48,7 @@ const selectedSearchTheme = ref('mixed')
 const approved = ref<number[]>([])
 const rejected = ref<number[]>([])
 const message = ref('')
+const degradedMessage = ref('')
 const nextCursor = ref('')
 const hasMore = ref(false)
 const loadingFeed = ref(false)
@@ -57,9 +58,9 @@ const answerMessage = ref('')
 const selectedPost = ref<Post | null>(null)
 const relatedPosts = ref<Post[]>([])
 const draft = ref({
-  title: '',
-  content: '',
-  tags: '密室,时间线',
+  title: '雾港钟楼的第十三声',
+  content: '午夜后钟楼响了十三声，守夜人的怀表停在 00:07，鞋印只到楼梯口，航海日志缺了一页。',
+  tags: '密室,时间线,钟楼',
   type: 'TEXT' as 'TEXT' | 'IMAGE' | 'VIDEO',
   theme: 'DEDUCTION' as 'DEDUCTION' | 'SCI_FI' | 'COSMOS',
   contentKind: 'CASE_FILE' as 'CASE_FILE' | 'PUZZLE' | 'FICTION' | 'WORLDBUILDING' | 'COSMIC_ARTICLE' | 'OBSERVATION_LOG',
@@ -76,7 +77,7 @@ const firstSolvableCase = computed(() => visibleFeed.value.find((item) => item.p
 const themeStats = computed(() => [
   { label: '推理案件', value: visibleFeed.value.filter((item) => item.post.theme === 'DEDUCTION').length, hint: '可答题、可积分' },
   { label: '科幻创作', value: visibleFeed.value.filter((item) => item.post.theme === 'SCI_FI').length, hint: '短篇与世界观' },
-  { label: '宇宙档案', value: visibleFeed.value.filter((item) => item.post.theme === 'COSMOS').length, hint: '观测和科普' },
+  { label: '宇宙档案', value: visibleFeed.value.filter((item) => item.post.theme === 'COSMOS').length, hint: '观测与科普' },
   { label: '候选内容', value: visibleFeed.value.length, hint: '当前频道可见' }
 ])
 const activeTitle = computed(() => {
@@ -112,6 +113,7 @@ async function loadFeed(cursor?: string) {
     feedItems.value = cursor ? [...feedItems.value, ...page.records] : page.records
     nextCursor.value = page.nextCursor
     hasMore.value = page.hasMore
+    if (page.degraded || page.source === 'SEED_FALLBACK') degradedMessage.value = '后端接口不可用或候选为空，当前显示演示降级数据。'
     await recordExposures(page.records.map((item) => item.post.id), `${scene.value}_feed`)
   } finally {
     loadingFeed.value = false
@@ -164,7 +166,7 @@ async function publishPost() {
       tags: draft.value.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
       mediaIds: []
     })
-    feedItems.value = [wrapPost(post, '刚刚提交，已进入审核与事件队列', 'LOCAL_CREATE'), ...feedItems.value]
+    feedItems.value = [wrapPost(post, '刚刚提交，已进入审核和事件队列', 'LOCAL_CREATE'), ...feedItems.value]
     selectedNav.value = 'mixed'
     message.value = `内容 #${post.id} 已提交：${themeLabel(post.theme)} / ${kindLabel(post.contentKind)} / ${post.status}`
   } finally {
@@ -200,7 +202,13 @@ async function follow(author: string) {
   message.value = result.duplicated ? `已关注创作者 ${author}` : `关注创作者 ${author} 成功`
 }
 
+function onDegraded(event: Event) {
+  const feature = (event as CustomEvent<string>).detail
+  degradedMessage.value = `接口 ${feature} 暂不可用，已进入演示降级模式。`
+}
+
 onMounted(async () => {
+  window.addEventListener('devcircle-api-degraded', onDegraded)
   try {
     const [auditData, notificationData, leaderboardData] = await Promise.all([fetchAudits(), fetchNotifications(), fetchLeaderboard()])
     audits.value = auditData
@@ -210,6 +218,10 @@ onMounted(async () => {
     message.value = '接口暂不可用，已切换到本地演示数据。'
   }
   await loadFeed()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('devcircle-api-degraded', onDegraded)
 })
 </script>
 
@@ -236,177 +248,241 @@ onMounted(async () => {
         </button>
       </aside>
 
-      <main class="workspace">
+      <main class="main">
         <header class="topbar">
-          <n-input v-model:value="keyword" size="large" placeholder="搜索案件、科幻短篇、宇宙档案、线索或标签" clearable @keyup.enter="runSearch">
-            <template #prefix><n-icon :component="Search" /></template>
-          </n-input>
-          <n-select v-model:value="selectedSearchTheme" :options="themeOptions" size="large" class="theme-filter" />
+          <div>
+            <p class="eyebrow">DevCircle v1.0 production-ready track</p>
+            <h1>{{ activeTitle }}</h1>
+          </div>
+          <div class="searchbar">
+            <n-input v-model:value="keyword" size="large" placeholder="搜索案件、科幻短篇、宇宙档案、线索或标签" clearable @keyup.enter="runSearch">
+              <template #prefix><n-icon :component="Search" /></template>
+            </n-input>
+            <n-select v-model:value="selectedSearchTheme" :options="themeOptions" size="large" class="theme-filter" />
+            <n-button type="primary" @click="runSearch">搜索</n-button>
+          </div>
           <div class="topbar-actions">
-            <button class="oauth-button" @click="login('github')">GitHub 登录</button>
-            <button class="oauth-button" @click="login('gitee')">Gitee 登录</button>
-            <button class="icon-button" aria-label="通知"><n-icon :component="Bell" /><span v-if="unreadCount" class="notice-dot">{{ unreadCount }}</span></button>
+            <n-button secondary @click="login('github')">GitHub 登录</n-button>
+            <n-button secondary @click="login('gitee')">Gitee 登录</n-button>
+            <div class="bell"><n-icon :component="Bell" />{{ unreadCount }}</div>
           </div>
         </header>
 
-        <section class="hero-panel">
-          <div>
-            <p class="eyebrow">DevCircle v0.9 内容库升级</p>
-            <h1>120 条主题实例，把推理馆、科幻馆和宇宙档案做成可读的内容平台</h1>
-            <p>每个主题约 40 条内容，详情页包含线索板、世界观设定、宇宙观测事实和相关内容召回。</p>
-          </div>
-          <div class="hero-actions">
-            <n-select v-model:value="scene" :options="themeOptions" size="medium" @update:value="loadFeed()" />
-            <n-button type="primary" :loading="loadingFeed" @click="loadFeed()">刷新推荐</n-button>
+        <div v-if="message || degradedMessage" class="message-strip">
+          <span v-if="message">{{ message }}</span>
+          <span v-if="degradedMessage" class="degraded">{{ degradedMessage }}</span>
+        </div>
+
+        <section v-if="selectedNav !== 'write' && selectedNav !== 'admin'" class="dashboard-grid">
+          <article v-for="stat in themeStats" :key="stat.label" class="stat-card">
+            <span>{{ stat.label }}</span>
+            <strong>{{ stat.value }}</strong>
+            <small>{{ stat.hint }}</small>
+          </article>
+        </section>
+
+        <section v-if="selectedNav === 'write'" class="workbench">
+          <div class="panel wide">
+            <h2>创作台</h2>
+            <div class="form-grid">
+              <label>标题<n-input v-model:value="draft.title" /></label>
+              <label>标签<n-input v-model:value="draft.tags" placeholder="逗号分隔" /></label>
+              <label>主题<n-select v-model:value="draft.theme" :options="[
+                { label: '推理', value: 'DEDUCTION' },
+                { label: '科幻', value: 'SCI_FI' },
+                { label: '宇宙', value: 'COSMOS' }
+              ]" /></label>
+              <label>内容类型<n-select v-model:value="draft.contentKind" :options="contentKindOptions" /></label>
+              <label>难度<n-select v-model:value="draft.difficulty" :options="difficultyOptions" /></label>
+              <label>媒介<n-select v-model:value="draft.type" :options="[
+                { label: '文字', value: 'TEXT' },
+                { label: '图片', value: 'IMAGE' },
+                { label: '视频', value: 'VIDEO' }
+              ]" /></label>
+            </div>
+            <label class="block-label">正文<n-input v-model:value="draft.content" type="textarea" :autosize="{ minRows: 5, maxRows: 8 }" /></label>
+            <label class="block-label">推理线索<n-input v-model:value="draft.clues" type="textarea" :autosize="{ minRows: 3, maxRows: 5 }" /></label>
+            <label class="block-label">隐藏答案 / 解析<n-input v-model:value="draft.solution" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" /></label>
+            <n-button type="primary" :loading="publishing" @click="publishPost">提交审核与事件队列</n-button>
           </div>
         </section>
 
-        <section class="content-grid">
-          <div class="feed-column">
-            <div class="section-heading">
+        <section v-else-if="selectedNav === 'admin'" class="workbench">
+          <div class="panel">
+            <h2>待审核内容</h2>
+            <div v-for="item in pendingPosts" :key="item.postId" class="audit-row">
               <div>
-                <h2>{{ activeTitle }}</h2>
-                <p>主题、类型、难度、推荐理由和详情字段统一来自内容库。</p>
+                <strong>{{ item.title }}</strong>
+                <span>{{ item.author }} / {{ item.status }}</span>
               </div>
-              <n-button v-if="hasMore && searchResults.length === 0" secondary @click="loadFeed(nextCursor)">加载更多</n-button>
+              <div>
+                <n-button size="small" type="success" @click="approve(item.postId)"><n-icon :component="Check" />通过</n-button>
+                <n-button size="small" type="error" @click="reject(item.postId)"><n-icon :component="X" />驳回</n-button>
+              </div>
             </div>
+          </div>
+          <div class="panel">
+            <h2>解谜排行榜</h2>
+            <div v-for="entry in leaderboard" :key="entry.userId" class="rank-row">
+              <span>{{ entry.username }}</span>
+              <strong>{{ entry.totalPoints }} 分</strong>
+              <small>{{ entry.correctCount }} 题正确</small>
+            </div>
+          </div>
+        </section>
 
-            <div v-if="message" class="audit-message">{{ message }}</div>
-
-            <section v-if="selectedNav === 'write'" class="post-card composer">
-              <h2>创作台</h2>
-              <div class="form-grid">
-                <n-select v-model:value="draft.theme" :options="[{ label: '推理', value: 'DEDUCTION' }, { label: '科幻', value: 'SCI_FI' }, { label: '宇宙', value: 'COSMOS' }]" />
-                <n-select v-model:value="draft.contentKind" :options="contentKindOptions" />
-                <n-select v-model:value="draft.difficulty" :options="difficultyOptions" />
-                <n-select v-model:value="draft.type" :options="[{ label: '文字', value: 'TEXT' }, { label: '图片', value: 'IMAGE' }, { label: '视频', value: 'VIDEO' }]" />
-              </div>
-              <n-input v-model:value="draft.title" placeholder="标题，例如：雾港钟楼失踪案" />
-              <n-input v-model:value="draft.content" type="textarea" placeholder="正文：案件叙述、科幻短篇、世界观设定或宇宙档案" />
-              <n-input v-model:value="draft.tags" placeholder="标签，用英文逗号分隔" />
-              <n-input v-model:value="draft.clues" type="textarea" placeholder="推理线索；非推理内容可留作设定要点" />
-              <n-input v-model:value="draft.solution" placeholder="隐藏答案或作者解析" />
-              <label class="check-row"><input v-model="draft.solvable" type="checkbox" /> 允许用户提交推理答案并参与积分</label>
-              <n-button type="primary" :disabled="!draft.title || !draft.content" :loading="publishing" @click="publishPost">提交到审核与事件队列</n-button>
-            </section>
-
-            <section v-if="selectedNav !== 'write' && firstSolvableCase" class="case-panel">
+        <section v-else class="content-layout">
+          <section class="feed-column">
+            <div class="section-head">
               <div>
-                <p class="eyebrow">推理挑战</p>
-                <h2>{{ firstSolvableCase.title }}</h2>
-                <p>{{ firstSolvableCase.excerpt }}</p>
+                <h2>主题推荐流</h2>
+                <p>数据库/搜索候选优先，候选为空时显式降级到种子内容库。</p>
               </div>
-              <div class="answer-box">
-                <n-input v-model:value="answerText" placeholder="提交你的推理结论" />
-                <n-button type="primary" @click="answerCase(firstSolvableCase.id)">提交答案</n-button>
-              </div>
-              <div v-if="answerMessage" class="audit-message">{{ answerMessage }}</div>
-            </section>
-
-            <article v-for="item in visibleFeed" :key="item.post.id" class="post-card" :class="`theme-${item.post.theme.toLowerCase()}`" @click="openDetail(item.post)">
+              <n-button :loading="loadingFeed" @click="loadFeed()">刷新推荐</n-button>
+            </div>
+            <article v-for="item in visibleFeed" :key="item.post.id" class="post-card" @click="openDetail(item.post)">
               <div class="post-meta">
-                <span>{{ themeLabel(item.post.theme) }}</span>
-                <span>{{ kindLabel(item.post.contentKind) }}</span>
-                <span>{{ difficultyLabel(item.post.difficulty) }}</span>
-                <span>{{ item.post.status === 'PENDING' ? '待审核' : '已发布' }}</span>
+                <n-tag size="small" type="info">{{ themeLabel(item.post.theme) }}</n-tag>
+                <n-tag size="small">{{ kindLabel(item.post.contentKind) }}</n-tag>
+                <n-tag size="small" :bordered="false">{{ difficultyLabel(item.post.difficulty) }}</n-tag>
                 <span>{{ item.algorithm }}</span>
               </div>
-              <h2>{{ item.post.title }}</h2>
+              <h3>{{ item.post.title }}</h3>
               <p>{{ item.post.excerpt }}</p>
-              <div v-if="item.post.mediaAssets.length" class="inline-media">
-                <img v-if="item.post.type === 'IMAGE'" :src="item.post.mediaAssets[0].url" :alt="item.post.title" />
-                <video v-if="item.post.type === 'VIDEO'" :src="item.post.mediaAssets[0].url" controls muted playsinline />
+              <div v-if="item.post.mediaAssets?.length" class="media-strip">
+                <img v-for="asset in item.post.mediaAssets.slice(0, 3)" :key="asset.mediaId" :src="asset.url" alt="" />
               </div>
-              <div class="tag-row"><n-tag v-for="tag in item.post.tags" :key="tag" size="small" round>{{ tag }}</n-tag></div>
-              <footer>
-                <span>{{ item.post.likes }} 赞</span>
-                <span>{{ item.post.comments }} 评论</span>
-                <span>{{ item.post.views }} 浏览</span>
-                <span v-if="item.post.solvable">{{ item.post.solvedCount }} 人解出</span>
-                <button class="text-action" @click.stop="toggleInteraction(item.post.id, 'like')"><n-icon :component="Heart" /> {{ item.liked ? '已赞' : '点赞' }}</button>
-                <button class="text-action" @click.stop="toggleInteraction(item.post.id, 'favorite')">{{ item.favorited ? '已收藏' : '收藏' }}</button>
-                <button class="text-action" @click.stop="follow(item.post.author)"><n-icon :component="UserPlus" /> 关注</button>
-                <button class="text-action" @click.stop="openDetail(item.post)">查看详情</button>
-                <span class="reason">{{ item.reason }}</span>
-              </footer>
+              <div class="post-footer">
+                <span>{{ item.reason }}</span>
+                <div>
+                  <button @click.stop="toggleInteraction(item.post.id, 'like')"><n-icon :component="Heart" />{{ item.post.likes }}</button>
+                  <button @click.stop="toggleInteraction(item.post.id, 'favorite')"><n-icon :component="Telescope" />收藏</button>
+                  <button @click.stop="follow(item.post.author)"><n-icon :component="UserPlus" />{{ item.post.author }}</button>
+                </div>
+              </div>
             </article>
-          </div>
+            <n-button v-if="hasMore" block :loading="loadingFeed" @click="loadFeed(nextCursor)">加载更多</n-button>
+          </section>
 
-          <aside class="right-rail">
-            <section v-if="selectedPost" class="rail-panel detail-panel">
-              <div class="panel-title"><h2>内容详情</h2><button class="text-action" @click="selectedPost = null">关闭</button></div>
-              <p class="eyebrow">{{ themeLabel(selectedPost.theme) }} / {{ kindLabel(selectedPost.contentKind) }}</p>
-              <h2>{{ selectedPost.title }}</h2>
-              <p>{{ selectedPost.excerpt }}</p>
-              <div class="detail-list" v-if="selectedPost.clues?.length">
-                <strong>线索板</strong>
-                <span v-for="clue in selectedPost.clues" :key="clue">{{ clue }}</span>
-              </div>
-              <div class="detail-list" v-if="selectedPost.suspects?.length">
-                <strong>嫌疑人</strong>
-                <span v-for="suspect in selectedPost.suspects" :key="suspect">{{ suspect }}</span>
-              </div>
-              <div class="detail-list" v-if="selectedPost.timeline?.length">
-                <strong>时间线</strong>
-                <span v-for="time in selectedPost.timeline" :key="time">{{ time }}</span>
-              </div>
-              <div class="detail-list" v-if="selectedPost.worldbuilding?.length">
-                <strong>世界观设定</strong>
-                <span v-for="entry in selectedPost.worldbuilding" :key="entry">{{ entry }}</span>
-              </div>
-              <div class="detail-list" v-if="selectedPost.cosmicFacts?.length">
-                <strong>宇宙档案</strong>
-                <span v-for="fact in selectedPost.cosmicFacts" :key="fact">{{ fact }}</span>
-              </div>
-              <div v-if="selectedPost.solvable" class="answer-box compact-answer">
-                <n-input v-model:value="answerText" placeholder="提交详情页推理答案" />
-                <n-button type="primary" @click="answerCase(selectedPost.id)">提交</n-button>
-              </div>
-              <div v-if="answerMessage" class="audit-message">{{ answerMessage }}</div>
-              <div class="detail-list" v-if="relatedPosts.length">
-                <strong>相关内容</strong>
-                <button v-for="post in relatedPosts" :key="post.id" class="related-item" @click="openDetail(post)">{{ post.title }}</button>
-              </div>
+          <aside class="side-column">
+            <section class="panel">
+              <h2>案件答题</h2>
+              <p>{{ firstSolvableCase?.title ?? '当前频道暂无可答题案件' }}</p>
+              <n-input v-model:value="answerText" type="textarea" :autosize="{ minRows: 3, maxRows: 4 }" />
+              <n-button type="primary" @click="answerCase(firstSolvableCase?.id)">提交推理</n-button>
+              <p class="answer">{{ answerMessage }}</p>
             </section>
-
-            <section class="rail-panel metric-panel">
-              <h2>主题概览</h2>
-              <div class="metric-grid">
-                <div v-for="stat in themeStats" :key="stat.label" class="metric-card">
-                  <strong>{{ stat.value }}</strong>
-                  <span>{{ stat.label }}</span>
-                  <small>{{ stat.hint }}</small>
-                </div>
-              </div>
-            </section>
-            <section class="rail-panel">
-              <h2><n-icon :component="Telescope" /> 宇宙观测信号</h2>
-              <div class="trend-list"><span>星云</span><span>暗物质</span><span>旅行者</span><span>旋臂</span><span>脉冲星</span></div>
-            </section>
-            <section class="rail-panel">
-              <h2><n-icon :component="BookOpen" /> 解谜排行榜</h2>
-              <div v-for="entry in leaderboard" :key="entry.userId" class="author-row">
-                <div><strong>{{ entry.username }}</strong><span>{{ entry.correctCount }} 题正确</span></div>
-                <em>{{ entry.totalPoints }}</em>
-              </div>
-            </section>
-            <section class="rail-panel moderation">
-              <div class="panel-title"><h2>待审核</h2><strong>{{ pendingPosts.length }}</strong></div>
-              <div v-for="post in pendingPosts" :key="post.postId" class="audit-row">
-                <div><strong>{{ post.title }}</strong><span>{{ post.author }} 提交</span></div>
-                <div class="audit-actions">
-                  <button class="approve" @click="approve(post.postId)" aria-label="通过"><n-icon :component="Check" /></button>
-                  <button class="reject" @click="reject(post.postId)" aria-label="驳回"><n-icon :component="X" /></button>
-                </div>
-              </div>
-            </section>
-            <section class="rail-panel">
+            <section class="panel">
               <h2>通知</h2>
-              <div v-for="item in notifications" :key="item.id" class="notification-row" :class="{ unread: !item.read }"><strong>{{ item.title }}</strong><span>{{ item.content }}</span></div>
+              <div v-for="item in notifications" :key="item.id" class="notification-row" :class="{ unread: !item.read }">
+                <strong>{{ item.title }}</strong>
+                <span>{{ item.content }}</span>
+              </div>
             </section>
           </aside>
+        </section>
+
+        <section v-if="selectedPost" class="detail-drawer">
+          <div class="detail-head">
+            <div>
+              <n-tag type="info">{{ themeLabel(selectedPost.theme) }}</n-tag>
+              <h2>{{ selectedPost.title }}</h2>
+              <p>{{ selectedPost.excerpt }}</p>
+            </div>
+            <button @click="selectedPost = null"><n-icon :component="X" /></button>
+          </div>
+          <div class="detail-grid">
+            <div v-if="selectedPost.clues?.length" class="detail-block"><h3>线索板</h3><ul><li v-for="clue in selectedPost.clues" :key="clue">{{ clue }}</li></ul></div>
+            <div v-if="selectedPost.suspects?.length" class="detail-block"><h3>嫌疑人</h3><ul><li v-for="suspect in selectedPost.suspects" :key="suspect">{{ suspect }}</li></ul></div>
+            <div v-if="selectedPost.timeline?.length" class="detail-block"><h3>时间线</h3><ul><li v-for="line in selectedPost.timeline" :key="line">{{ line }}</li></ul></div>
+            <div v-if="selectedPost.worldbuilding?.length" class="detail-block"><h3>世界观</h3><ul><li v-for="item in selectedPost.worldbuilding" :key="item">{{ item }}</li></ul></div>
+            <div v-if="selectedPost.cosmicFacts?.length" class="detail-block"><h3>宇宙档案</h3><ul><li v-for="item in selectedPost.cosmicFacts" :key="item">{{ item }}</li></ul></div>
+          </div>
+          <h3>相关内容</h3>
+          <div class="related-grid">
+            <button v-for="post in relatedPosts" :key="post.id" @click="openDetail(post)">
+              <strong>{{ post.title }}</strong>
+              <span>{{ themeLabel(post.theme) }} / {{ difficultyLabel(post.difficulty) }}</span>
+            </button>
+          </div>
         </section>
       </main>
     </div>
   </n-config-provider>
 </template>
+
+<style scoped>
+:global(*) { box-sizing: border-box; }
+:global(body) { margin: 0; background: #0e1116; color: #eef2f7; font-family: Inter, "Microsoft YaHei", system-ui, sans-serif; }
+button { font: inherit; }
+.app-shell { min-height: 100vh; display: grid; grid-template-columns: 250px minmax(0, 1fr); }
+.sidebar { position: sticky; top: 0; height: 100vh; padding: 22px 18px; background: #121821; border-right: 1px solid #26303d; display: flex; flex-direction: column; gap: 20px; }
+.brand { display: flex; gap: 12px; align-items: center; }
+.brand-mark { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 8px; background: #d7fb62; color: #111; font-weight: 900; }
+.brand strong, .brand span { display: block; }
+.brand span { color: #9aa6b2; font-size: 12px; margin-top: 4px; }
+.nav-list { display: grid; gap: 8px; }
+.nav-item, .write-button { border: 0; border-radius: 8px; padding: 12px; display: flex; align-items: center; gap: 10px; color: #cbd5e1; background: transparent; cursor: pointer; }
+.nav-item.active, .nav-item:hover, .write-button { background: #202a36; color: #fff; }
+.write-button { margin-top: auto; justify-content: center; background: #d7fb62; color: #111; font-weight: 700; }
+.main { padding: 28px; min-width: 0; }
+.topbar { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(320px, 620px) auto; gap: 16px; align-items: center; }
+.eyebrow { margin: 0 0 4px; color: #8fb3ff; font-size: 12px; text-transform: uppercase; }
+h1, h2, h3, p { margin-top: 0; }
+.searchbar { display: grid; grid-template-columns: 1fr 150px auto; gap: 10px; }
+.topbar-actions { display: flex; align-items: center; gap: 10px; }
+.bell { min-width: 56px; height: 38px; border-radius: 8px; background: #1b2530; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.message-strip { margin: 18px 0; padding: 12px 14px; border: 1px solid #344456; border-radius: 8px; background: #17202b; display: grid; gap: 6px; }
+.degraded { color: #ffd166; }
+.dashboard-grid { margin: 18px 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.stat-card, .panel, .post-card, .detail-drawer { border: 1px solid #26303d; border-radius: 8px; background: #151c25; }
+.stat-card { padding: 16px; }
+.stat-card span, .stat-card small { display: block; color: #9aa6b2; }
+.stat-card strong { display: block; font-size: 30px; margin: 8px 0; }
+.content-layout, .workbench { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 18px; align-items: start; }
+.workbench .wide { grid-column: 1 / -1; }
+.feed-column { display: grid; gap: 12px; }
+.section-head { display: flex; justify-content: space-between; gap: 16px; align-items: end; }
+.section-head p { color: #9aa6b2; margin: 4px 0 0; }
+.post-card { padding: 18px; cursor: pointer; transition: border-color .15s, transform .15s; }
+.post-card:hover { border-color: #d7fb62; transform: translateY(-1px); }
+.post-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: #9aa6b2; font-size: 12px; }
+.post-card h3 { margin: 12px 0 8px; font-size: 22px; }
+.post-card p { color: #cbd5e1; line-height: 1.65; }
+.media-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+.media-strip img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; }
+.post-footer { display: flex; justify-content: space-between; gap: 12px; align-items: center; color: #9aa6b2; }
+.post-footer div { display: flex; flex-wrap: wrap; gap: 8px; }
+.post-footer button, .detail-head button, .related-grid button { border: 1px solid #334155; background: #111821; color: #dbe4ef; border-radius: 8px; padding: 8px 10px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.side-column, .workbench { display: grid; gap: 14px; }
+.panel { padding: 18px; }
+.panel p { color: #b6c2cf; }
+.answer { color: #d7fb62; margin-top: 10px; }
+.notification-row, .rank-row, .audit-row { padding: 12px 0; border-top: 1px solid #26303d; display: grid; gap: 4px; }
+.notification-row.unread strong { color: #d7fb62; }
+.notification-row span, .rank-row small, .audit-row span { color: #9aa6b2; }
+.audit-row { grid-template-columns: 1fr auto; align-items: center; }
+.audit-row div:last-child { display: flex; gap: 8px; }
+.form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+label { display: grid; gap: 6px; color: #cbd5e1; }
+.block-label { margin-bottom: 12px; }
+.detail-drawer { margin-top: 20px; padding: 20px; }
+.detail-head { display: flex; justify-content: space-between; gap: 16px; }
+.detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.detail-block { background: #101720; border: 1px solid #26303d; border-radius: 8px; padding: 14px; }
+.detail-block li { margin-bottom: 8px; color: #cbd5e1; }
+.related-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.related-grid button { display: grid; text-align: left; }
+.related-grid span { color: #9aa6b2; font-size: 12px; }
+@media (max-width: 980px) {
+  .app-shell { grid-template-columns: 1fr; }
+  .sidebar { position: static; height: auto; padding: 14px; }
+  .nav-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .write-button { margin-top: 0; }
+  .main { padding: 16px; }
+  .topbar, .content-layout, .workbench, .dashboard-grid, .detail-grid, .related-grid { grid-template-columns: 1fr; }
+  .searchbar { grid-template-columns: 1fr; }
+  .topbar-actions, .post-footer { align-items: stretch; flex-direction: column; }
+  .form-grid { grid-template-columns: 1fr; }
+}
+</style>
