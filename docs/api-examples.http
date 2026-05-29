@@ -157,3 +157,105 @@ Authorization: {{adminToken}}
 ### 审计日志
 GET {{baseUrl}}/api/admin/audit-logs?page=1&size=20
 Authorization: {{adminToken}}
+
+### v1.1 治理审核队列
+GET {{baseUrl}}/api/admin/moderation/tasks?queue=manual-review&riskLevel=HIGH&status=PENDING&page=1&size=20
+Authorization: {{adminToken}}
+
+### v1.1 审核通过治理任务
+POST {{baseUrl}}/api/admin/moderation/tasks/1/approve
+Authorization: {{adminToken}}
+
+### v1.1 审核驳回治理任务
+POST {{baseUrl}}/api/admin/moderation/tasks/1/reject
+Authorization: {{adminToken}}
+
+### v1.1 升级复审
+POST {{baseUrl}}/api/admin/moderation/tasks/1/escalate
+Authorization: {{adminToken}}
+
+### v1.1 要求修改
+POST {{baseUrl}}/api/admin/moderation/tasks/1/require-changes
+Authorization: {{adminToken}}
+
+### v1.1 用户申诉
+POST {{baseUrl}}/api/posts/1001/appeals
+Authorization: {{userToken}}
+Content-Type: application/json
+
+{
+  "reason": "我认为案件线索描述没有违反社区规则，请复审。"
+}
+
+### v1.1 申诉列表
+GET {{baseUrl}}/api/admin/appeals?status=PENDING&page=1&size=20
+Authorization: {{adminToken}}
+
+### v1.1 风险用户列表
+GET {{baseUrl}}/api/admin/risk/users?status=WATCH&page=1&size=20
+Authorization: {{adminToken}}
+
+### v1.1 风险用户画像
+GET {{baseUrl}}/api/admin/risk/users/12/profile
+Authorization: {{adminToken}}
+
+### v1.1 限制用户
+POST {{baseUrl}}/api/admin/risk/users/12/restrict?status=NO_POST
+Authorization: {{adminToken}}
+
+### v1.1 解除限制
+POST {{baseUrl}}/api/admin/risk/users/12/unrestrict
+Authorization: {{adminToken}}
+
+### v1.1 推荐行为事件
+POST {{baseUrl}}/api/recommend/events
+Authorization: {{userToken}}
+Content-Type: application/json
+
+{
+  "postId": 1001,
+  "eventType": "detail_view",
+  "scene": "deduction",
+  "experimentId": "exp-theme-feed-v1",
+  "bucket": "weighted",
+  "requestId": "rest-client-demo-001"
+}
+
+### v1.1 推荐实验列表
+GET {{baseUrl}}/api/admin/recommend/experiments
+Authorization: {{adminToken}}
+
+### v1.1 创建推荐实验
+POST {{baseUrl}}/api/admin/recommend/experiments
+Authorization: {{adminToken}}
+Content-Type: application/json
+
+{
+  "experimentId": "exp-cosmos-depth-v1",
+  "name": "宇宙档案阅读深度实验",
+  "scene": "cosmos",
+  "trafficPercent": 50,
+  "weights": {
+    "theme": 0.35,
+    "hot": 0.2,
+    "freshness": 0.2,
+    "follow": 0.15,
+    "series": 0.1
+  }
+}
+
+### v1.1 激活推荐实验
+POST {{baseUrl}}/api/admin/recommend/experiments/exp-cosmos-depth-v1/activate
+Authorization: {{adminToken}}
+
+### v1.1 暂停推荐实验
+POST {{baseUrl}}/api/admin/recommend/experiments/exp-cosmos-depth-v1/pause
+Authorization: {{adminToken}}
+
+### v1.1 运营总览
+GET {{baseUrl}}/api/admin/metrics/overview
+Authorization: {{adminToken}}
+
+### v1.1 主题运营指标
+GET {{baseUrl}}/api/admin/metrics/themes
+Authorization: {{adminToken}}

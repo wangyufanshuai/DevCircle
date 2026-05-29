@@ -5,7 +5,11 @@ $topics = @(
   "comment.created",
   "interaction.changed",
   "notification.created",
-  "audit.completed"
+  "audit.completed",
+  "content.rejected",
+  "appeal.created",
+  "risk.signal.created",
+  "recommend.event.logged"
 )
 
 foreach ($topic in $topics) {

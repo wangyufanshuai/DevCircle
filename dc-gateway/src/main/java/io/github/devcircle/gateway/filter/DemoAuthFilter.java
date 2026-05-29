@@ -22,15 +22,21 @@ public class DemoAuthFilter implements GlobalFilter, Ordered {
     static final String ADMIN_TOKEN = "Bearer demo-access-token-admin";
     private final SecretKey jwtKey;
     private final boolean demoTokenEnabled;
+    private final String bannedUserIds;
+    private final String noPostUserIds;
 
     public DemoAuthFilter() {
-        this("devcircle-local-demo-secret-devcircle-local-demo-secret", true);
+        this("devcircle-local-demo-secret-devcircle-local-demo-secret", true, "", "");
     }
 
     public DemoAuthFilter(@Value("${devcircle.jwt.secret:devcircle-local-demo-secret-devcircle-local-demo-secret}") String secret,
-                          @Value("${devcircle.gateway.demo-token-enabled:true}") boolean demoTokenEnabled) {
+                          @Value("${devcircle.gateway.demo-token-enabled:true}") boolean demoTokenEnabled,
+                          @Value("${devcircle.gateway.banned-user-ids:}") String bannedUserIds,
+                          @Value("${devcircle.gateway.no-post-user-ids:}") String noPostUserIds) {
         this.jwtKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
         this.demoTokenEnabled = demoTokenEnabled;
+        this.bannedUserIds = bannedUserIds;
+        this.noPostUserIds = noPostUserIds;
     }
 
     @Override
@@ -51,6 +57,14 @@ public class DemoAuthFilter implements GlobalFilter, Ordered {
             return exchange.getResponse().setComplete();
         }
         if (path.startsWith("/api/admin/") && !context.roles().contains("ADMIN")) {
+            exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
+            return exchange.getResponse().setComplete();
+        }
+        if (containsUser(bannedUserIds, context.userId()) && isWriteRequest(exchange)) {
+            exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
+            return exchange.getResponse().setComplete();
+        }
+        if (containsUser(noPostUserIds, context.userId()) && "POST".equals(exchange.getRequest().getMethod().name()) && path.equals("/api/posts")) {
             exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
             return exchange.getResponse().setComplete();
         }
@@ -75,6 +89,23 @@ public class DemoAuthFilter implements GlobalFilter, Ordered {
         } catch (RuntimeException ex) {
             return null;
         }
+    }
+
+    private boolean containsUser(String configuredIds, String userId) {
+        if (configuredIds == null || configuredIds.isBlank()) {
+            return false;
+        }
+        for (String value : configuredIds.split(",")) {
+            if (value.trim().equals(userId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isWriteRequest(ServerWebExchange exchange) {
+        String method = exchange.getRequest().getMethod().name();
+        return "POST".equals(method) || "PUT".equals(method) || "PATCH".equals(method) || "DELETE".equals(method);
     }
 
     @Override

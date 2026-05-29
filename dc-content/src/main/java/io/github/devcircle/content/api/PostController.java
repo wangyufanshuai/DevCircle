@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/posts")
@@ -50,5 +51,12 @@ class PostController {
     ApiResponse<PostSummary> create(@RequestHeader(value = "X-User-Id", defaultValue = "2") Long userId,
                                     @Valid @RequestBody CreatePostRequest request) {
         return ApiResponse.ok(postService.create(userId, request));
+    }
+
+    @PostMapping("/{id}/appeals")
+    ApiResponse<Map<String, Object>> appeal(@RequestHeader(value = "X-User-Id", defaultValue = "2") Long userId,
+                                            @PathVariable Long id,
+                                            @Valid @RequestBody AppealRequest request) {
+        return ApiResponse.ok(postService.createAppeal(userId, id, request.reason()));
     }
 }

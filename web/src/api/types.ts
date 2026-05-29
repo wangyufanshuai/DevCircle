@@ -70,6 +70,9 @@ export type FeedItem = {
   algorithm: string
   mediaType: string
   features: Record<string, number>
+  experimentId?: string
+  bucket?: string
+  recallSources?: string[]
 }
 
 export type AuditItem = {
@@ -132,4 +135,34 @@ export type LeaderboardEntry = {
   username: string
   correctCount: number
   totalPoints: number
+}
+
+export type ModerationTask = {
+  taskId: number
+  postId: number
+  title: string
+  authorId?: number
+  queue: string
+  machineResult?: string
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | string
+  riskScore: number
+  reason: string
+  status: string
+  reviewLevel?: string
+  slaDeadline?: string
+}
+
+export type RiskUser = {
+  userId: number
+  status: string
+  riskScore: number
+  reason: string
+}
+
+export type RecommendExperiment = {
+  experimentId: string
+  name: string
+  scene: string
+  status: string
+  trafficPercent: number
 }

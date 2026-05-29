@@ -13,6 +13,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/recommend")
 class RecommendController {
@@ -37,6 +39,15 @@ class RecommendController {
         return ApiResponse.ok(new ExposureResult(feedService.recordExposure(normalized)));
     }
 
+    @PostMapping("/events")
+    ApiResponse<Map<String, Object>> events(@RequestHeader(value = "X-User-Id", defaultValue = "2") Long userId,
+                                            @RequestBody RecommendEventRequest request) {
+        return ApiResponse.ok(feedService.recordRecommendEvent(userId, request.postId(), request.eventType(), request.scene(), request.experimentId(), request.bucket(), request.requestId()));
+    }
+
     record ExposureResult(int recorded) {
+    }
+
+    record RecommendEventRequest(Long postId, String eventType, String scene, String experimentId, String bucket, String requestId) {
     }
 }

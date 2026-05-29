@@ -41,9 +41,76 @@ class AdminController {
         return ApiResponse.ok(adminService.reject(id, userId, traceId));
     }
 
+    @GetMapping("/moderation/tasks")
+    ApiResponse<List<Map<String, Object>>> moderationTasks(@RequestParam(required = false) String queue,
+                                                           @RequestParam(required = false) String riskLevel,
+                                                           @RequestParam(required = false) String status,
+                                                           @RequestParam(defaultValue = "1") int page,
+                                                           @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(adminService.moderationTasks(queue, riskLevel, status, page, size));
+    }
+
+    @PostMapping("/moderation/tasks/{id}/approve")
+    ApiResponse<AdminActionResult> approveTask(@PathVariable Long id,
+                                               @RequestHeader(value = "X-User-Id", defaultValue = "1") Long userId,
+                                               @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+        return ApiResponse.ok(adminService.approveModerationTask(id, userId, traceId));
+    }
+
+    @PostMapping("/moderation/tasks/{id}/reject")
+    ApiResponse<AdminActionResult> rejectTask(@PathVariable Long id,
+                                              @RequestHeader(value = "X-User-Id", defaultValue = "1") Long userId,
+                                              @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+        return ApiResponse.ok(adminService.rejectModerationTask(id, userId, traceId));
+    }
+
+    @PostMapping("/moderation/tasks/{id}/escalate")
+    ApiResponse<AdminActionResult> escalateTask(@PathVariable Long id,
+                                                @RequestHeader(value = "X-User-Id", defaultValue = "1") Long userId,
+                                                @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+        return ApiResponse.ok(adminService.escalateModerationTask(id, userId, traceId));
+    }
+
+    @PostMapping("/moderation/tasks/{id}/require-changes")
+    ApiResponse<AdminActionResult> requireChanges(@PathVariable Long id,
+                                                  @RequestHeader(value = "X-User-Id", defaultValue = "1") Long userId,
+                                                  @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+        return ApiResponse.ok(adminService.requireChanges(id, userId, traceId));
+    }
+
+    @GetMapping("/appeals")
+    ApiResponse<List<Map<String, Object>>> appeals(@RequestParam(required = false) String status,
+                                                   @RequestParam(defaultValue = "1") int page,
+                                                   @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(adminService.appeals(status, page, size));
+    }
+
     @PostMapping("/users/{id}/ban")
     ApiResponse<AdminActionResult> ban(@PathVariable Long id) {
         return ApiResponse.ok(adminService.ban(id));
+    }
+
+    @GetMapping("/risk/users")
+    ApiResponse<List<Map<String, Object>>> riskUsers(@RequestParam(required = false) String status,
+                                                     @RequestParam(defaultValue = "1") int page,
+                                                     @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(adminService.riskUsers(status, page, size));
+    }
+
+    @GetMapping("/risk/users/{id}/profile")
+    ApiResponse<Map<String, Object>> riskProfile(@PathVariable Long id) {
+        return ApiResponse.ok(adminService.riskProfile(id));
+    }
+
+    @PostMapping("/risk/users/{id}/restrict")
+    ApiResponse<AdminActionResult> restrictUser(@PathVariable Long id,
+                                                @RequestParam(defaultValue = "NO_POST") String status) {
+        return ApiResponse.ok(adminService.restrictUser(id, status));
+    }
+
+    @PostMapping("/risk/users/{id}/unrestrict")
+    ApiResponse<AdminActionResult> unrestrictUser(@PathVariable Long id) {
+        return ApiResponse.ok(adminService.unrestrictUser(id));
     }
 
     @PostMapping("/tags")
@@ -54,6 +121,31 @@ class AdminController {
     @GetMapping("/metrics/overview")
     ApiResponse<Map<String, Object>> overview() {
         return ApiResponse.ok(adminService.overview());
+    }
+
+    @GetMapping("/metrics/themes")
+    ApiResponse<List<Map<String, Object>>> themeMetrics() {
+        return ApiResponse.ok(adminService.themeMetrics());
+    }
+
+    @GetMapping("/recommend/experiments")
+    ApiResponse<List<Map<String, Object>>> experiments() {
+        return ApiResponse.ok(adminService.experiments());
+    }
+
+    @PostMapping("/recommend/experiments")
+    ApiResponse<AdminActionResult> createExperiment(@org.springframework.web.bind.annotation.RequestBody Map<String, Object> payload) {
+        return ApiResponse.ok(adminService.createExperiment(payload));
+    }
+
+    @PostMapping("/recommend/experiments/{id}/activate")
+    ApiResponse<AdminActionResult> activateExperiment(@PathVariable String id) {
+        return ApiResponse.ok(adminService.updateExperimentStatus(id, "ACTIVE"));
+    }
+
+    @PostMapping("/recommend/experiments/{id}/pause")
+    ApiResponse<AdminActionResult> pauseExperiment(@PathVariable String id) {
+        return ApiResponse.ok(adminService.updateExperimentStatus(id, "PAUSED"));
     }
 
     @GetMapping("/audit-logs")

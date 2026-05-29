@@ -2,8 +2,8 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { NButton, NConfigProvider, NIcon, NInput, NSelect, NTag } from 'naive-ui'
 import { Bell, Check, Compass, Heart, Orbit, PenLine, Search, Shield, Sparkles, Telescope, UserPlus, X } from 'lucide-vue-next'
-import { createPost, demoOAuthLogin, fetchAudits, fetchFeed, fetchLeaderboard, fetchNotifications, fetchPostDetail, fetchRelatedPosts, followUser, interact, recordExposures, searchPosts, submitDeductionAnswer } from './api/client'
-import type { AuditItem, FeedItem, LeaderboardEntry, NotificationItem, Post } from './api/types'
+import { createPost, demoOAuthLogin, fetchAudits, fetchFeed, fetchLeaderboard, fetchModerationTasks, fetchNotifications, fetchPostDetail, fetchRecommendExperiments, fetchRelatedPosts, fetchRiskUsers, followUser, interact, moderationAction, recordExposures, recordRecommendEvent, searchPosts, submitDeductionAnswer } from './api/client'
+import type { AuditItem, FeedItem, LeaderboardEntry, ModerationTask, NotificationItem, Post, RecommendExperiment, RiskUser } from './api/types'
 
 const navItems = [
   { key: 'mixed', label: '星环首页', icon: Compass },
@@ -39,6 +39,9 @@ const difficultyOptions = [
 const feedItems = ref<FeedItem[]>([])
 const searchResults = ref<Post[]>([])
 const audits = ref<AuditItem[]>([])
+const moderationTasks = ref<ModerationTask[]>([])
+const riskUsers = ref<RiskUser[]>([])
+const recommendExperiments = ref<RecommendExperiment[]>([])
 const notifications = ref<NotificationItem[]>([])
 const leaderboard = ref<LeaderboardEntry[]>([])
 const keyword = ref('')
@@ -132,6 +135,8 @@ async function switchNav(key: string) {
 }
 
 async function openDetail(post: Post) {
+  const item = feedItems.value.find((candidate) => candidate.post.id === post.id)
+  if (item) await recordRecommendEvent(item, 'detail_view')
   selectedPost.value = await fetchPostDetail(post.id)
   relatedPosts.value = await fetchRelatedPosts(post.id)
 }
@@ -147,7 +152,9 @@ async function runSearch() {
 }
 
 async function toggleInteraction(postId: number, type: 'like' | 'favorite') {
+  const item = feedItems.value.find((candidate) => candidate.post.id === postId)
   await interact(postId, type)
+  if (item) await recordRecommendEvent(item, type)
   feedItems.value = feedItems.value.map((item) => item.post.id === postId
     ? {
         ...item,
@@ -178,6 +185,8 @@ async function answerCase(postId?: number) {
   const targetId = postId ?? firstSolvableCase.value?.id
   if (!targetId) return
   const result = await submitDeductionAnswer(targetId, answerText.value)
+  const item = feedItems.value.find((candidate) => candidate.post.id === targetId)
+  if (item) await recordRecommendEvent(item, 'answer')
   answerMessage.value = `${result.correct ? '推理正确' : '推理未闭合'}，获得 ${result.points} 分。${result.explanation}`
   leaderboard.value = await fetchLeaderboard()
 }
@@ -190,6 +199,12 @@ async function approve(id: number) {
 async function reject(id: number) {
   rejected.value.push(id)
   message.value = `已驳回内容 #${id}`
+}
+
+async function handleModeration(taskId: number, action: 'approve' | 'reject' | 'escalate' | 'require-changes') {
+  await moderationAction(taskId, action)
+  moderationTasks.value = moderationTasks.value.map((item) => item.taskId === taskId ? { ...item, status: action.toUpperCase() } : item)
+  message.value = `治理任务 #${taskId} 已执行 ${action}`
 }
 
 async function login(provider: 'github' | 'gitee') {
@@ -210,10 +225,20 @@ function onDegraded(event: Event) {
 onMounted(async () => {
   window.addEventListener('devcircle-api-degraded', onDegraded)
   try {
-    const [auditData, notificationData, leaderboardData] = await Promise.all([fetchAudits(), fetchNotifications(), fetchLeaderboard()])
+    const [auditData, notificationData, leaderboardData, moderationData, riskData, experimentData] = await Promise.all([
+      fetchAudits(),
+      fetchNotifications(),
+      fetchLeaderboard(),
+      fetchModerationTasks(),
+      fetchRiskUsers(),
+      fetchRecommendExperiments()
+    ])
     audits.value = auditData
     notifications.value = notificationData
     leaderboard.value = leaderboardData
+    moderationTasks.value = moderationData
+    riskUsers.value = riskData
+    recommendExperiments.value = experimentData
   } catch {
     message.value = '接口暂不可用，已切换到本地演示数据。'
   }
@@ -251,7 +276,7 @@ onUnmounted(() => {
       <main class="main">
         <header class="topbar">
           <div>
-            <p class="eyebrow">DevCircle v1.0 production-ready track</p>
+            <p class="eyebrow">DevCircle v1.1 governance and recommendation track</p>
             <h1>{{ activeTitle }}</h1>
           </div>
           <div class="searchbar">
@@ -309,16 +334,34 @@ onUnmounted(() => {
 
         <section v-else-if="selectedNav === 'admin'" class="workbench">
           <div class="panel">
-            <h2>待审核内容</h2>
-            <div v-for="item in pendingPosts" :key="item.postId" class="audit-row">
+            <h2>治理审核队列</h2>
+            <div v-for="item in moderationTasks" :key="item.taskId" class="audit-row">
               <div>
                 <strong>{{ item.title }}</strong>
-                <span>{{ item.author }} / {{ item.status }}</span>
+                <span>{{ item.queue }} / {{ item.riskLevel }} / 风险 {{ item.riskScore }} / {{ item.reason }}</span>
               </div>
               <div>
-                <n-button size="small" type="success" @click="approve(item.postId)"><n-icon :component="Check" />通过</n-button>
-                <n-button size="small" type="error" @click="reject(item.postId)"><n-icon :component="X" />驳回</n-button>
+                <n-button size="small" type="success" @click="handleModeration(item.taskId, 'approve')"><n-icon :component="Check" />通过</n-button>
+                <n-button size="small" type="error" @click="handleModeration(item.taskId, 'reject')"><n-icon :component="X" />驳回</n-button>
+                <n-button size="small" @click="handleModeration(item.taskId, 'escalate')">复审</n-button>
+                <n-button size="small" @click="handleModeration(item.taskId, 'require-changes')">修改</n-button>
               </div>
+            </div>
+          </div>
+          <div class="panel">
+            <h2>风险用户</h2>
+            <div v-for="user in riskUsers" :key="user.userId" class="rank-row">
+              <span>用户 #{{ user.userId }} / {{ user.status }}</span>
+              <strong>{{ user.riskScore }} 风险分</strong>
+              <small>{{ user.reason }}</small>
+            </div>
+          </div>
+          <div class="panel">
+            <h2>推荐实验</h2>
+            <div v-for="exp in recommendExperiments" :key="exp.experimentId" class="rank-row">
+              <span>{{ exp.name }}</span>
+              <strong>{{ exp.status }} / {{ exp.scene }}</strong>
+              <small>{{ exp.experimentId }} / {{ exp.trafficPercent }}% 流量</small>
             </div>
           </div>
           <div class="panel">
@@ -346,6 +389,7 @@ onUnmounted(() => {
                 <n-tag size="small">{{ kindLabel(item.post.contentKind) }}</n-tag>
                 <n-tag size="small" :bordered="false">{{ difficultyLabel(item.post.difficulty) }}</n-tag>
                 <span>{{ item.algorithm }}</span>
+                <span>{{ item.experimentId }} / {{ item.bucket }}</span>
               </div>
               <h3>{{ item.post.title }}</h3>
               <p>{{ item.post.excerpt }}</p>
@@ -353,7 +397,7 @@ onUnmounted(() => {
                 <img v-for="asset in item.post.mediaAssets.slice(0, 3)" :key="asset.mediaId" :src="asset.url" alt="" />
               </div>
               <div class="post-footer">
-                <span>{{ item.reason }}</span>
+                <span>{{ item.reason }} · {{ item.recallSources?.join(' / ') }}</span>
                 <div>
                   <button @click.stop="toggleInteraction(item.post.id, 'like')"><n-icon :component="Heart" />{{ item.post.likes }}</button>
                   <button @click.stop="toggleInteraction(item.post.id, 'favorite')"><n-icon :component="Telescope" />收藏</button>

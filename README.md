@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/wangyufanshuai/DevCircle/actions/workflows/ci.yml/badge.svg)](https://github.com/wangyufanshuai/DevCircle/actions/workflows/ci.yml)
 
-DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“推理馆、科幻馆、宇宙档案”的主题内容平台。v1.0 的目标是生产预备级开源项目，而不是普通社交 Feed 空壳：内容从 MySQL 优先读取，搜索同步 Elasticsearch，推荐优先使用真实候选并显式标记降级，审核、通知、上传、安全、镜像、部署和可观测都具备继续迭代的工程基础。
+DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“推理馆、科幻馆、宇宙档案”的主题内容平台。v1.1 在 v1.0 生产预备工程基础上继续对标大厂内容平台复杂度，重点补齐内容治理、风控运营和推荐实验能力。
 
 ## 技术栈
 
@@ -12,7 +12,7 @@ DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“
 - Docker Compose, Helm, GHCR, Prometheus, Grafana, Jaeger
 - JUnit 5, Testcontainers, k6
 
-## v1.0 能力矩阵
+## v1.1 能力矩阵
 
 | 能力 | 状态 |
 | --- | --- |
@@ -27,6 +27,10 @@ DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“
 | 部署 | Compose `infra/app/demo` profiles，Helm dev/prod values，GHCR 镜像构建 |
 | 可观测 | Prometheus alerts，Grafana dashboard，Jaeger OTLP endpoint |
 | 压测 | k6 脚本与报告模板，统一测试阶段补录真实数据 |
+| 内容治理 | 发帖生成审核任务，包含机审结果、风险等级、SLA、复审状态和人工决策 |
+| 风控运营 | 内容风险信号、用户风险画像、禁发/封禁占位拦截和管理端治理接口 |
+| 推荐实验 | 多路召回来源、实验 id、分桶、推荐事件日志、实验启停管理 |
+| 运营看板 | 审核积压、通过率、推荐曝光、风险用户、主题指标等管理端视图 |
 
 ## 模块
 
@@ -111,5 +115,7 @@ k6 run tests/k6/mysticverse-smoke.js
 - [主题平台](docs/theme-platform.md)
 - [云服务器 Docker 部署](docs/deployment-cloud-docker.md)
 - [压测报告](docs/performance-report.md)
+- [内容治理平台](docs/governance-platform.md)
+- [推荐实验平台](docs/recommendation-experiment.md)
 - [OAuth2 与安全](docs/oauth2-security.md)
 - [推荐系统](docs/ml-recommendation.md)

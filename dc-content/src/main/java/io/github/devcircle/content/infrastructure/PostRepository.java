@@ -20,6 +20,7 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.Optional;
 
@@ -232,6 +233,7 @@ public class PostRepository {
                     .param("sortOrder", index++)
                     .update();
         }
+        createModerationTask(postId, authorId, request);
         writeOutbox(postId, authorId, request);
         return new PostSummary(postId, normalizeType(request.type()), normalizeTheme(request.theme()), normalizeContentKind(request.contentKind()),
                 normalizeDifficulty(request.difficulty()), Boolean.TRUE.equals(request.solvable()), 0,
@@ -295,6 +297,25 @@ public class PostRepository {
             imported++;
         }
         return imported;
+    }
+
+    @Transactional
+    public Map<String, Object> createAppeal(Long userId, Long postId, String reason) {
+        var keyHolder = new GeneratedKeyHolder();
+        jdbcTemplate.update(connection -> {
+            PreparedStatement statement = connection.prepareStatement(
+                    "INSERT INTO appeal_record(post_id, user_id, reason) VALUES (?, ?, ?)",
+                    Statement.RETURN_GENERATED_KEYS
+            );
+            statement.setLong(1, postId);
+            statement.setLong(2, userId);
+            statement.setString(3, reason == null || reason.isBlank() ? "用户申请复审" : reason);
+            return statement;
+        }, keyHolder);
+        Number key = keyHolder.getKey();
+        Long appealId = key == null ? 0L : key.longValue();
+        writeOutbox(EventTopics.APPEAL_CREATED, "APPEAL", appealId.toString(), Map.of("appealId", appealId, "postId", postId, "userId", userId));
+        return Map.of("appealId", appealId, "postId", postId, "status", "PENDING");
     }
 
     private Long upsertTag(String name) {
@@ -416,6 +437,82 @@ public class PostRepository {
         }
     }
 
+    private void writeOutbox(String topic, String aggregateType, String aggregateId, Object payload) {
+        try {
+            jdbcClient.sql("""
+                            INSERT INTO outbox_event(event_id, topic, aggregate_type, aggregate_id, payload)
+                            VALUES (:eventId, :topic, :aggregateType, :aggregateId, CAST(:payload AS JSON))
+                            """)
+                    .param("eventId", UUID.randomUUID().toString())
+                    .param("topic", topic)
+                    .param("aggregateType", aggregateType)
+                    .param("aggregateId", aggregateId)
+                    .param("payload", objectMapper.writeValueAsString(payload))
+                    .update();
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Failed to serialize outbox payload", ex);
+        }
+    }
+
+    private void createModerationTask(Long postId, Long authorId, CreatePostRequest request) {
+        ModerationRisk risk = moderationRisk(request);
+        jdbcClient.sql("""
+                        INSERT INTO moderation_task(post_id, author_id, queue_name, machine_result, risk_level, risk_score, reason, status, review_level, sla_deadline)
+                        VALUES (:postId, :authorId, :queueName, :machineResult, :riskLevel, :riskScore, :reason, 'PENDING', :reviewLevel, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL :slaHours HOUR))
+                        """)
+                .param("postId", postId)
+                .param("authorId", authorId)
+                .param("queueName", risk.queueName())
+                .param("machineResult", risk.machineResult())
+                .param("riskLevel", risk.riskLevel())
+                .param("riskScore", risk.score())
+                .param("reason", risk.reason())
+                .param("reviewLevel", risk.reviewLevel())
+                .param("slaHours", risk.slaHours())
+                .update();
+        if (risk.score() >= 40) {
+            jdbcClient.sql("""
+                            INSERT INTO content_risk_signal(user_id, post_id, signal_type, risk_score, description)
+                            VALUES (:userId, :postId, :signalType, :riskScore, :description)
+                            """)
+                    .param("userId", authorId)
+                    .param("postId", postId)
+                    .param("signalType", risk.signalType())
+                    .param("riskScore", risk.score())
+                    .param("description", risk.reason())
+                    .update();
+            jdbcClient.sql("""
+                            INSERT INTO user_risk_profile(user_id, status, risk_score, reason)
+                            VALUES (:userId, :status, :riskScore, :reason)
+                            ON DUPLICATE KEY UPDATE risk_score = GREATEST(risk_score, VALUES(risk_score)), status = VALUES(status), reason = VALUES(reason)
+                            """)
+                    .param("userId", authorId)
+                    .param("status", risk.score() >= 80 ? "RESTRICTED" : "WATCH")
+                    .param("riskScore", risk.score())
+                    .param("reason", risk.reason())
+                    .update();
+            writeOutbox(EventTopics.RISK_SIGNAL_CREATED, "RISK_SIGNAL", postId.toString(), Map.of("postId", postId, "userId", authorId, "riskScore", risk.score(), "riskLevel", risk.riskLevel()));
+        }
+    }
+
+    private ModerationRisk moderationRisk(CreatePostRequest request) {
+        String title = request.title() == null ? "" : request.title();
+        String content = request.content() == null ? "" : request.content();
+        List<String> tags = safeTags(request.tags());
+        boolean sensitive = tags.stream().anyMatch(tag -> List.of("禁区", "血腥", "攻击", "外挂").contains(tag));
+        boolean duplicateLike = title.length() > 4 && content.contains(title);
+        boolean video = "VIDEO".equalsIgnoreCase(request.type());
+        double score = 15 + (sensitive ? 60 : 0) + (duplicateLike ? 15 : 0) + (video ? 10 : 0) + (content.length() < 30 ? 20 : 0);
+        String level = score >= 80 ? "HIGH" : score >= 45 ? "MEDIUM" : "LOW";
+        String queue = "HIGH".equals(level) ? "senior-review" : "MEDIUM".equals(level) ? "manual-review" : "fast-lane";
+        String reason = sensitive ? "命中敏感标签或高风险主题" : duplicateLike ? "标题与正文高度重复" : video ? "视频内容需要人工抽检" : "常规机审通过后等待人工抽样";
+        String machineResult = score >= 80 ? "BLOCK_SUSPECTED" : score >= 45 ? "REVIEW_REQUIRED" : "PASS_LOW_RISK";
+        String reviewLevel = "HIGH".equals(level) ? "ESCALATED" : "NORMAL";
+        int sla = "HIGH".equals(level) ? 2 : "MEDIUM".equals(level) ? 8 : 24;
+        String signalType = sensitive ? "SENSITIVE_TAG" : duplicateLike ? "DUPLICATE_CONTENT" : "CONTENT_RISK";
+        return new ModerationRisk(queue, machineResult, level, score, reason, reviewLevel, sla, signalType);
+    }
+
     private String json(Object value) {
         try {
             return objectMapper.writeValueAsString(value == null ? List.of() : value);
@@ -456,5 +553,8 @@ public class PostRepository {
 
     private String excerpt(String content) {
         return content.substring(0, Math.min(140, content.length()));
+    }
+
+    private record ModerationRisk(String queueName, String machineResult, String riskLevel, double score, String reason, String reviewLevel, int slaHours, String signalType) {
     }
 }

@@ -9,6 +9,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class PostService {
@@ -55,6 +56,14 @@ public class PostService {
             return postRepository.create(authorId, request);
         } catch (DataAccessException ex) {
             return fallbackCreate(request);
+        }
+    }
+
+    public Map<String, Object> createAppeal(Long userId, Long postId, String reason) {
+        try {
+            return postRepository.createAppeal(userId, postId, reason);
+        } catch (DataAccessException ex) {
+            return Map.of("appealId", System.currentTimeMillis(), "postId", postId, "status", "PENDING", "degraded", true);
         }
     }
 

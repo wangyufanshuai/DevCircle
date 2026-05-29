@@ -14,10 +14,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 @Service
 public class FeedService {
@@ -70,9 +72,10 @@ public class FeedService {
         String normalizedScene = normalizeScene(scene);
         Set<String> interests = interests(userId);
         Set<Long> exposed = exposed(userId);
+        ExperimentContext experiment = experiment(userId, normalizedScene);
         List<FeedItem> ranked = candidates.stream()
                 .filter(post -> matchesScene(post, normalizedScene))
-                .map(post -> toFeedItem(userId, post, interests, exposed, normalizedScene))
+                .map(post -> toFeedItem(userId, post, interests, exposed, normalizedScene, experiment))
                 .filter(item -> item.score() > -100)
                 .sorted(Comparator.comparingDouble(FeedItem::score).reversed())
                 .toList();
@@ -80,7 +83,7 @@ public class FeedService {
             degraded = true;
             ranked = candidates.stream()
                     .filter(post -> matchesScene(post, normalizedScene))
-                    .map(post -> toFeedItem(userId, post, interests, Set.of(), normalizedScene))
+                    .map(post -> toFeedItem(userId, post, interests, Set.of(), normalizedScene, experiment))
                     .sorted(Comparator.comparingDouble(FeedItem::score).reversed())
                     .toList();
         }
@@ -104,6 +107,29 @@ public class FeedService {
         return request.postIds().size();
     }
 
+    public Map<String, Object> recordRecommendEvent(Long userId, Long postId, String eventType, String scene, String experimentId, String bucket, String requestId) {
+        String normalizedEvent = normalizeEventType(eventType);
+        String normalizedScene = normalizeScene(scene);
+        String finalExperimentId = experimentId == null || experimentId.isBlank() ? "exp-theme-feed-v1" : experimentId;
+        String finalBucket = bucket == null || bucket.isBlank() ? "control" : bucket;
+        if (impressionRepository != null) {
+            impressionRepository.saveRecommendEvent(userId, postId, normalizedEvent, normalizedScene, finalExperimentId, finalBucket, requestId);
+        }
+        try {
+            redisTemplate.opsForHash().increment("recommend:event:" + normalizedScene, normalizedEvent, 1);
+        } catch (RuntimeException ignored) {
+        }
+        return Map.of(
+                "eventId", UUID.randomUUID().toString(),
+                "userId", userId,
+                "postId", postId,
+                "eventType", normalizedEvent,
+                "scene", normalizedScene,
+                "experimentId", finalExperimentId,
+                "bucket", finalBucket
+        );
+    }
+
     private CandidateSet loadCandidates(String scene, int size) {
         try {
             String theme = sceneToQueryTheme(normalizeScene(scene));
@@ -124,7 +150,7 @@ public class FeedService {
         return new CandidateSet(seedPosts, "SEED_FALLBACK", true);
     }
 
-    private FeedItem toFeedItem(Long userId, PostSummary post, Set<String> interests, Set<Long> exposed, String scene) {
+    private FeedItem toFeedItem(Long userId, PostSummary post, Set<String> interests, Set<Long> exposed, String scene, ExperimentContext experiment) {
         double hotScore = hotScore(post.id());
         boolean followedAuthor = followedAuthor(userId, post.author());
         boolean alreadyExposed = exposed.contains(post.id());
@@ -133,10 +159,12 @@ public class FeedService {
             var ranked = mlRanker.rank(post, interests, hotScore, followedAuthor, mutualFollowees, alreadyExposed, scene);
             double themeBoost = post.theme().equalsIgnoreCase(sceneToTheme(scene)) ? 18 : 0;
             double solveBoost = post.solvable() && post.solvedCount() > 20 ? 8 : 0;
-            return new FeedItem(post, reason(post, interests, hotScore, followedAuthor, mutualFollowees), ranked.score() + themeBoost + solveBoost, false, false, "THEME_LINEAR_MODEL", post.type(), ranked.features());
+            return new FeedItem(post, reason(post, interests, hotScore, followedAuthor, mutualFollowees), ranked.score() + themeBoost + solveBoost,
+                    false, false, "THEME_LINEAR_MODEL", post.type(), ranked.features(), experiment.experimentId(), experiment.bucket(), recallSources(post, scene, interests, followedAuthor, hotScore));
         } catch (RuntimeException ex) {
             double score = scorer.score(post, interests, hotScore, followedAuthor, alreadyExposed);
-            return new FeedItem(post, scorer.reason(post, interests, hotScore, followedAuthor), score, false, false, "RULE_FALLBACK", post.type(), Map.of());
+            return new FeedItem(post, scorer.reason(post, interests, hotScore, followedAuthor), score,
+                    false, false, "RULE_FALLBACK", post.type(), Map.of(), experiment.experimentId(), experiment.bucket(), recallSources(post, scene, interests, followedAuthor, hotScore));
         }
     }
 
@@ -155,6 +183,25 @@ public class FeedService {
         };
     }
 
+    private ExperimentContext experiment(Long userId, String scene) {
+        if (impressionRepository != null) {
+            Map<String, Object> value = impressionRepository.activeExperiment(scene, userId);
+            return new ExperimentContext(String.valueOf(value.get("experimentId")), String.valueOf(value.get("bucket")));
+        }
+        return new ExperimentContext("exp-theme-feed-v1", Math.floorMod(userId.hashCode(), 100) < 50 ? "control" : "treatment");
+    }
+
+    private List<String> recallSources(PostSummary post, String scene, Set<String> interests, boolean followedAuthor, double hotScore) {
+        ArrayList<String> sources = new ArrayList<>();
+        if (post.theme().equalsIgnoreCase(sceneToTheme(scene))) sources.add("theme");
+        if (post.tags().stream().anyMatch(interests::contains)) sources.add("tag");
+        if (hotScore > 0 || post.likes() > 100) sources.add("hot");
+        if (followedAuthor) sources.add("follow_author");
+        if (!post.relatedPostIds().isEmpty()) sources.add("series");
+        if (sources.isEmpty()) sources.add("cold_start");
+        return sources;
+    }
+
     private void recordImpressions(Long userId, String scene, List<FeedItem> page) {
         for (FeedItem item : page) {
             try {
@@ -171,19 +218,13 @@ public class FeedService {
     }
 
     private boolean matchesScene(PostSummary post, String scene) {
-        if ("mixed".equals(scene) || "home".equals(scene)) {
-            return true;
-        }
-        if ("image".equals(scene) || "video".equals(scene)) {
-            return post.type().equalsIgnoreCase(scene);
-        }
+        if ("mixed".equals(scene) || "home".equals(scene)) return true;
+        if ("image".equals(scene) || "video".equals(scene)) return post.type().equalsIgnoreCase(scene);
         return post.theme().equalsIgnoreCase(sceneToTheme(scene));
     }
 
     private String sceneToQueryTheme(String scene) {
-        if ("deduction".equals(scene) || "sci_fi".equals(scene) || "cosmos".equals(scene)) {
-            return sceneToTheme(scene);
-        }
+        if ("deduction".equals(scene) || "sci_fi".equals(scene) || "cosmos".equals(scene)) return sceneToTheme(scene);
         return null;
     }
 
@@ -196,13 +237,9 @@ public class FeedService {
     }
 
     private String normalizeScene(String scene) {
-        if (scene == null || scene.isBlank()) {
-            return "mixed";
-        }
+        if (scene == null || scene.isBlank()) return "mixed";
         String normalized = scene.toLowerCase();
-        if (List.of("home", "mixed", "deduction", "sci_fi", "cosmos", "image", "video").contains(normalized)) {
-            return normalized;
-        }
+        if (List.of("home", "mixed", "deduction", "sci_fi", "cosmos", "image", "video").contains(normalized)) return normalized;
         return "mixed";
     }
 
@@ -259,6 +296,16 @@ public class FeedService {
         }
     }
 
+    private String normalizeEventType(String eventType) {
+        if (eventType == null || eventType.isBlank()) return "detail_view";
+        String value = eventType.toLowerCase();
+        if (List.of("click", "like", "favorite", "answer", "detail_view", "share").contains(value)) return value;
+        return "detail_view";
+    }
+
     private record CandidateSet(List<PostSummary> posts, String source, boolean degraded) {
+    }
+
+    private record ExperimentContext(String experimentId, String bucket) {
     }
 }

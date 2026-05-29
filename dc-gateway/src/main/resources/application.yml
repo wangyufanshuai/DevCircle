@@ -70,3 +70,5 @@ management:
 devcircle:
   gateway:
     demo-token-enabled: ${GATEWAY_DEMO_TOKEN_ENABLED:true}
+    banned-user-ids: ${GATEWAY_BANNED_USER_IDS:}
+    no-post-user-ids: ${GATEWAY_NO_POST_USER_IDS:}

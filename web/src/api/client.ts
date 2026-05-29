@@ -1,5 +1,5 @@
 import { mockAudits, mockLeaderboard, mockNotifications, mockPosts, mockRecommendations } from './mock'
-import type { ApiResponse, AuditItem, CreatePostRequest, CursorPage, DeductionAnswerResult, FeedItem, FileUploadResult, FollowResult, InteractionResult, LeaderboardEntry, NotificationItem, PageResponse, Post } from './types'
+import type { ApiResponse, AuditItem, CreatePostRequest, CursorPage, DeductionAnswerResult, FeedItem, FileUploadResult, FollowResult, InteractionResult, LeaderboardEntry, ModerationTask, NotificationItem, PageResponse, Post, RecommendExperiment, RiskUser } from './types'
 
 const token = 'Bearer demo-access-token-admin'
 
@@ -17,11 +17,7 @@ async function getJson<T>(url: string): Promise<T> {
 async function postJson<T>(url: string, payload?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      Authorization: token,
-      'Content-Type': 'application/json',
-      ...extraHeaders
-    },
+    headers: { Authorization: token, 'Content-Type': 'application/json', ...extraHeaders },
     body: payload === undefined ? undefined : JSON.stringify(payload)
   })
   if (!response.ok) throw new Error(`Request failed: ${response.status}`)
@@ -60,7 +56,21 @@ export async function recordExposures(postIds: number[], scene = 'home_feed'): P
   try {
     await postJson('/api/recommend/exposures', { userId: 2, postIds, scene })
   } catch {
-    // Exposure recording is best-effort in local frontend demos.
+  }
+}
+
+export async function recordRecommendEvent(item: FeedItem, eventType: 'click' | 'like' | 'favorite' | 'answer' | 'detail_view'): Promise<void> {
+  try {
+    await postJson('/api/recommend/events', {
+      postId: item.post.id,
+      eventType,
+      scene: item.post.theme.toLowerCase(),
+      experimentId: item.experimentId,
+      bucket: item.bucket,
+      requestId: `web-${Date.now()}`
+    })
+  } catch {
+    markDegraded('recommend-event')
   }
 }
 
@@ -149,9 +159,7 @@ export async function searchPosts(keyword: string): Promise<Post[]> {
     return (await getJson<PageResponse<Post>>(`/api/search/posts?keyword=${encodeURIComponent(keyword)}`)).records
   } catch {
     markDegraded('search')
-    return mockPosts.filter((post) =>
-      [post.title, post.excerpt, post.author, ...post.tags].some((value) => value.toLowerCase().includes(keyword.toLowerCase()))
-    )
+    return mockPosts.filter((post) => [post.title, post.excerpt, post.author, ...post.tags].some((value) => value.toLowerCase().includes(keyword.toLowerCase())))
   }
 }
 
@@ -189,9 +197,7 @@ export async function submitDeductionAnswer(postId: number, answer: string): Pro
       correct,
       duplicated: false,
       points: correct ? 20 : 0,
-      explanation: correct
-        ? '推理成立：关键是停在 00:07 的怀表和钟楼夹层。'
-        : '线索还没有闭合，建议重新检查怀表、鞋印和航海日志。'
+      explanation: correct ? '推理成立：关键是停在 00:07 的怀表和钟楼夹层。' : '线索还没有闭合，建议重新检查怀表、鞋印和航海日志。'
     }
   }
 }
@@ -211,6 +217,50 @@ export async function fetchAudits(): Promise<AuditItem[]> {
   } catch {
     markDegraded('audits')
     return mockAudits
+  }
+}
+
+export async function fetchModerationTasks(): Promise<ModerationTask[]> {
+  try {
+    return await getJson<ModerationTask[]>('/api/admin/moderation/tasks?status=PENDING&page=1&size=20')
+  } catch {
+    markDegraded('moderation-tasks')
+    return [
+      { taskId: 1, postId: 1002, title: '雾港钟楼的第十三声', queue: 'manual-review', riskLevel: 'MEDIUM', riskScore: 62, reason: '标题与正文高度重复', status: 'PENDING' },
+      { taskId: 2, postId: 1043, title: '土卫六雨季城市设定稿', queue: 'fast-lane', riskLevel: 'LOW', riskScore: 18, reason: '常规机审通过后等待人工抽样', status: 'PENDING' }
+    ]
+  }
+}
+
+export async function moderationAction(taskId: number, action: 'approve' | 'reject' | 'escalate' | 'require-changes'): Promise<void> {
+  try {
+    await postJson(`/api/admin/moderation/tasks/${taskId}/${action}`)
+  } catch {
+    markDegraded(`moderation-${action}`)
+  }
+}
+
+export async function fetchRiskUsers(): Promise<RiskUser[]> {
+  try {
+    return await getJson<RiskUser[]>('/api/admin/risk/users?page=1&size=20')
+  } catch {
+    markDegraded('risk-users')
+    return [
+      { userId: 12, status: 'WATCH', riskScore: 58, reason: '短时间高频发帖' },
+      { userId: 18, status: 'NO_POST', riskScore: 91, reason: '多次命中敏感标签' }
+    ]
+  }
+}
+
+export async function fetchRecommendExperiments(): Promise<RecommendExperiment[]> {
+  try {
+    return await getJson<RecommendExperiment[]>('/api/admin/recommend/experiments')
+  } catch {
+    markDegraded('recommend-experiments')
+    return [
+      { experimentId: 'exp-theme-feed-v1', name: '主题内容多路召回实验', scene: 'home', status: 'ACTIVE', trafficPercent: 100 },
+      { experimentId: 'exp-deduction-solve-v1', name: '推理馆解谜完成率实验', scene: 'deduction', status: 'ACTIVE', trafficPercent: 100 }
+    ]
   }
 }
 
