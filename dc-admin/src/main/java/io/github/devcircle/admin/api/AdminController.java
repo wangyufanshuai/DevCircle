@@ -154,4 +154,28 @@ class AdminController {
                                                      @RequestParam(required = false) String action) {
         return ApiResponse.ok(adminService.auditLogs(page, size, action));
     }
+
+    @GetMapping("/ops/health")
+    ApiResponse<Map<String, Object>> opsHealth() {
+        return ApiResponse.ok(adminService.opsHealth());
+    }
+
+    @GetMapping("/ops/outbox")
+    ApiResponse<List<Map<String, Object>>> outboxEvents(@RequestParam(required = false) String status,
+                                                        @RequestParam(required = false) String topic,
+                                                        @RequestParam(defaultValue = "1") int page,
+                                                        @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(adminService.outboxEvents(status, topic, page, size));
+    }
+
+    @PostMapping("/ops/outbox/replay")
+    ApiResponse<AdminActionResult> replayOutbox(@RequestParam(required = false) String topic,
+                                                @RequestParam(defaultValue = "100") int batchSize) {
+        return ApiResponse.ok(adminService.replayOutbox(topic, batchSize));
+    }
+
+    @GetMapping("/ops/degradation")
+    ApiResponse<Map<String, Object>> degradation() {
+        return ApiResponse.ok(adminService.degradation());
+    }
 }

@@ -1,6 +1,6 @@
 # 社交图谱
 
-v0.7 使用 MySQL + Redis 实现轻量社交图谱，不引入 Neo4j、JanusGraph 或其他图数据库。
+当前版本使用 MySQL + Redis 实现轻量社交图谱，不引入 Neo4j、JanusGraph 或其他图数据库。
 
 ## 关系存储
 

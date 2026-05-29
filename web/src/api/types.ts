@@ -18,6 +18,7 @@ export type CursorPage<T> = {
   hasMore: boolean
   degraded?: boolean
   source?: 'DB' | 'ES' | 'SEED_FALLBACK' | string
+  degradationReason?: string
 }
 
 export type MediaAsset = {
@@ -165,4 +166,44 @@ export type RecommendExperiment = {
   scene: string
   status: string
   trafficPercent: number
+}
+
+export type DegradationNotice = {
+  feature: string
+  source: string
+  reason: string
+  at: string
+}
+
+export type OpsHealth = {
+  database: string
+  outboxBacklog: number
+  pendingModeration?: number
+  riskUsers?: number
+  posts?: number
+  source: string
+  degraded?: boolean
+  degradationReason?: string
+}
+
+export type OutboxEvent = {
+  id?: number
+  eventId: string
+  topic: string
+  aggregateType?: string
+  aggregateId?: string
+  status: string
+  createdAt?: string
+  publishedAt?: string
+  source?: string
+}
+
+export type DegradationOverview = {
+  degraded: boolean
+  source: string
+  reason?: string
+  outboxBacklog?: number
+  recommendImpressions?: number
+  recommendEvents?: number
+  pendingModeration?: number
 }

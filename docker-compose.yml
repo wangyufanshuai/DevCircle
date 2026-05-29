@@ -46,6 +46,11 @@ services:
     profiles: ["infra", "demo"]
     ports:
       - "26379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   kafka:
     image: apache/kafka:4.1.1
@@ -61,6 +66,11 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:9.2.2
@@ -71,6 +81,11 @@ services:
       ES_JAVA_OPTS: -Xms512m -Xmx512m
     ports:
       - "29200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
 
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
@@ -84,6 +99,11 @@ services:
       - "29001:9001"
     volumes:
       - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
 
   jaeger:
     image: jaegertracing/all-in-one:1.67.0
@@ -118,7 +138,10 @@ services:
       args: { JAR_FILE: dc-auth/target/dc-auth-0.1.0-SNAPSHOT.jar }
     environment: *service-env
     ports: ["8101:8101"]
-    depends_on: [mysql, redis, kafka]
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      kafka: { condition: service_healthy }
 
   dc-user:
     profiles: ["app", "demo"]
@@ -127,7 +150,9 @@ services:
       args: { JAR_FILE: dc-user/target/dc-user-0.1.0-SNAPSHOT.jar }
     environment: *service-env
     ports: ["8102:8102"]
-    depends_on: [mysql, redis]
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
 
   dc-content:
     profiles: ["app", "demo"]
@@ -136,7 +161,9 @@ services:
       args: { JAR_FILE: dc-content/target/dc-content-0.1.0-SNAPSHOT.jar }
     environment: *service-env
     ports: ["8103:8103"]
-    depends_on: [mysql, kafka]
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
 
   dc-comment:
     profiles: ["app", "demo"]
@@ -145,7 +172,8 @@ services:
       args: { JAR_FILE: dc-comment/target/dc-comment-0.1.0-SNAPSHOT.jar }
     environment: *service-env
     ports: ["8104:8104"]
-    depends_on: [mysql]
+    depends_on:
+      mysql: { condition: service_healthy }
 
   dc-interaction:
     profiles: ["app", "demo"]
@@ -154,7 +182,9 @@ services:
       args: { JAR_FILE: dc-interaction/target/dc-interaction-0.1.0-SNAPSHOT.jar }
     environment: *service-env
     ports: ["8105:8105"]
-    depends_on: [mysql, redis]
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
 
   dc-search:
     profiles: ["app", "demo"]
@@ -163,7 +193,10 @@ services:
       args: { JAR_FILE: dc-search/target/dc-search-0.1.0-SNAPSHOT.jar }
     environment: *service-env
     ports: ["8106:8106"]
-    depends_on: [elasticsearch, kafka, dc-content]
+    depends_on:
+      elasticsearch: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      dc-content: { condition: service_started }
 
   dc-recommend:
     profiles: ["app", "demo"]
@@ -172,7 +205,9 @@ services:
       args: { JAR_FILE: dc-recommend/target/dc-recommend-0.1.0-SNAPSHOT.jar }
     environment: *service-env
     ports: ["8107:8107"]
-    depends_on: [redis, dc-content]
+    depends_on:
+      redis: { condition: service_healthy }
+      dc-content: { condition: service_started }
 
   dc-notification:
     profiles: ["app", "demo"]
@@ -181,7 +216,9 @@ services:
       args: { JAR_FILE: dc-notification/target/dc-notification-0.1.0-SNAPSHOT.jar }
     environment: *service-env
     ports: ["8108:8108"]
-    depends_on: [mysql, kafka]
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
 
   dc-file:
     profiles: ["app", "demo"]
@@ -190,7 +227,9 @@ services:
       args: { JAR_FILE: dc-file/target/dc-file-0.1.0-SNAPSHOT.jar }
     environment: *service-env
     ports: ["8109:8109"]
-    depends_on: [mysql, minio]
+    depends_on:
+      mysql: { condition: service_healthy }
+      minio: { condition: service_healthy }
 
   dc-admin:
     profiles: ["app", "demo"]
@@ -199,7 +238,9 @@ services:
       args: { JAR_FILE: dc-admin/target/dc-admin-0.1.0-SNAPSHOT.jar }
     environment: *service-env
     ports: ["8110:8110"]
-    depends_on: [mysql, kafka]
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
 
   dc-gateway:
     profiles: ["app", "demo"]
@@ -231,7 +272,8 @@ services:
       context: ./web
       dockerfile: Dockerfile
     ports: ["5501:80"]
-    depends_on: [dc-gateway]
+    depends_on:
+      dc-gateway: { condition: service_started }
 
 volumes:
   mysql-data:

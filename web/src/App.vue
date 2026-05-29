@@ -2,8 +2,8 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { NButton, NConfigProvider, NIcon, NInput, NSelect, NTag } from 'naive-ui'
 import { Bell, Check, Compass, Heart, Orbit, PenLine, Search, Shield, Sparkles, Telescope, UserPlus, X } from 'lucide-vue-next'
-import { createPost, demoOAuthLogin, fetchAudits, fetchFeed, fetchLeaderboard, fetchModerationTasks, fetchNotifications, fetchPostDetail, fetchRecommendExperiments, fetchRelatedPosts, fetchRiskUsers, followUser, interact, moderationAction, recordExposures, recordRecommendEvent, searchPosts, submitDeductionAnswer } from './api/client'
-import type { AuditItem, FeedItem, LeaderboardEntry, ModerationTask, NotificationItem, Post, RecommendExperiment, RiskUser } from './api/types'
+import { createPost, demoOAuthLogin, fetchAudits, fetchDegradationOverview, fetchFeed, fetchLeaderboard, fetchModerationTasks, fetchNotifications, fetchOpsHealth, fetchOutboxEvents, fetchPostDetail, fetchRecommendExperiments, fetchRelatedPosts, fetchRiskUsers, followUser, interact, moderationAction, recordExposures, recordRecommendEvent, replayOutbox, searchPosts, submitDeductionAnswer } from './api/client'
+import type { AuditItem, DegradationNotice, DegradationOverview, FeedItem, LeaderboardEntry, ModerationTask, NotificationItem, OpsHealth, OutboxEvent, Post, RecommendExperiment, RiskUser } from './api/types'
 
 const navItems = [
   { key: 'mixed', label: '星环首页', icon: Compass },
@@ -42,6 +42,10 @@ const audits = ref<AuditItem[]>([])
 const moderationTasks = ref<ModerationTask[]>([])
 const riskUsers = ref<RiskUser[]>([])
 const recommendExperiments = ref<RecommendExperiment[]>([])
+const opsHealth = ref<OpsHealth | null>(null)
+const outboxEvents = ref<OutboxEvent[]>([])
+const degradationOverview = ref<DegradationOverview | null>(null)
+const degradationNotices = ref<DegradationNotice[]>([])
 const notifications = ref<NotificationItem[]>([])
 const leaderboard = ref<LeaderboardEntry[]>([])
 const keyword = ref('')
@@ -116,7 +120,9 @@ async function loadFeed(cursor?: string) {
     feedItems.value = cursor ? [...feedItems.value, ...page.records] : page.records
     nextCursor.value = page.nextCursor
     hasMore.value = page.hasMore
-    if (page.degraded || page.source === 'SEED_FALLBACK') degradedMessage.value = '后端接口不可用或候选为空，当前显示演示降级数据。'
+    if (page.degraded || page.source === 'SEED_FALLBACK' || page.source === 'MOCK_FALLBACK') {
+      degradedMessage.value = `推荐流已进入显式降级：${page.source ?? 'UNKNOWN'}，原因：${page.degradationReason ?? '候选为空或依赖不可用'}`
+    }
     await recordExposures(page.records.map((item) => item.post.id), `${scene.value}_feed`)
   } finally {
     loadingFeed.value = false
@@ -218,20 +224,41 @@ async function follow(author: string) {
 }
 
 function onDegraded(event: Event) {
-  const feature = (event as CustomEvent<string>).detail
-  degradedMessage.value = `接口 ${feature} 暂不可用，已进入演示降级模式。`
+  const detail = (event as CustomEvent<DegradationNotice>).detail
+  degradationNotices.value = [detail, ...degradationNotices.value].slice(0, 6)
+  degradedMessage.value = `接口 ${detail.feature} 暂不可用，来源 ${detail.source}，原因：${detail.reason}`
+}
+
+async function refreshOps() {
+  const [health, outbox, degradation] = await Promise.all([
+    fetchOpsHealth(),
+    fetchOutboxEvents(),
+    fetchDegradationOverview()
+  ])
+  opsHealth.value = health
+  outboxEvents.value = outbox
+  degradationOverview.value = degradation
+}
+
+async function handleReplayOutbox() {
+  await replayOutbox()
+  await refreshOps()
+  message.value = '已触发 Outbox 重放，积压状态已刷新'
 }
 
 onMounted(async () => {
   window.addEventListener('devcircle-api-degraded', onDegraded)
   try {
-    const [auditData, notificationData, leaderboardData, moderationData, riskData, experimentData] = await Promise.all([
+    const [auditData, notificationData, leaderboardData, moderationData, riskData, experimentData, healthData, outboxData, degradationData] = await Promise.all([
       fetchAudits(),
       fetchNotifications(),
       fetchLeaderboard(),
       fetchModerationTasks(),
       fetchRiskUsers(),
-      fetchRecommendExperiments()
+      fetchRecommendExperiments(),
+      fetchOpsHealth(),
+      fetchOutboxEvents(),
+      fetchDegradationOverview()
     ])
     audits.value = auditData
     notifications.value = notificationData
@@ -239,6 +266,9 @@ onMounted(async () => {
     moderationTasks.value = moderationData
     riskUsers.value = riskData
     recommendExperiments.value = experimentData
+    opsHealth.value = healthData
+    outboxEvents.value = outboxData
+    degradationOverview.value = degradationData
   } catch {
     message.value = '接口暂不可用，已切换到本地演示数据。'
   }
@@ -276,7 +306,7 @@ onUnmounted(() => {
       <main class="main">
         <header class="topbar">
           <div>
-            <p class="eyebrow">DevCircle v1.1 governance and recommendation track</p>
+            <p class="eyebrow">DevCircle v1.2 engineering readiness track</p>
             <h1>{{ activeTitle }}</h1>
           </div>
           <div class="searchbar">
@@ -293,9 +323,12 @@ onUnmounted(() => {
           </div>
         </header>
 
-        <div v-if="message || degradedMessage" class="message-strip">
+        <div v-if="message || degradedMessage || degradationNotices.length" class="message-strip">
           <span v-if="message">{{ message }}</span>
           <span v-if="degradedMessage" class="degraded">{{ degradedMessage }}</span>
+          <span v-for="notice in degradationNotices" :key="notice.at + notice.feature" class="degraded">
+            {{ notice.feature }} / {{ notice.source }} / {{ notice.reason }}
+          </span>
         </div>
 
         <section v-if="selectedNav !== 'write' && selectedNav !== 'admin'" class="dashboard-grid">
@@ -363,6 +396,26 @@ onUnmounted(() => {
               <strong>{{ exp.status }} / {{ exp.scene }}</strong>
               <small>{{ exp.experimentId }} / {{ exp.trafficPercent }}% 流量</small>
             </div>
+          </div>
+          <div class="panel">
+            <h2>工程状态</h2>
+            <div class="rank-row">
+              <span>数据库 {{ opsHealth?.database ?? 'UNKNOWN' }} / 来源 {{ opsHealth?.source ?? '-' }}</span>
+              <strong>Outbox {{ opsHealth?.outboxBacklog ?? 0 }}</strong>
+              <small>待审 {{ opsHealth?.pendingModeration ?? 0 }} / 风险用户 {{ opsHealth?.riskUsers ?? 0 }}</small>
+            </div>
+            <div class="rank-row">
+              <span>推荐降级 {{ degradationOverview?.degraded ? '是' : '否' }} / {{ degradationOverview?.source ?? '-' }}</span>
+              <strong>事件 {{ degradationOverview?.recommendEvents ?? 0 }}</strong>
+              <small>{{ degradationOverview?.reason ?? '运行状态正常或暂无降级原因' }}</small>
+            </div>
+            <div v-for="event in outboxEvents" :key="event.eventId" class="rank-row">
+              <span>{{ event.topic }} / {{ event.status }}</span>
+              <strong>{{ event.aggregateType ?? 'OUTBOX' }}</strong>
+              <small>{{ event.eventId }}</small>
+            </div>
+            <n-button secondary @click="refreshOps">刷新工程状态</n-button>
+            <n-button secondary @click="handleReplayOutbox">重放 Outbox</n-button>
           </div>
           <div class="panel">
             <h2>解谜排行榜</h2>

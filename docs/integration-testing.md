@@ -1,6 +1,6 @@
 # 集成测试说明
 
-DevCircle v0.7 使用 Testcontainers 验证核心依赖闭环。默认 Maven 测试会启动临时 MySQL、Redis、Kafka、Elasticsearch 和 MinIO 容器，执行结束后自动清理。
+DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测试会启动临时 MySQL、Redis、Kafka、Elasticsearch 和 MinIO 容器，执行结束后自动清理。
 
 ## 前置条件
 
@@ -16,7 +16,7 @@ $env:Path="$env:JAVA_HOME\bin;$env:Path"
 .\mvnw.cmd -B test
 ```
 
-v0.7 核心容器测试不静默跳过。Docker 不可用时测试应失败，避免把“没有跑容器”误认为“容器链路通过”。
+核心容器测试不静默跳过。Docker 不可用时测试应失败，避免把“没有跑容器”误认为“容器链路通过”。
 
 Windows Docker Desktop 29 如遇 named pipe 探测失败，可启用本地只绑定回环地址的 Docker socket 代理：
 

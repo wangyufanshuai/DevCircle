@@ -1,8 +1,11 @@
 server:
   port: 8101
+  shutdown: graceful
 spring:
   application:
     name: dc-auth
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
   datasource:
     url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/dc_auth?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
     username: ${MYSQL_USER:devcircle}
@@ -14,3 +17,10 @@ management:
     web:
       exposure:
         include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+logging:
+  pattern:
+    level: "%5p traceId=%X{traceId:-} userId=%X{userId:-}"

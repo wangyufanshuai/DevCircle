@@ -1,6 +1,6 @@
 # 云服务器 Docker 部署
 
-本文档面向 v1.0 生产预备版，目标是在一台云服务器上用 Docker Compose 跑通 MysticVerse 全栈演示。
+本文档面向 v1.2 生产预备版，目标是在一台云服务器上用 Docker Compose 跑通 MysticVerse 全栈演示。
 
 ## 前置条件
 

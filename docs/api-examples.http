@@ -259,3 +259,23 @@ Authorization: {{adminToken}}
 ### v1.1 主题运营指标
 GET {{baseUrl}}/api/admin/metrics/themes
 Authorization: {{adminToken}}
+
+### v1.2 工程健康概览
+GET {{baseUrl}}/api/admin/ops/health
+Authorization: {{adminToken}}
+
+### v1.2 Outbox 积压列表
+GET {{baseUrl}}/api/admin/ops/outbox?status=NEW&page=1&size=20
+Authorization: {{adminToken}}
+
+### v1.2 按 topic 查看 Outbox
+GET {{baseUrl}}/api/admin/ops/outbox?topic=post.created&page=1&size=20
+Authorization: {{adminToken}}
+
+### v1.2 重放 Outbox
+POST {{baseUrl}}/api/admin/ops/outbox/replay?topic=post.created&batchSize=100
+Authorization: {{adminToken}}
+
+### v1.2 降级状态概览
+GET {{baseUrl}}/api/admin/ops/degradation
+Authorization: {{adminToken}}

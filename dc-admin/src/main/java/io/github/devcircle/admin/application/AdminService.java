@@ -415,6 +415,109 @@ public class AdminService {
         }
     }
 
+    public Map<String, Object> opsHealth() {
+        if (jdbcClient == null) {
+            return Map.of("database", "DEGRADED", "outboxBacklog", 0, "source", "MOCK_FALLBACK", "degraded", true);
+        }
+        try {
+            Long posts = oneLong("SELECT COUNT(*) FROM post");
+            Long outboxNew = oneLong("SELECT COUNT(*) FROM outbox_event WHERE status = 'NEW'");
+            Long moderationPending = oneLong("SELECT COUNT(*) FROM moderation_task WHERE status = 'PENDING'");
+            Long riskUsers = oneLong("SELECT COUNT(*) FROM user_risk_profile WHERE status <> 'NORMAL'");
+            return Map.of(
+                    "database", "UP",
+                    "outboxBacklog", outboxNew,
+                    "pendingModeration", moderationPending,
+                    "riskUsers", riskUsers,
+                    "posts", posts,
+                    "source", "DB"
+            );
+        } catch (DataAccessException ex) {
+            return Map.of("database", "DOWN", "outboxBacklog", 0, "source", "MOCK_FALLBACK", "degraded", true, "degradationReason", ex.getClass().getSimpleName());
+        }
+    }
+
+    public List<Map<String, Object>> outboxEvents(String status, String topic, int page, int size) {
+        if (jdbcClient == null) {
+            return List.of(Map.of("eventId", "demo-outbox", "topic", "post.created", "status", "NEW", "source", "MOCK_FALLBACK"));
+        }
+        int offset = Math.max(page - 1, 0) * size;
+        try {
+            return jdbcClient.sql("""
+                            SELECT id, event_id, topic, aggregate_type, aggregate_id, status, created_at, published_at
+                            FROM outbox_event
+                            WHERE (:status IS NULL OR status = :status)
+                              AND (:topic IS NULL OR topic = :topic)
+                            ORDER BY created_at DESC
+                            LIMIT :size OFFSET :offset
+                            """)
+                    .param("status", blankToNull(status))
+                    .param("topic", blankToNull(topic))
+                    .param("size", Math.max(1, Math.min(size, 200)))
+                    .param("offset", offset)
+                    .query((rs, rowNum) -> {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("id", rs.getLong("id"));
+                        row.put("eventId", rs.getString("event_id"));
+                        row.put("topic", rs.getString("topic"));
+                        row.put("aggregateType", rs.getString("aggregate_type"));
+                        row.put("aggregateId", rs.getString("aggregate_id"));
+                        row.put("status", rs.getString("status"));
+                        row.put("createdAt", rs.getTimestamp("created_at") == null ? null : rs.getTimestamp("created_at").toInstant());
+                        row.put("publishedAt", rs.getTimestamp("published_at") == null ? null : rs.getTimestamp("published_at").toInstant());
+                        return row;
+                    })
+                    .list();
+        } catch (DataAccessException ex) {
+            return List.of(Map.of("eventId", "demo-outbox", "topic", "post.created", "status", "NEW", "source", "MOCK_FALLBACK", "degradationReason", ex.getClass().getSimpleName()));
+        }
+    }
+
+    public AdminActionResult replayOutbox(String topic, int batchSize) {
+        if (jdbcClient == null) {
+            return new AdminActionResult("REPLAY_OUTBOX", Map.of("affected", 0, "source", "MOCK_FALLBACK", "degraded", true));
+        }
+        try {
+            int affected = jdbcClient.sql("""
+                            UPDATE outbox_event
+                            SET status = 'NEW', published_at = NULL
+                            WHERE status <> 'NEW'
+                              AND (:topic IS NULL OR topic = :topic)
+                            ORDER BY created_at ASC
+                            LIMIT :batchSize
+                            """)
+                    .param("topic", blankToNull(topic))
+                    .param("batchSize", Math.max(1, Math.min(batchSize, 500)))
+                    .update();
+            logAudit(1L, "REPLAY_OUTBOX", "OUTBOX", topic == null ? "*" : topic, null, null, Map.of("affected", affected));
+            return new AdminActionResult("REPLAY_OUTBOX", Map.of("affected", affected, "topic", topic == null ? "*" : topic));
+        } catch (DataAccessException ex) {
+            return new AdminActionResult("REPLAY_OUTBOX", Map.of("affected", 0, "degraded", true, "source", "MOCK_FALLBACK", "degradationReason", ex.getClass().getSimpleName()));
+        }
+    }
+
+    public Map<String, Object> degradation() {
+        if (jdbcClient == null) {
+            return Map.of("degraded", true, "source", "MOCK_FALLBACK", "reason", "Admin service is running without JdbcClient");
+        }
+        try {
+            Long outboxBacklog = oneLong("SELECT COUNT(*) FROM outbox_event WHERE status = 'NEW'");
+            Long impressions = oneLong("SELECT COUNT(*) FROM recommendation_impression");
+            Long events = oneLong("SELECT COUNT(*) FROM recommend_event_log");
+            Long moderationPending = oneLong("SELECT COUNT(*) FROM moderation_task WHERE status = 'PENDING'");
+            return Map.of(
+                    "degraded", false,
+                    "source", "DB",
+                    "outboxBacklog", outboxBacklog,
+                    "recommendImpressions", impressions,
+                    "recommendEvents", events,
+                    "pendingModeration", moderationPending
+            );
+        } catch (DataAccessException ex) {
+            return Map.of("degraded", true, "source", "MOCK_FALLBACK", "reason", ex.getClass().getSimpleName());
+        }
+    }
+
     private AdminActionResult auditPost(Long postId, Long auditorId, String traceId, String action, String postStatus, String taskStatus, String topic) {
         if (jdbcClient == null) return new AdminActionResult(action, Map.of("postId", postId, "status", postStatus, "event", topic, "degraded", true));
         try {

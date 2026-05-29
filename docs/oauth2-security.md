@@ -1,6 +1,6 @@
 # OAuth2 与安全
 
-v0.7 提供 GitHub/Gitee OAuth2 登录接口形态、JWT 签发、刷新令牌和 Gateway 校验。默认 profile 使用 mock callback，避免本地演示依赖真实 provider secret。
+当前版本提供 GitHub/Gitee OAuth2 登录接口形态、JWT 签发、刷新令牌和 Gateway 校验。默认 profile 使用 mock callback，避免本地演示依赖真实 provider secret。
 
 ## 接口
 
@@ -31,4 +31,4 @@ GITEE_CLIENT_SECRET=replace-me
 DEVCIRCLE_JWT_SECRET=replace-with-at-least-32-bytes
 ```
 
-v0.7 不实现完整生产账号风控、设备管理和密钥轮换，这些留给后续版本。
+当前版本不实现完整生产账号风控、设备管理和密钥轮换，这些留给后续版本。
