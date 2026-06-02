@@ -28,9 +28,11 @@ class RecommendControllerTest {
         var firstPage = new RecommendController(service).feed(2L, null, 50, "mixed");
         var secondPage = new RecommendController(service).feed(2L, firstPage.data().nextCursor(), 50, "mixed");
         var thirdPage = new RecommendController(service).feed(2L, secondPage.data().nextCursor(), 50, "mixed");
+        var fourthPage = new RecommendController(service).feed(2L, thirdPage.data().nextCursor(), 50, "mixed");
 
         assertThat(firstPage.data().records()).hasSize(50);
         assertThat(secondPage.data().records()).hasSize(50);
-        assertThat(thirdPage.data().records()).hasSize(20);
+        assertThat(thirdPage.data().records()).hasSize(50);
+        assertThat(fourthPage.data().records()).hasSize(30);
     }
 }

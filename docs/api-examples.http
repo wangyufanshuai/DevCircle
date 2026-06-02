@@ -42,6 +42,10 @@ Authorization: {{userToken}}
 GET {{baseUrl}}/api/recommend/feed?scene=deduction&size=6
 Authorization: {{userToken}}
 
+### v1.3 推理馆分页加载
+GET {{baseUrl}}/api/recommend/feed?scene=deduction&cursor=12&size=12
+Authorization: {{userToken}}
+
 ### 科幻馆推荐
 GET {{baseUrl}}/api/recommend/feed?scene=sci_fi&size=6
 Authorization: {{userToken}}
@@ -63,6 +67,10 @@ Content-Type: application/json
 
 ### 主题帖子列表
 GET {{baseUrl}}/api/posts?theme=DEDUCTION&contentKind=CASE_FILE&difficulty=HARD
+Authorization: {{userToken}}
+
+### v1.3 逻辑谜题筛选
+GET {{baseUrl}}/api/posts?theme=DEDUCTION&contentKind=PUZZLE&page=1&size=20
 Authorization: {{userToken}}
 
 ### 主题帖子详情
@@ -97,7 +105,7 @@ Authorization: {{userToken}}
 Content-Type: application/json
 
 {
-  "answer": "守夜人藏在钟楼夹层"
+  "answer": "凶手躲在钟楼夹层，并利用怀表制造时间差"
 }
 
 ### 查看我的答题状态

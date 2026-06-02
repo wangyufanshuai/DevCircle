@@ -7,6 +7,7 @@ import io.github.devcircle.common.model.ExposureRequest;
 import io.github.devcircle.common.model.FeedItem;
 import io.github.devcircle.common.model.PostSummary;
 import io.github.devcircle.common.seed.ThemeContentLibrary;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -34,6 +35,7 @@ public class FeedService {
         this(scorer, mlRanker, redisTemplate, null, "http://localhost:8103");
     }
 
+    @Autowired
     public FeedService(RecommendationScorer scorer,
                        LightweightMlRanker mlRanker,
                        StringRedisTemplate redisTemplate,

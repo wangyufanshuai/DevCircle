@@ -12,6 +12,8 @@ import java.util.Map;
 import java.util.Optional;
 
 public final class ThemeContentLibrary {
+    private static final int DEDUCTION_COUNT = 100;
+    private static final int OTHER_THEME_COUNT = 40;
     private static final List<ThemeSeedPost> POSTS = buildPosts();
 
     private ThemeContentLibrary() {
@@ -47,7 +49,8 @@ public final class ThemeContentLibrary {
                         || post.title().toLowerCase(Locale.ROOT).contains(normalized)
                         || post.excerpt().toLowerCase(Locale.ROOT).contains(normalized)
                         || post.author().toLowerCase(Locale.ROOT).contains(normalized)
-                        || post.tags().stream().anyMatch(tag -> tag.toLowerCase(Locale.ROOT).contains(normalized)))
+                        || post.tags().stream().anyMatch(tag -> tag.toLowerCase(Locale.ROOT).contains(normalized))
+                        || post.clues().stream().anyMatch(clue -> clue.toLowerCase(Locale.ROOT).contains(normalized)))
                 .filter(post -> theme == null || theme.isBlank() || post.theme().equalsIgnoreCase(theme))
                 .filter(post -> contentKind == null || contentKind.isBlank() || post.contentKind().equalsIgnoreCase(contentKind))
                 .filter(post -> difficulty == null || difficulty.isBlank() || post.difficulty().equalsIgnoreCase(difficulty))
@@ -57,8 +60,10 @@ public final class ThemeContentLibrary {
 
     private static List<ThemeSeedPost> buildPosts() {
         List<ThemeSeedPost> posts = new ArrayList<>();
-        for (int i = 0; i < 40; i++) {
+        for (int i = 0; i < DEDUCTION_COUNT; i++) {
             posts.add(deduction(i));
+        }
+        for (int i = 0; i < OTHER_THEME_COUNT; i++) {
             posts.add(scifi(i));
             posts.add(cosmos(i));
         }
@@ -66,29 +71,77 @@ public final class ThemeContentLibrary {
     }
 
     private static ThemeSeedPost deduction(int index) {
-        String[] places = {"雾港钟楼", "蓝线列车", "旧书店", "雪夜旅馆", "镜厅剧院", "孤岛灯塔", "地下档案室", "黑河码头"};
-        String[] hooks = {"失踪案", "无声证词", "红色书签", "第十三间房", "倒影谋杀", "潮汐密室", "缺页卷宗", "午夜脚印"};
-        String place = places[index % places.length];
-        String hook = hooks[index % hooks.length];
+        DeductionTemplate template = deductionTemplate(index);
         long id = 1001L + index;
-        String title = place + hook;
-        List<String> clues = List.of("怀表停在 00:07", "潮湿鞋印只到楼梯口", "被撕掉的日志缺少最后一页", "窗台灰尘只有向内的擦痕");
-        List<String> suspects = List.of("守夜人韩策", "钟表匠许临", "记者白棠", "码头调度员周野");
-        List<String> timeline = List.of("23:40 最后一班船靠岸", "00:07 钟楼短暂停电", "00:12 巡逻员听到二次钟声", "00:20 现场被封锁");
-        return new ThemeSeedPost(id, "TEXT", "DEDUCTION", index % 2 == 0 ? "CASE_FILE" : "PUZZLE", difficulty(index), true, 12 + index,
+        String contentKind = index % 3 == 1 ? "PUZZLE" : "CASE_FILE";
+        int solved = 18 + index;
+        String title = template.place() + template.hook();
+        List<String> tags = List.of("推理", template.series(), template.coreMethod(), contentKind.equals("PUZZLE") ? "逻辑谜题" : "案件档案");
+        List<String> clues = List.of(
+                template.objectClue(),
+                template.timelineClue(),
+                template.testimonyClue(),
+                template.traceClue(),
+                "第 " + ((index % 7) + 1) + " 份记录被人故意改写了顺序"
+        );
+        List<String> suspects = List.of(
+                template.suspectA(),
+                template.suspectB(),
+                template.suspectC(),
+                template.suspectD()
+        );
+        List<String> timeline = List.of(
+                "22:" + minute(index, 11) + " 受害者最后一次公开露面",
+                "23:" + minute(index, 23) + " 关键证人离开现场",
+                "00:" + minute(index, 7) + " 现场出现第一次异常",
+                "00:" + minute(index, 19) + " 巡查人员封锁入口",
+                "01:" + minute(index, 31) + " 档案员发现记录被调换"
+        );
+        List<String> keywords = List.of(template.answerKeyword(), template.coreMethod(), template.secondaryKeyword(), template.objectKeyword());
+        String question = "谁制造了关键的不在场证明？真正的手法和决定性证据分别是什么？";
+        String explanation = "关键并不是最显眼的证词，而是“" + template.objectKeyword() + "”与“" + template.timelineClue()
+                + "”之间的矛盾。凶手利用" + template.coreMethod() + "制造时间差，再用" + template.secondaryKeyword()
+                + "掩盖行动路径；答案必须落到“" + template.answerKeyword() + "”。";
+        return new ThemeSeedPost(id, "TEXT", "DEDUCTION", contentKind, difficulty(index), true, solved,
                 title,
-                "一桩围绕" + place + "展开的推理档案，线索横跨时间线、证词和现场痕迹，需要排除误导证据。",
+                "一桩围绕" + template.place() + "展开的" + template.series() + "推理内容，线索覆盖时间线、证词、物证和现场痕迹，适合训练排除误导证据的能力。",
                 author(index),
-                List.of("推理", index % 2 == 0 ? "密室" : "证词", place.replace("雾港", "")),
+                tags,
                 List.of(),
-                180 + index * 9L, 24 + index, 3200 + index * 410L,
-                Instant.now().minusSeconds(1800L * (index + 1)),
-                "可解谜案件，已有 " + (12 + index) + " 人完成推理",
-                clues, suspects, timeline,
-                "真正制造不在场证明的人是谁？关键手法是什么？",
-                List.of("夹层", "怀表", "日志", "停电"),
-                "关键不是鞋印，而是 00:07 的停电窗口和日志缺页。凶手利用夹层等待二次钟声后转移。",
-                List.of(), List.of(), relatedIds(id));
+                220 + index * 11L, 30 + index % 35, 5200 + index * 360L,
+                Instant.now().minusSeconds(1500L * (index + 1)),
+                "可解谜案件，已有 " + solved + " 人完成推理；核心手法：" + template.coreMethod(),
+                clues, suspects, timeline, question, keywords, explanation,
+                List.of(), List.of(), relatedIds(id, DEDUCTION_COUNT));
+    }
+
+    private static DeductionTemplate deductionTemplate(int index) {
+        String[] places = {"雾港钟楼", "蓝线列车", "旧书店密室", "雪夜旅馆", "镜厅剧院", "孤岛灯塔", "地下档案室", "黑河码头", "红杉疗养院", "北境邮局"};
+        String[] hooks = {"失踪案", "无声证词", "红色书签", "第十三间房", "倒影谋杀", "潮汐密室", "缺页卷宗", "午夜脚印", "匿名电报", "封存照片"};
+        String[] series = {"密室", "时间线", "证词矛盾", "物证误导", "密码谜题", "航海", "列车", "剧院", "档案室", "冷案复盘"};
+        String[] methods = {"夹层藏身", "调换时钟", "伪造脚印", "镜面反射", "潮汐延迟", "证词串供", "密码替换", "灯塔盲区", "列车换厢", "档案重排"};
+        String[] objects = {"怀表", "航海日志", "湿鞋印", "红色书签", "破裂镜片", "煤油灯芯", "车票孔位", "锁孔铜屑", "相机底片", "电报时间戳"};
+        String place = places[index % places.length];
+        String method = methods[index % methods.length];
+        String object = objects[index % objects.length];
+        return new DeductionTemplate(
+                place,
+                hooks[index % hooks.length],
+                series[index % series.length],
+                method,
+                object + "与公开记录的时间不一致",
+                "时间线在 00:" + minute(index, 7) + " 到 00:" + minute(index, 19) + " 之间出现空档",
+                "两名证人的描述都避开了" + place + "的后门",
+                "现场只留下向内的擦痕，没有对应的离开痕迹",
+                place + "管理员",
+                "钟表匠许临",
+                "记者白棠",
+                "码头调度员周野",
+                method,
+                object,
+                "时间差",
+                object
+        );
     }
 
     private static ThemeSeedPost scifi(int index) {
@@ -109,7 +162,7 @@ public final class ThemeContentLibrary {
                 index % 2 == 0 ? "世界观设定完整度高，适合系列共创" : "短篇阅读完成率高，近期讨论活跃",
                 List.of(), List.of(), List.of(), "", List.of(), "",
                 List.of("核心地点：" + world, "技术概念：潮汐能源、记忆备份或低温生态", "冲突来源：自治城市、航线垄断和身份边界", "可扩展方向：章节连载、派系年表、装备图谱"),
-                List.of(), relatedIds(id));
+                List.of(), relatedIds(id, OTHER_THEME_COUNT));
     }
 
     private static ThemeSeedPost cosmos(int index) {
@@ -131,7 +184,7 @@ public final class ThemeContentLibrary {
                 List.of(), List.of(), List.of(), "", List.of(), "",
                 List.of(),
                 List.of("天体对象：" + object, "观测手段：光谱、引力透镜、射电或深空探测器", "核心问题：它如何改变我们对宇宙结构的理解", "延伸阅读：任务年表、图像档案和相关现象"),
-                relatedIds(id));
+                relatedIds(id, OTHER_THEME_COUNT));
     }
 
     private static List<MediaAssetView> media(long id, String type, String seed) {
@@ -157,10 +210,14 @@ public final class ThemeContentLibrary {
         return authors.get(index % authors.size());
     }
 
-    private static List<Long> relatedIds(long id) {
+    private static String minute(int index, int seed) {
+        return "%02d".formatted(Math.floorMod(index * 7 + seed, 60));
+    }
+
+    private static List<Long> relatedIds(long id, int count) {
         long base = id < 2000 ? 1001 : id < 3000 ? 2001 : 3001;
-        long offset = (id - base) % 40;
-        return List.of(base + ((offset + 1) % 40), base + ((offset + 7) % 40), base + ((offset + 13) % 40));
+        long offset = (id - base) % count;
+        return List.of(base + ((offset + 1) % count), base + ((offset + 7) % count), base + ((offset + 13) % count));
     }
 
     public static Map<String, Long> themeCounts() {
@@ -169,5 +226,29 @@ public final class ThemeContentLibrary {
                 "SCI_FI", POSTS.stream().filter(post -> "SCI_FI".equals(post.theme())).count(),
                 "COSMOS", POSTS.stream().filter(post -> "COSMOS".equals(post.theme())).count()
         );
+    }
+
+    public static List<String> keywordsFromSeed(ThemeSeedPost seed) {
+        return seed.answerKeywords();
+    }
+
+    private record DeductionTemplate(
+            String place,
+            String hook,
+            String series,
+            String coreMethod,
+            String objectClue,
+            String timelineClue,
+            String testimonyClue,
+            String traceClue,
+            String suspectA,
+            String suspectB,
+            String suspectC,
+            String suspectD,
+            String answerKeyword,
+            String secondaryKeyword,
+            String objectKeyword,
+            String unused
+    ) {
     }
 }

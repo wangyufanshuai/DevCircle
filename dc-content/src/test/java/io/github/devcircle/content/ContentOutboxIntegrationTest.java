@@ -11,8 +11,8 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -32,7 +32,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers
 @SpringBootTest
-@Sql(scripts = "classpath:db/migration/V1__content_schema.sql")
+@Sql(scripts = {
+        "classpath:db/migration/V1__content_schema.sql",
+        "classpath:db/migration/V2__content_details_and_audit.sql",
+        "classpath:db/migration/V3__governance_and_experiment.sql"
+})
 class ContentOutboxIntegrationTest {
     @Container
     static final MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.4")

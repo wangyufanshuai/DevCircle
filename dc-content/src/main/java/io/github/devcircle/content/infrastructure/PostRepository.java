@@ -242,11 +242,20 @@ public class PostRepository {
 
     @Transactional
     public int importSeedsIfEmpty(List<ThemeSeedPost> seeds) {
-        if (count() > 0) {
-            return 0;
-        }
         int imported = 0;
         for (ThemeSeedPost seed : seeds) {
+            Long existing;
+            try {
+                existing = jdbcClient.sql("SELECT COUNT(*) FROM post WHERE id = :id")
+                        .param("id", seed.id())
+                        .query(Long.class)
+                        .single();
+            } catch (DataAccessException ex) {
+                return 0;
+            }
+            if (existing != null && existing > 0) {
+                continue;
+            }
             jdbcClient.sql("""
                             INSERT INTO post(id, author_id, type, theme, content_kind, difficulty, solvable, solved_count,
                                              title, status, like_count, comment_count, view_count, created_at)

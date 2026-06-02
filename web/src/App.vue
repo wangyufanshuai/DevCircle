@@ -306,7 +306,7 @@ onUnmounted(() => {
       <main class="main">
         <header class="topbar">
           <div>
-            <p class="eyebrow">DevCircle v1.2 engineering readiness track</p>
+            <p class="eyebrow">DevCircle v1.3 deduction library acceptance track</p>
             <h1>{{ activeTitle }}</h1>
           </div>
           <div class="searchbar">
@@ -494,6 +494,13 @@ onUnmounted(() => {
             <div v-if="selectedPost.timeline?.length" class="detail-block"><h3>时间线</h3><ul><li v-for="line in selectedPost.timeline" :key="line">{{ line }}</li></ul></div>
             <div v-if="selectedPost.worldbuilding?.length" class="detail-block"><h3>世界观</h3><ul><li v-for="item in selectedPost.worldbuilding" :key="item">{{ item }}</li></ul></div>
             <div v-if="selectedPost.cosmicFacts?.length" class="detail-block"><h3>宇宙档案</h3><ul><li v-for="item in selectedPost.cosmicFacts" :key="item">{{ item }}</li></ul></div>
+          </div>
+          <div v-if="selectedPost.solvable" class="detail-answer">
+            <h3>提交推理</h3>
+            <p>{{ selectedPost.question }}</p>
+            <n-input v-model:value="answerText" type="textarea" :autosize="{ minRows: 3, maxRows: 5 }" />
+            <n-button type="primary" @click="answerCase(selectedPost.id)">提交推理</n-button>
+            <p class="answer">{{ answerMessage }}</p>
           </div>
           <h3>相关内容</h3>
           <div class="related-grid">

@@ -15,7 +15,7 @@ class ThemeSearchFallbackTest {
     void fallbackSearchFiltersByThemeKindAndDifficulty() {
         ElasticsearchOperations operations = mock(ElasticsearchOperations.class);
         when(operations.search(any(Query.class), any(Class.class))).thenThrow(new IllegalStateException("offline"));
-        SearchService service = new SearchService(operations, new ObjectMapper());
+        SearchService service = new SearchService(operations, new ObjectMapper(), "http://localhost:8103");
 
         var result = service.search("钟楼", null, "relevance", "DEDUCTION", "CASE_FILE", "EASY");
 

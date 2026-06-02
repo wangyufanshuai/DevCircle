@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/wangyufanshuai/DevCircle/actions/workflows/ci.yml/badge.svg)](https://github.com/wangyufanshuai/DevCircle/actions/workflows/ci.yml)
 
-DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“推理馆、科幻馆、宇宙档案”的主题内容平台。v1.2 在 v1.1 内容治理和推荐实验基础上继续做工程化硬化，重点补齐配置规范、启动脚本、服务健康、显式降级、Outbox 运维和前端 API 工程化。
+DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“推理馆、科幻馆、宇宙档案”的主题内容平台。v1.3 在工程化硬化基础上深度扩充推理馆，将推理内容库提升到 100 条，并恢复本地全量验收。
 
 ## 技术栈
 
@@ -12,11 +12,12 @@ DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“
 - Docker Compose, Helm, GHCR, Prometheus, Grafana, Jaeger
 - JUnit 5, Testcontainers, k6
 
-## v1.2 能力矩阵
+## v1.3 能力矩阵
 
 | 能力 | 状态 |
 | --- | --- |
-| 主题内容库 | 120 条推理、科幻、宇宙样例作为 seed，启动导入 MySQL，seed 只作为显式降级兜底 |
+| 主题内容库 | 100 条推理、40 条科幻、40 条宇宙样例作为 seed，启动导入 MySQL，seed 只作为显式降级兜底 |
+| 推理馆 | 覆盖密室、时间线、证词矛盾、物证误导、密码谜题、航海、列车、剧院、档案室、冷案复盘 |
 | 内容闭环 | 发帖写 MySQL、标签、媒体、Outbox，审核前状态为 `PENDING` |
 | 内容治理 | 发帖生成审核任务，包含机审结果、风险等级、SLA、复审状态和人工决策 |
 | 风控运营 | 内容风险信号、用户风险画像、禁发/封禁占位拦截和管理端治理接口 |
@@ -104,19 +105,25 @@ VITE_ENABLE_DEMO_FALLBACK=true
 
 ## 本轮验证边界
 
-当前开发阶段只允许编译级验证：
+当前版本恢复本地全量验收：
 
 ```powershell
-.\mvnw.cmd -B -DskipTests compile
+.\mvnw.cmd -B test
 cd web
 npm run build
+npx playwright test
+helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-dev.yaml
+helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-prod.yaml
+docker compose --profile infra config
+docker compose --profile demo config
 ```
 
-完整测试、Testcontainers、Playwright、k6、Helm lint 和 CI 验证留到统一测试阶段。
+验收结论记录在 [本地验收报告](docs/acceptance-report.md)。
 
 ## 文档
 
 - [工程化就绪说明](docs/engineering-readiness.md)
+- [本地验收报告](docs/acceptance-report.md)
 - [技术说明](docs/technical-specification.md)
 - [主题平台](docs/theme-platform.md)
 - [内容治理平台](docs/governance-platform.md)

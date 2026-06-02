@@ -6,8 +6,8 @@ import io.github.devcircle.content.infrastructure.JdbcOutboxPublisher;
 import io.github.devcircle.content.infrastructure.PostRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -29,7 +29,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         "spring.kafka.producer.properties.request.timeout.ms=1000",
         "spring.kafka.producer.properties.delivery.timeout.ms=2000"
 })
-@Sql(scripts = "classpath:db/migration/V1__content_schema.sql")
+@Sql(scripts = {
+        "classpath:db/migration/V1__content_schema.sql",
+        "classpath:db/migration/V2__content_details_and_audit.sql",
+        "classpath:db/migration/V3__governance_and_experiment.sql"
+})
 class OutboxFailureIntegrationTest {
     @Container
     static final MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.4")

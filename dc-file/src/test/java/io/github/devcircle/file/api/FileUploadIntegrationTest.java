@@ -13,8 +13,6 @@ import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.nio.charset.StandardCharsets;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers
@@ -54,7 +52,18 @@ class FileUploadIntegrationTest {
 
     @Test
     void uploadsImageToMinioAndPersistsMetadata() throws Exception {
-        var file = new MockMultipartFile("file", "cover.png", "image/png", "demo-image".getBytes(StandardCharsets.UTF_8));
+        byte[] onePixelPng = new byte[]{
+                (byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+                0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+                0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, (byte) 0xC4,
+                (byte) 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
+                0x54, 0x78, (byte) 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+                0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, (byte) 0xB4, 0x00,
+                0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, (byte) 0xAE,
+                0x42, 0x60, (byte) 0x82
+        };
+        var file = new MockMultipartFile("file", "cover.png", "image/png", onePixelPng);
 
         var response = fileController.upload(file, 640, 480, null).data();
 
