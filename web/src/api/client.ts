@@ -106,6 +106,7 @@ export async function recordExposures(postIds: number[], scene = 'home_feed'): P
   try {
     await postJson('/api/recommend/exposures', { userId: 2, postIds, scene })
   } catch {
+    // Exposure is non-critical for demo rendering.
   }
 }
 
@@ -166,7 +167,7 @@ export async function uploadMedia(file: File): Promise<FileUploadResult> {
       url: file.type.startsWith('video/') ? 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4' : 'https://picsum.photos/seed/upload-demo/720/960',
       contentType: file.type || 'image/png',
       size: file.size,
-      width: file.type.startsWith('video/') ? 720 : 720,
+      width: 720,
       height: file.type.startsWith('video/') ? 1280 : 960,
       durationSeconds: file.type.startsWith('video/') ? 18 : undefined,
       status: 'PENDING_REVIEW'
@@ -242,14 +243,18 @@ export async function submitDeductionAnswer(postId: number, answer: string): Pro
     return await postJson<DeductionAnswerResult>(`/api/deduction/cases/${postId}/answers`, { answer })
   } catch (error) {
     fallbackAllowed('deduction-answer', error)
-    const correct = answer.includes('夹层') || answer.includes('钟楼')
+    const target = mockPosts.find((post) => post.id === postId)
+    const normalized = answer.replace(/\s|，|。|、|；|：|！|？/g, '')
+    const correct = (target?.answerKeywords ?? ['夹层藏身', '怀表', '时间差']).some((keyword) => normalized.includes(keyword.replace(/\s/g, '')))
     return {
       postId,
       userId: 2,
       correct,
       duplicated: false,
       points: correct ? 20 : 0,
-      explanation: correct ? '推理成立：关键是停在 00:07 的怀表和钟楼夹层。' : '线索还没有闭合，建议重新检查怀表、鞋印和航海日志。'
+      explanation: correct
+        ? (target?.explanation ?? '推理成立：关键证据和时间线已经闭合。')
+        : '线索还没有闭合，建议重新检查时间线、物证和证词之间的矛盾。'
     }
   }
 }
@@ -278,8 +283,8 @@ export async function fetchModerationTasks(): Promise<ModerationTask[]> {
   } catch (error) {
     fallbackAllowed('moderation-tasks', error)
     return [
-      { taskId: 1, postId: 1002, title: '雾港钟楼的第十三声', queue: 'manual-review', riskLevel: 'MEDIUM', riskScore: 62, reason: '标题与正文高度重复', status: 'PENDING' },
-      { taskId: 2, postId: 1043, title: '土卫六雨季城市设定稿', queue: 'fast-lane', riskLevel: 'LOW', riskScore: 18, reason: '常规机审通过后等待人工抽样', status: 'PENDING' }
+      { taskId: 1, postId: 1002, title: '雾港钟楼无声证词', queue: 'manual-review', riskLevel: 'MEDIUM', riskScore: 62, reason: '标题与正文高度重复，等待人工复核', status: 'PENDING' },
+      { taskId: 2, postId: 2003, title: '木卫二冰下城短篇', queue: 'fast-lane', riskLevel: 'LOW', riskScore: 18, reason: '常规机审通过后等待抽检', status: 'PENDING' }
     ]
   }
 }
@@ -298,7 +303,7 @@ export async function fetchRiskUsers(): Promise<RiskUser[]> {
   } catch (error) {
     fallbackAllowed('risk-users', error)
     return [
-      { userId: 12, status: 'WATCH', riskScore: 58, reason: '短时间高频发帖' },
+      { userId: 12, status: 'WATCH', riskScore: 58, reason: '短时间高频发布' },
       { userId: 18, status: 'NO_POST', riskScore: 91, reason: '多次命中敏感标签' }
     ]
   }
