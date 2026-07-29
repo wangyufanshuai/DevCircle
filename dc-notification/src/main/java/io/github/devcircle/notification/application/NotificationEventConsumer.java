@@ -36,7 +36,13 @@ class NotificationEventConsumer {
         String content = interaction
                 ? "你的内容收到了一次新的互动"
                 : "你的投稿状态已更新为 " + payload.path("status").asText("UNKNOWN");
-        notificationRepository.createOnce(eventId, topic, receiverId, type, title, content);
+        long actorId = payload.path("actorId").asLong(0);
+        long targetIdValue = payload.path("targetId").asLong(payload.path("postId").asLong(0));
+        Long targetId = targetIdValue > 0 ? targetIdValue : null;
+        String targetType = payload.path("targetType").asText(targetId == null ? "" : "POST");
+        String targetRoute = payload.path("targetRoute").asText(targetId == null ? "" : "/posts/" + targetId);
+        notificationRepository.createOnce(eventId, topic, receiverId, actorId > 0 ? actorId : null, type, title,
+                content, targetType, targetId, targetRoute);
     }
 
     private String requiredText(JsonNode node, String field) {

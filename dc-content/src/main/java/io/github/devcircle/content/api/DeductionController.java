@@ -23,14 +23,22 @@ class DeductionController {
     }
 
     @PostMapping("/cases/{id}/answers")
-    ApiResponse<DeductionAnswerResult> answer(@RequestHeader(value = "X-User-Id", defaultValue = "2") Long userId,
+    ApiResponse<DeductionAnswerResult> answer(@RequestHeader("X-User-Id") Long userId,
+                                              @RequestHeader("Idempotency-Key") String idempotencyKey,
                                               @PathVariable Long id,
                                               @Valid @RequestBody DeductionAnswerRequest request) {
-        return ApiResponse.ok(deductionService.submitAnswer(userId, id, request.answer()));
+        return ApiResponse.ok(deductionService.submitAnswer(userId, id, request.answer(), idempotencyKey));
+    }
+
+    @PostMapping("/cases/{id}/reveal")
+    ApiResponse<DeductionAnswerResult> reveal(@RequestHeader("X-User-Id") Long userId,
+                                              @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                              @PathVariable Long id) {
+        return ApiResponse.ok(deductionService.reveal(userId, id, idempotencyKey));
     }
 
     @GetMapping("/cases/{id}/attempts/me")
-    ApiResponse<DeductionAnswerResult> myAttempt(@RequestHeader(value = "X-User-Id", defaultValue = "2") Long userId,
+    ApiResponse<DeductionAnswerResult> myAttempt(@RequestHeader("X-User-Id") Long userId,
                                                  @PathVariable Long id) {
         return ApiResponse.ok(deductionService.myAttempt(userId, id));
     }

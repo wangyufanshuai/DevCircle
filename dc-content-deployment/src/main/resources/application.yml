@@ -13,7 +13,7 @@ spring:
           routes:
             - id: comments
               uri: ${DC_COMMENT_URI:http://localhost:8104}
-              predicates: [Path=/api/comments/**]
+              predicates: [Path=/api/comments/**,/api/posts/*/comments/**]
             - id: files
               uri: ${DC_FILE_URI:http://localhost:8109}
               predicates: [Path=/api/files/**]

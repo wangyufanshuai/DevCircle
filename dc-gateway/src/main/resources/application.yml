@@ -25,10 +25,18 @@ spring:
               uri: ${DC_USER_URI:http://localhost:8102}
               predicates:
                 - Path=/api/users/**
+            - id: identity-dashboard
+              uri: ${DC_IDENTITY_URI:http://localhost:8201}
+              predicates:
+                - Path=/api/me/**
             - id: interaction
               uri: ${DC_INTERACTION_URI:http://localhost:8105}
               predicates:
-                - Path=/api/posts/*/like,/api/posts/*/favorite
+                - Path=/api/posts/*/like,/api/posts/*/favorite,/api/posts/*/interaction-state
+            - id: post-comments
+              uri: ${DC_COMMENT_URI:http://localhost:8104}
+              predicates:
+                - Path=/api/posts/*/comments/**
             - id: content
               uri: ${DC_CONTENT_URI:http://localhost:8103}
               predicates:

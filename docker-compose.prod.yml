@@ -19,7 +19,6 @@ x-app-env: &app-env
   DEVCIRCLE_JWT_SECRET: ${DEVCIRCLE_JWT_SECRET:?DEVCIRCLE_JWT_SECRET is required}
   DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
   DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
-  GATEWAY_DEMO_TOKEN_ENABLED: "false"
   AUTH_COOKIE_SECURE: "true"
   AUTH_FRONTEND_CALLBACK_URI: ${PUBLIC_ORIGIN}/auth/callback
   GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
@@ -229,12 +228,14 @@ services:
       <<: *app-env
       DC_AUTH_URI: http://dc-auth:8101
       DC_USER_URI: http://dc-user:8102
+      DC_CONTENT_URI: http://dc-content:8103
       DC_INTERACTION_URI: http://dc-interaction:8105
       DC_NOTIFICATION_URI: http://dc-notification:8108
     expose: ["8201"]
     depends_on:
       dc-auth: { condition: service_healthy }
       dc-user: { condition: service_healthy }
+      dc-content: { condition: service_healthy }
       dc-interaction: { condition: service_healthy }
       dc-notification: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8201/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }

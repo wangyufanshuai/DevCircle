@@ -7,6 +7,11 @@ import io.github.devcircle.common.model.PostSummary;
 import io.github.devcircle.common.seed.ThemeContentLibrary;
 import io.github.devcircle.content.api.CreatePostRequest;
 import io.github.devcircle.content.api.DraftView;
+import io.github.devcircle.content.api.PostDetailView;
+import io.github.devcircle.content.api.PostCursorPage;
+import io.github.devcircle.content.api.PostAuditView;
+import io.github.devcircle.content.api.ReadingProgressRequest;
+import io.github.devcircle.content.api.ReadingProgressView;
 import io.github.devcircle.content.api.SaveDraftRequest;
 import io.github.devcircle.content.infrastructure.PostRepository;
 import org.springframework.beans.factory.annotation.Value;
@@ -46,6 +51,13 @@ public class PostService {
         }
     }
 
+    public PostCursorPage listCursor(String cursor, int size, String type, String theme,
+                                     String contentKind, String difficulty) {
+        int safeSize = Math.max(1, Math.min(size, 20));
+        PostCursorPage page = postRepository.listCursor(cursor, safeSize, theme, contentKind, difficulty);
+        return new PostCursorPage(filterByType(page.records(), type), page.nextCursor(), page.hasMore());
+    }
+
     public PostSummary detail(Long id) {
         try {
             PostSummary post = postRepository.detail(id);
@@ -61,6 +73,16 @@ public class PostService {
                     .map(seed -> seed.toSummary())
                     .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "内容不存在"));
         }
+    }
+
+    public PostDetailView publicDetail(Long id, Long viewerId) {
+        return postRepository.publicDetail(id, viewerId);
+    }
+
+    public ReadingProgressView saveReadingProgress(Long userId, Long postId, ReadingProgressRequest request,
+                                                   String idempotencyKey) {
+        requireWriteHeaders(userId, idempotencyKey);
+        return postRepository.saveReadingProgress(userId, postId, request, idempotencyKey);
     }
 
     public List<PostSummary> related(Long id, int size) {
@@ -92,6 +114,11 @@ public class PostService {
     public DraftView getDraft(Long authorId, Long draftId) {
         requireUser(authorId);
         return postRepository.getDraft(authorId, draftId);
+    }
+
+    public List<PostAuditView> listAudits(Long authorId, Long draftId) {
+        requireUser(authorId);
+        return postRepository.listAudits(authorId, draftId);
     }
 
     public DraftView updateDraft(Long authorId, Long draftId, SaveDraftRequest request, String idempotencyKey) {

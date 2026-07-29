@@ -28,18 +28,24 @@ class PostController {
     }
 
     @GetMapping
-    ApiResponse<PageResponse<PostSummary>> list(@RequestParam(defaultValue = "1") int page,
+    ApiResponse<?> list(@RequestParam(defaultValue = "1") int page,
                                                 @RequestParam(defaultValue = "10") int size,
+                                                @RequestParam(required = false) String cursor,
                                                 @RequestParam(required = false) String type,
                                                 @RequestParam(required = false) String theme,
                                                 @RequestParam(required = false) String contentKind,
                                                 @RequestParam(required = false) String difficulty) {
+        if (cursor != null) {
+            PostCursorPage result = postService.listCursor(cursor, size, type, theme, contentKind, difficulty);
+            return ApiResponse.ok(result.records(), Map.of("nextCursor", result.nextCursor(), "hasMore", result.hasMore()));
+        }
         return ApiResponse.ok(postService.list(page, size, type, theme, contentKind, difficulty));
     }
 
     @GetMapping("/{id}")
-    ApiResponse<PostSummary> detail(@PathVariable Long id) {
-        return ApiResponse.ok(postService.detail(id));
+    ApiResponse<PostDetailView> detail(@PathVariable Long id,
+                                       @RequestHeader(value = "X-User-Id", required = false) Long viewerId) {
+        return ApiResponse.ok(postService.publicDetail(id, viewerId));
     }
 
     @GetMapping("/{id}/related")
@@ -74,6 +80,11 @@ class PostController {
         return ApiResponse.ok(postService.getDraft(userId, id));
     }
 
+    @GetMapping("/drafts/{id}/audits")
+    ApiResponse<List<PostAuditView>> audits(@RequestHeader("X-User-Id") Long userId, @PathVariable Long id) {
+        return ApiResponse.ok(postService.listAudits(userId, id));
+    }
+
     @PutMapping("/drafts/{id}")
     ApiResponse<DraftView> updateDraft(@RequestHeader("X-User-Id") Long userId,
                                        @RequestHeader("Idempotency-Key") String idempotencyKey,
@@ -96,5 +107,13 @@ class PostController {
                                             @PathVariable Long id,
                                             @Valid @RequestBody AppealRequest request) {
         return ApiResponse.ok(postService.createAppeal(userId, id, request.reason(), idempotencyKey));
+    }
+
+    @PutMapping("/{id}/reading-progress")
+    ApiResponse<ReadingProgressView> readingProgress(@RequestHeader("X-User-Id") Long userId,
+                                                     @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                                     @PathVariable Long id,
+                                                     @Valid @RequestBody ReadingProgressRequest request) {
+        return ApiResponse.ok(postService.saveReadingProgress(userId, id, request, idempotencyKey));
     }
 }

@@ -7,7 +7,11 @@ spring:
             - id: identity
               uri: ${DC_IDENTITY_URI:http://localhost:8201}
               predicates:
-                - Path=/api/auth/**,/api/users/**,/api/notifications/**,/ws/notifications/**,/api/posts/*/like,/api/posts/*/favorite
+                - Path=/api/auth/**,/api/users/**,/api/notifications/**,/ws/notifications/**,/api/posts/*/like,/api/posts/*/favorite,/api/posts/*/interaction-state,/api/me/**
+            - id: content-comments
+              uri: ${DC_COMMENT_URI:http://localhost:8104}
+              predicates:
+                - Path=/api/posts/*/comments/**
             - id: content-aggregate
               uri: ${DC_CONTENT_AGGREGATE_URI:http://localhost:8202}
               predicates:

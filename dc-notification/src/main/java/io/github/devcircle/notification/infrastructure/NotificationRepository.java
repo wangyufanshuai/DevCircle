@@ -17,28 +17,48 @@ public class NotificationRepository {
         this.jdbcClient = jdbcClient;
     }
 
-    public List<NotificationView> list(Long receiverId) {
+    public List<NotificationView> list(Long receiverId, String type, Long beforeId, int size) {
         return jdbcClient.sql("""
-                        SELECT id, type, title, content, read_flag, created_at
+                        SELECT id, type, title, content, read_flag, actor_id, target_type, target_id, target_route, created_at
                         FROM notification
                         WHERE receiver_id = :receiverId
-                        ORDER BY created_at DESC
-                        LIMIT 50
+                          AND (:type IS NULL OR type = :type)
+                          AND (:beforeId IS NULL OR id < :beforeId)
+                        ORDER BY id DESC
+                        LIMIT :size
                         """)
                 .param("receiverId", receiverId)
+                .param("type", type == null || type.isBlank() ? null : type.toUpperCase())
+                .param("beforeId", beforeId)
+                .param("size", Math.max(1, Math.min(size, 50)))
                 .query((rs, rowNum) -> new NotificationView(
                         rs.getLong("id"),
                         rs.getString("type"),
                         rs.getString("title"),
                         rs.getString("content"),
                         rs.getBoolean("read_flag"),
+                        (Long) rs.getObject("actor_id"),
+                        rs.getString("target_type"),
+                        (Long) rs.getObject("target_id"),
+                        rs.getString("target_route"),
                         rs.getTimestamp("created_at").toInstant()
                 ))
                 .list();
     }
 
+    public List<NotificationView> list(Long receiverId) {
+        return list(receiverId, null, null, 50);
+    }
+
+    public long unreadCount(Long receiverId) {
+        Long count = jdbcClient.sql("SELECT COUNT(*) FROM notification WHERE receiver_id = :receiverId AND read_flag = FALSE")
+                .param("receiverId", receiverId).query(Long.class).single();
+        return count == null ? 0 : count;
+    }
+
     @Transactional
-    public boolean createOnce(String eventId, String topic, Long receiverId, String type, String title, String content) {
+    public boolean createOnce(String eventId, String topic, Long receiverId, Long actorId, String type,
+                              String title, String content, String targetType, Long targetId, String targetRoute) {
         int claimed = jdbcClient.sql("INSERT IGNORE INTO consumer_dedup(event_id, topic) VALUES (:eventId, :topic)")
                 .param("eventId", eventId)
                 .param("topic", topic)
@@ -47,15 +67,43 @@ public class NotificationRepository {
             return false;
         }
         jdbcClient.sql("""
-                        INSERT INTO notification(receiver_id, type, title, content, read_flag)
-                        VALUES (:receiverId, :type, :title, :content, false)
+                        INSERT INTO notification(receiver_id, actor_id, type, title, content, target_type, target_id, target_route, read_flag)
+                        VALUES (:receiverId, :actorId, :type, :title, :content, :targetType, :targetId, :targetRoute, false)
                         """)
                 .param("receiverId", receiverId)
+                .param("actorId", actorId)
                 .param("type", type)
                 .param("title", title)
                 .param("content", content)
+                .param("targetType", targetType)
+                .param("targetId", targetId)
+                .param("targetRoute", targetRoute)
                 .update();
         return true;
+    }
+
+    @Transactional
+    public long markAllRead(Long receiverId, String idempotencyKey) {
+        int claimed = jdbcClient.sql("""
+                        INSERT IGNORE INTO notification_idempotency_record(idempotency_key, user_id, operation, resource_id)
+                        VALUES (:key, :userId, 'MARK_ALL_READ', 0)
+                        """)
+                .param("key", idempotencyKey).param("userId", receiverId).update();
+        if (claimed == 0) {
+            Idempotency existing = jdbcClient.sql("""
+                            SELECT user_id, operation, resource_id FROM notification_idempotency_record
+                            WHERE idempotency_key = :key
+                            """)
+                    .param("key", idempotencyKey)
+                    .query((rs, rowNum) -> new Idempotency(rs.getLong("user_id"), rs.getString("operation"), rs.getLong("resource_id")))
+                    .single();
+            if (!existing.userId().equals(receiverId) || !"MARK_ALL_READ".equals(existing.operation())) {
+                throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已被其他操作使用");
+            }
+            return 0;
+        }
+        return jdbcClient.sql("UPDATE notification SET read_flag = TRUE WHERE receiver_id = :userId AND read_flag = FALSE")
+                .param("userId", receiverId).update();
     }
 
     @Transactional

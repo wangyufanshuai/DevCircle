@@ -60,6 +60,38 @@ public class InteractionRepository {
         return new InteractionWriteResult(rows > 0, false);
     }
 
+    @Transactional
+    public InteractionWriteResult deleteLike(Long userId, Long postId, String idempotencyKey) {
+        if (claimIdempotency(userId, "UNLIKE", postId, idempotencyKey)) {
+            return new InteractionWriteResult(false, true);
+        }
+        int rows = jdbcClient.sql("DELETE FROM like_record WHERE user_id = :userId AND target_type = 'POST' AND target_id = :postId")
+                .param("userId", userId).param("postId", postId).update();
+        if (rows > 0) {
+            jdbcClient.sql("UPDATE post_counter SET like_count = GREATEST(like_count - 1, 0) WHERE post_id = :postId")
+                    .param("postId", postId).update();
+            writeEvent(userId, postId, "UNLIKE");
+        }
+        attachResource(idempotencyKey, postId);
+        return new InteractionWriteResult(rows > 0, false);
+    }
+
+    @Transactional
+    public InteractionWriteResult deleteFavorite(Long userId, Long postId, String idempotencyKey) {
+        if (claimIdempotency(userId, "UNFAVORITE", postId, idempotencyKey)) {
+            return new InteractionWriteResult(false, true);
+        }
+        int rows = jdbcClient.sql("DELETE FROM favorite_record WHERE user_id = :userId AND post_id = :postId")
+                .param("userId", userId).param("postId", postId).update();
+        if (rows > 0) {
+            jdbcClient.sql("UPDATE post_counter SET favorite_count = GREATEST(favorite_count - 1, 0) WHERE post_id = :postId")
+                    .param("postId", postId).update();
+            writeEvent(userId, postId, "UNFAVORITE");
+        }
+        attachResource(idempotencyKey, postId);
+        return new InteractionWriteResult(rows > 0, false);
+    }
+
     private boolean claimIdempotency(Long userId, String operation, Long resourceId, String key) {
         int inserted = jdbcClient.sql("""
                         INSERT IGNORE INTO idempotency_record(idempotency_key, user_id, operation, resource_id)
@@ -112,6 +144,26 @@ public class InteractionRepository {
     }
 
     public record InteractionWriteResult(boolean inserted, boolean duplicateRequest) {
+    }
+
+    public java.util.List<Long> favoritePostIds(Long userId, int size) {
+        return jdbcClient.sql("""
+                        SELECT post_id FROM favorite_record
+                        WHERE user_id = :userId ORDER BY created_at DESC LIMIT :size
+                        """)
+                .param("userId", userId).param("size", Math.max(1, Math.min(size, 100)))
+                .query(Long.class).list();
+    }
+
+    public InteractionState interactionState(Long userId, Long postId) {
+        Integer liked = jdbcClient.sql("SELECT COUNT(*) FROM like_record WHERE user_id = :userId AND target_type = 'POST' AND target_id = :postId")
+                .param("userId", userId).param("postId", postId).query(Integer.class).single();
+        Integer favorited = jdbcClient.sql("SELECT COUNT(*) FROM favorite_record WHERE user_id = :userId AND post_id = :postId")
+                .param("userId", userId).param("postId", postId).query(Integer.class).single();
+        return new InteractionState(liked != null && liked > 0, favorited != null && favorited > 0);
+    }
+
+    public record InteractionState(boolean liked, boolean favorited) {
     }
 
     private record Idempotency(Long userId, String operation, Long resourceId) {

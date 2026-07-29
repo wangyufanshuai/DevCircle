@@ -1,5 +1,6 @@
 package io.github.devcircle.common.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import java.time.Instant;
 import java.util.List;
 
@@ -25,8 +26,8 @@ public record PostSummary(
         List<String> suspects,
         List<String> timeline,
         String question,
-        List<String> answerKeywords,
-        String explanation,
+        @JsonIgnore List<String> answerKeywords,
+        @JsonIgnore String explanation,
         List<String> worldbuilding,
         List<String> cosmicFacts,
         List<Long> relatedPostIds

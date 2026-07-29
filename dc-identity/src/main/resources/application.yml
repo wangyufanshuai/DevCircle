@@ -19,7 +19,7 @@ spring:
               predicates: [Path=/api/users/**]
             - id: interaction
               uri: ${DC_INTERACTION_URI:http://localhost:8105}
-              predicates: [Path=/api/posts/*/like,/api/posts/*/favorite]
+              predicates: [Path=/api/posts/*/like,/api/posts/*/favorite,/api/posts/*/interaction-state]
             - id: notification
               uri: ${DC_NOTIFICATION_URI:http://localhost:8108}
               predicates: [Path=/api/notifications/**,/ws/notifications/**]
@@ -32,3 +32,9 @@ management:
     health:
       probes:
         enabled: true
+devcircle:
+  internal:
+    user-uri: ${DC_USER_URI:http://localhost:8102}
+    content-uri: ${DC_CONTENT_URI:http://localhost:8103}
+    interaction-uri: ${DC_INTERACTION_URI:http://localhost:8105}
+    notification-uri: ${DC_NOTIFICATION_URI:http://localhost:8108}

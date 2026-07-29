@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/users")
@@ -48,6 +49,11 @@ class UserController {
     @GetMapping("/{id}/followees")
     ApiResponse<List<Long>> followees(@PathVariable Long id) {
         return ApiResponse.ok(userGraphService.followees(id));
+    }
+
+    @GetMapping("/{id}/follow-state")
+    ApiResponse<Map<String, Boolean>> followState(@RequestHeader("X-User-Id") Long userId, @PathVariable Long id) {
+        return ApiResponse.ok(Map.of("following", userGraphService.isFollowing(userId, id)));
     }
 
     @GetMapping("/{id}/followers")

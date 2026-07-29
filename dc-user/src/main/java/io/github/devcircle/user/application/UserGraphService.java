@@ -67,6 +67,10 @@ public class UserGraphService {
         redisTemplate.opsForHash().put("user:" + userId + ":graph-features", "followee:" + targetUserId, "1");
     }
 
+    public boolean isFollowing(Long userId, Long targetUserId) {
+        return repository.isFollowing(userId, targetUserId);
+    }
+
     private void validate(Long userId, Long targetUserId, String idempotencyKey) {
         if (userId.equals(targetUserId)) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "不能关注自己");

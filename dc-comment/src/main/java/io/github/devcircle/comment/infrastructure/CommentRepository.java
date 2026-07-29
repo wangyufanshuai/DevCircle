@@ -3,6 +3,7 @@ package io.github.devcircle.comment.infrastructure;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.comment.api.CommentView;
+import io.github.devcircle.comment.api.CommentThreadView;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.event.EventEnvelope;
@@ -16,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Map;
 
 @Repository
@@ -40,6 +42,30 @@ public class CommentRepository {
                         FROM comment
                         WHERE post_id = :postId AND status = 'VISIBLE'
                         """ + cursor + " ORDER BY id DESC LIMIT :size", params, mapper());
+    }
+
+    public List<CommentThreadView> listThreads(Long postId, Long beforeRootId, int size) {
+        String cursor = beforeRootId == null ? "" : " AND id < :beforeRootId";
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("postId", postId).addValue("beforeRootId", beforeRootId)
+                .addValue("size", Math.max(1, Math.min(size, 50)));
+        List<CommentView> roots = jdbc.query("""
+                        SELECT id, post_id, parent_id, root_id, author_id, content, status, like_count, created_at
+                        FROM comment
+                        WHERE post_id = :postId AND parent_id IS NULL AND status IN ('VISIBLE', 'DELETED')
+                        """ + cursor + " ORDER BY id DESC LIMIT :size", params, mapper());
+        if (roots.isEmpty()) return List.of();
+        List<CommentThreadView> threads = new ArrayList<>(roots.size());
+        for (CommentView root : roots) {
+            List<CommentView> replies = jdbc.query("""
+                            SELECT id, post_id, parent_id, root_id, author_id, content, status, like_count, created_at
+                            FROM comment
+                            WHERE post_id = :postId AND root_id = :rootId AND status IN ('VISIBLE', 'DELETED')
+                            ORDER BY id ASC
+                            """, Map.of("postId", postId, "rootId", root.id()), mapper());
+            threads.add(new CommentThreadView(root, replies));
+        }
+        return threads;
     }
 
     @Transactional

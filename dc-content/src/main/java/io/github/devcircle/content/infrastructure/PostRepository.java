@@ -11,6 +11,10 @@ import io.github.devcircle.common.model.MediaAssetView;
 import io.github.devcircle.common.model.PostSummary;
 import io.github.devcircle.content.api.CreatePostRequest;
 import io.github.devcircle.content.api.DraftView;
+import io.github.devcircle.content.api.PostDetailView;
+import io.github.devcircle.content.api.PostCursorPage;
+import io.github.devcircle.content.api.ReadingProgressRequest;
+import io.github.devcircle.content.api.ReadingProgressView;
 import io.github.devcircle.content.api.SaveDraftRequest;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -29,6 +33,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.Optional;
+import java.util.Base64;
+import java.nio.charset.StandardCharsets;
 
 @Repository
 public class PostRepository {
@@ -146,6 +152,197 @@ public class PostRepository {
                         readLongList(rs.getString("related_post_ids"))
                 ))
                 .single();
+    }
+
+    public PostDetailView publicDetail(Long id, Long viewerId) {
+        DeductionSnapshot deduction = deductionSnapshot(viewerId, id);
+        int progress = readingProgress(viewerId, id);
+        return jdbcClient.sql("""
+                        SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
+                               p.title, pc.markdown, pc.solution, p.author_id, p.status,
+                               p.like_count, p.comment_count, p.view_count, p.created_at,
+                               pc.clues, pc.suspects, pc.timeline, pc.question,
+                               pc.worldbuilding, pc.cosmic_facts, pc.related_post_ids,
+                               GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR ',') AS tags
+                        FROM post p
+                        JOIN post_content pc ON pc.post_id = p.id
+                        LEFT JOIN post_tag pt ON pt.post_id = p.id
+                        LEFT JOIN tag t ON t.id = pt.tag_id
+                        WHERE p.id = :id AND p.status = 'PUBLISHED'
+                        GROUP BY p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
+                                 p.title, pc.markdown, pc.solution, p.author_id, p.status,
+                                 p.like_count, p.comment_count, p.view_count, p.created_at,
+                                 pc.clues, pc.suspects, pc.timeline, pc.question,
+                                 pc.worldbuilding, pc.cosmic_facts, pc.related_post_ids
+                        """)
+                .param("id", id)
+                .query((rs, rowNum) -> {
+                    String markdown = Optional.ofNullable(rs.getString("markdown")).orElse("");
+                    long authorId = rs.getLong("author_id");
+                    boolean unlocked = deduction.solved() || deduction.revealed();
+                    return new PostDetailView(
+                            rs.getLong("id"), rs.getString("type"), rs.getString("theme"),
+                            rs.getString("content_kind"), rs.getString("difficulty"),
+                            rs.getBoolean("solvable"), rs.getLong("solved_count"),
+                            rs.getString("title"), excerpt(markdown), markdown,
+                            new PostDetailView.AuthorView(authorId, "user-" + authorId, null, null, null, null),
+                            splitTags(rs.getString("tags")), publicMediaAssets(rs.getLong("id")),
+                            rs.getLong("like_count"), rs.getLong("comment_count"), rs.getLong("view_count"),
+                            rs.getString("status"), rs.getTimestamp("created_at").toInstant(),
+                            readStringList(rs.getString("clues")), readStringList(rs.getString("suspects")),
+                            readStringList(rs.getString("timeline")), Optional.ofNullable(rs.getString("question")).orElse(""),
+                            readStringList(rs.getString("worldbuilding")), readStringList(rs.getString("cosmic_facts")),
+                            readLongList(rs.getString("related_post_ids")),
+                            new PostDetailView.ViewerState(false, false, progress),
+                            new PostDetailView.DeductionState(deduction.attempted(), deduction.solved(), deduction.revealed(),
+                                    deduction.points(), unlocked),
+                            unlocked ? Optional.ofNullable(rs.getString("solution")).orElse("") : null
+                    );
+                })
+                .optional()
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "内容不存在或尚未发布"));
+    }
+
+    @Transactional
+    public ReadingProgressView saveReadingProgress(Long userId, Long postId, ReadingProgressRequest request,
+                                                   String idempotencyKey) {
+        Integer published = jdbcClient.sql("SELECT COUNT(*) FROM post WHERE id = :postId AND status = 'PUBLISHED'")
+                .param("postId", postId).query(Integer.class).single();
+        if (published == null || published == 0) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "内容不存在或尚未发布");
+        }
+        int claimed = jdbcClient.sql("""
+                        INSERT IGNORE INTO reading_progress_idempotency(idempotency_key, user_id, post_id)
+                        VALUES (:key, :userId, :postId)
+                        """)
+                .param("key", idempotencyKey).param("userId", userId).param("postId", postId).update();
+        if (claimed == 0) {
+            ProgressIdempotency existing = jdbcClient.sql("""
+                            SELECT user_id, post_id FROM reading_progress_idempotency WHERE idempotency_key = :key
+                            """)
+                    .param("key", idempotencyKey)
+                    .query((rs, rowNum) -> new ProgressIdempotency(rs.getLong("user_id"), rs.getLong("post_id")))
+                    .single();
+            if (!existing.userId().equals(userId) || !existing.postId().equals(postId)) {
+                throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已用于其他阅读进度请求");
+            }
+            return getReadingProgress(userId, postId);
+        }
+        int progress = request.completed() ? 100 : Math.max(0, Math.min(request.progressPercent(), 99));
+        jdbcClient.sql("""
+                        INSERT INTO reading_progress(user_id, post_id, progress_percent, anchor, completed)
+                        VALUES (:userId, :postId, :progress, :anchor, :completed)
+                        ON DUPLICATE KEY UPDATE
+                          progress_percent = GREATEST(progress_percent, VALUES(progress_percent)),
+                          anchor = IF(VALUES(progress_percent) >= progress_percent, VALUES(anchor), anchor),
+                          completed = completed OR VALUES(completed),
+                          last_read_at = CURRENT_TIMESTAMP
+                        """)
+                .param("userId", userId).param("postId", postId).param("progress", progress)
+                .param("anchor", request.anchor()).param("completed", request.completed()).update();
+        return getReadingProgress(userId, postId);
+    }
+
+    public ReadingProgressView getReadingProgress(Long userId, Long postId) {
+        return jdbcClient.sql("""
+                        SELECT post_id, progress_percent, anchor, completed, last_read_at
+                        FROM reading_progress WHERE user_id = :userId AND post_id = :postId
+                        """)
+                .param("userId", userId).param("postId", postId)
+                .query((rs, rowNum) -> new ReadingProgressView(rs.getLong("post_id"),
+                        rs.getInt("progress_percent"), rs.getString("anchor"), rs.getBoolean("completed"),
+                        rs.getTimestamp("last_read_at").toInstant()))
+                .optional()
+                .orElse(new ReadingProgressView(postId, 0, null, false, null));
+    }
+
+    public List<io.github.devcircle.content.api.ReadingProgressSummary> listReadingProgress(Long userId, int size) {
+        return jdbcClient.sql("""
+                        SELECT rp.post_id, p.title, p.theme, rp.progress_percent, rp.completed, rp.last_read_at
+                        FROM reading_progress rp JOIN post p ON p.id = rp.post_id
+                        WHERE rp.user_id = :userId AND p.status = 'PUBLISHED'
+                        ORDER BY rp.last_read_at DESC LIMIT :size
+                        """)
+                .param("userId", userId).param("size", Math.max(1, Math.min(size, 50)))
+                .query((rs, rowNum) -> new io.github.devcircle.content.api.ReadingProgressSummary(
+                        rs.getLong("post_id"), rs.getString("title"), rs.getString("theme"),
+                        rs.getInt("progress_percent"), rs.getBoolean("completed"), rs.getTimestamp("last_read_at").toInstant()))
+                .list();
+    }
+
+    public PostCursorPage listCursor(String cursor, int size, String theme, String contentKind, String difficulty) {
+        CursorValue value = decodeCursor(cursor);
+        List<PostSummary> rows = jdbcClient.sql("""
+                        SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
+                               p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
+                               p.like_count, p.comment_count, p.view_count, p.created_at,
+                               GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR ',') AS tags
+                        FROM post p
+                        JOIN post_content pc ON pc.post_id = p.id
+                        LEFT JOIN post_tag pt ON pt.post_id = p.id
+                        LEFT JOIN tag t ON t.id = pt.tag_id
+                        WHERE p.status = 'PUBLISHED'
+                          AND (:theme IS NULL OR p.theme = :theme)
+                          AND (:contentKind IS NULL OR p.content_kind = :contentKind)
+                          AND (:difficulty IS NULL OR p.difficulty = :difficulty)
+                          AND (:cursorTime IS NULL OR p.created_at < :cursorTime
+                               OR (p.created_at = :cursorTime AND p.id < :cursorId))
+                        GROUP BY p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
+                                 p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count,
+                                 p.view_count, p.created_at
+                        ORDER BY p.created_at DESC, p.id DESC
+                        LIMIT :limit
+                        """)
+                .param("theme", normalizeNullableTheme(theme))
+                .param("contentKind", normalizeNullableContentKind(contentKind))
+                .param("difficulty", normalizeNullableDifficulty(difficulty))
+                .param("cursorTime", value == null ? null : java.sql.Timestamp.from(value.createdAt()))
+                .param("cursorId", value == null ? Long.MAX_VALUE : value.id())
+                .param("limit", size + 1)
+                .query((rs, rowNum) -> new PostSummary(
+                        rs.getLong("id"), rs.getString("type"), rs.getString("theme"), rs.getString("content_kind"),
+                        rs.getString("difficulty"), rs.getBoolean("solvable"), rs.getLong("solved_count"),
+                        rs.getString("title"), rs.getString("excerpt"), "user-" + rs.getLong("author_id"),
+                        splitTags(rs.getString("tags")), mediaAssets(rs.getLong("id")), rs.getLong("like_count"),
+                        rs.getLong("comment_count"), rs.getLong("view_count"), rs.getString("status"),
+                        rs.getTimestamp("created_at").toInstant()))
+                .list();
+        boolean hasMore = rows.size() > size;
+        List<PostSummary> page = hasMore ? rows.subList(0, size) : rows;
+        String next = page.isEmpty() || !hasMore ? "" : encodeCursor(page.getLast().createdAt(), page.getLast().id());
+        return new PostCursorPage(List.copyOf(page), next, hasMore);
+    }
+
+    private CursorValue decodeCursor(String cursor) {
+        if (cursor == null || cursor.isBlank()) return null;
+        try {
+            String decoded = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
+            String[] values = decoded.split("\\|", 2);
+            return new CursorValue(Instant.parse(values[0]), Long.parseLong(values[1]));
+        } catch (RuntimeException ex) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "分页游标无效");
+        }
+    }
+
+    private String encodeCursor(Instant createdAt, Long id) {
+        return Base64.getUrlEncoder().withoutPadding()
+                .encodeToString((createdAt + "|" + id).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private record CursorValue(Instant createdAt, Long id) {
+    }
+
+    public List<io.github.devcircle.content.api.SubmissionView> listSubmissions(Long userId, int size) {
+        return jdbcClient.sql("""
+                        SELECT id, title, status, updated_at, review_reason FROM post
+                        WHERE author_id = :userId
+                        ORDER BY updated_at DESC LIMIT :size
+                        """)
+                .param("userId", userId).param("size", Math.max(1, Math.min(size, 50)))
+                .query((rs, rowNum) -> new io.github.devcircle.content.api.SubmissionView(
+                        rs.getLong("id"), rs.getString("title"), rs.getString("status"),
+                        rs.getTimestamp("updated_at").toInstant(), rs.getString("review_reason")))
+                .list();
     }
 
     public List<PostSummary> related(Long id, int size) {
@@ -485,7 +682,7 @@ public class PostRepository {
     private JdbcClient.StatementSpec draftQuery(String whereClause) {
         return jdbcClient.sql("""
                         SELECT p.id, p.author_id, p.title, p.type, p.theme, p.content_kind, p.difficulty,
-                               p.solvable, p.status, p.version, p.last_saved_at, p.submitted_at,
+                               p.solvable, p.status, p.version, p.last_saved_at, p.submitted_at, p.review_reason,
                                pc.markdown, pc.clues, pc.suspects, pc.timeline, pc.question,
                                pc.answer_keywords, pc.solution,
                                GROUP_CONCAT(DISTINCT t.name ORDER BY t.name SEPARATOR ',') AS tags,
@@ -497,7 +694,7 @@ public class PostRepository {
                         LEFT JOIN post_media pm ON pm.post_id = p.id
                         """ + whereClause + """
                         GROUP BY p.id, p.author_id, p.title, p.type, p.theme, p.content_kind, p.difficulty,
-                                 p.solvable, p.status, p.version, p.last_saved_at, p.submitted_at,
+                                 p.solvable, p.status, p.version, p.last_saved_at, p.submitted_at, p.review_reason,
                                  pc.markdown, pc.clues, pc.suspects, pc.timeline, pc.question,
                                  pc.answer_keywords, pc.solution
                         ORDER BY COALESCE(p.last_saved_at, p.updated_at) DESC
@@ -527,8 +724,24 @@ public class PostRepository {
                 rs.getString("status"),
                 rs.getLong("version"),
                 rs.getTimestamp("last_saved_at") == null ? null : rs.getTimestamp("last_saved_at").toInstant(),
-                rs.getTimestamp("submitted_at") == null ? null : rs.getTimestamp("submitted_at").toInstant()
+                rs.getTimestamp("submitted_at") == null ? null : rs.getTimestamp("submitted_at").toInstant(),
+                rs.getString("review_reason")
         );
+    }
+
+    public List<io.github.devcircle.content.api.PostAuditView> listAudits(Long authorId, Long postId) {
+        Integer owned = jdbcClient.sql("SELECT COUNT(*) FROM post WHERE id = :postId AND author_id = :authorId")
+                .param("postId", postId).param("authorId", authorId).query(Integer.class).single();
+        if (owned == null || owned == 0) throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "投稿不存在");
+        return jdbcClient.sql("""
+                        SELECT id, post_id, auditor_id, action, reason, created_at
+                        FROM post_audit_record WHERE post_id = :postId ORDER BY created_at ASC, id ASC
+                        """)
+                .param("postId", postId)
+                .query((rs, rowNum) -> new io.github.devcircle.content.api.PostAuditView(
+                        rs.getLong("id"), rs.getLong("post_id"), (Long) rs.getObject("auditor_id"),
+                        rs.getString("action"), rs.getString("reason"), rs.getTimestamp("created_at").toInstant()))
+                .list();
     }
 
     private void insertDraftContent(Long draftId, SaveDraftRequest request) {
@@ -684,6 +897,62 @@ public class PostRepository {
                         rs.getString("status")
                 ))
                 .list();
+    }
+
+    private List<io.github.devcircle.content.api.PostMediaView> publicMediaAssets(Long postId) {
+        return jdbcClient.sql("""
+                        SELECT m.id, m.object_key, m.url, m.content_type, m.size_bytes,
+                               m.width, m.height, m.duration_seconds, m.status,
+                               pm.role, pm.alt_text, pm.sort_order
+                        FROM post_media pm
+                        JOIN media_asset m ON m.id = pm.media_id
+                        WHERE pm.post_id = :postId AND m.status = 'APPROVED'
+                        ORDER BY pm.sort_order, m.id
+                        """)
+                .param("postId", postId)
+                .query((rs, rowNum) -> new io.github.devcircle.content.api.PostMediaView(
+                        rs.getLong("id"), rs.getString("object_key"), rs.getString("url"),
+                        rs.getString("content_type"), rs.getLong("size_bytes"),
+                        (Integer) rs.getObject("width"), (Integer) rs.getObject("height"),
+                        (Integer) rs.getObject("duration_seconds"), rs.getString("status"),
+                        rs.getString("role"), rs.getString("alt_text"), rs.getInt("sort_order")
+                ))
+                .list();
+    }
+
+    private DeductionSnapshot deductionSnapshot(Long userId, Long postId) {
+        if (userId == null || userId <= 0) {
+            return DeductionSnapshot.empty();
+        }
+        return jdbcClient.sql("""
+                        SELECT correct, revealed, points FROM deduction_attempt
+                        WHERE user_id = :userId AND post_id = :postId
+                        """)
+                .param("userId", userId).param("postId", postId)
+                .query((rs, rowNum) -> new DeductionSnapshot(true, rs.getBoolean("correct"),
+                        rs.getBoolean("revealed"), rs.getInt("points")))
+                .optional().orElse(DeductionSnapshot.empty());
+    }
+
+    private int readingProgress(Long userId, Long postId) {
+        if (userId == null || userId <= 0) {
+            return 0;
+        }
+        return jdbcClient.sql("""
+                        SELECT progress_percent FROM reading_progress
+                        WHERE user_id = :userId AND post_id = :postId
+                        """)
+                .param("userId", userId).param("postId", postId)
+                .query(Integer.class).optional().orElse(0);
+    }
+
+    private record DeductionSnapshot(boolean attempted, boolean solved, boolean revealed, int points) {
+        static DeductionSnapshot empty() {
+            return new DeductionSnapshot(false, false, false, 0);
+        }
+    }
+
+    private record ProgressIdempotency(Long userId, Long postId) {
     }
 
     private String normalizeType(String type) {

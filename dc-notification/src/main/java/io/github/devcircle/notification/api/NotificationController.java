@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
 import java.util.Map;
@@ -25,8 +26,19 @@ class NotificationController {
     }
 
     @GetMapping
-    ApiResponse<List<NotificationView>> list(@RequestHeader("X-User-Id") Long userId) {
-        return ApiResponse.ok(notificationRepository.list(userId));
+    ApiResponse<List<NotificationView>> list(@RequestHeader("X-User-Id") Long userId,
+                                             @RequestParam(required = false) String type,
+                                             @RequestParam(required = false) Long cursor,
+                                             @RequestParam(defaultValue = "20") int size) {
+        List<NotificationView> items = notificationRepository.list(userId, type, cursor, size);
+        Long next = items.isEmpty() ? null : items.getLast().id();
+        return ApiResponse.ok(items, Map.of("nextCursor", next == null ? "" : next.toString(),
+                "hasMore", items.size() == Math.max(1, Math.min(size, 50))));
+    }
+
+    @GetMapping("/unread-count")
+    ApiResponse<Long> unreadCount(@RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(notificationRepository.unreadCount(userId));
     }
 
     @PostMapping("/{id}/read")
@@ -38,5 +50,14 @@ class NotificationController {
         }
         boolean changed = notificationRepository.markRead(userId, id, idempotencyKey);
         return ApiResponse.ok(Map.of("notificationId", id, "read", true, "duplicateRequest", !changed));
+    }
+
+    @PostMapping("/read-all")
+    ApiResponse<Map<String, Object>> markAllRead(@RequestHeader("X-User-Id") Long userId,
+                                                 @RequestHeader("Idempotency-Key") String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > 128) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "写操作必须提供有效的 Idempotency-Key");
+        }
+        return ApiResponse.ok(Map.of("updated", notificationRepository.markAllRead(userId, idempotencyKey)));
     }
 }

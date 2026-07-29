@@ -24,6 +24,7 @@ public record DraftView(
         String status,
         long version,
         Instant lastSavedAt,
-        Instant submittedAt
+        Instant submittedAt,
+        String reviewReason
 ) {
 }

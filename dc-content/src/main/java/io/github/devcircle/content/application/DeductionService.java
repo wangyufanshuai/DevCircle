@@ -1,9 +1,9 @@
 package io.github.devcircle.content.application;
 
-import io.github.devcircle.common.seed.ThemeContentLibrary;
+import io.github.devcircle.common.error.BusinessException;
+import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.content.api.DeductionAnswerResult;
 import io.github.devcircle.content.api.LeaderboardEntry;
-import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -25,129 +25,152 @@ public class DeductionService {
     }
 
     @Transactional
-    public DeductionAnswerResult submitAnswer(Long userId, Long postId, String answer) {
+    public DeductionAnswerResult submitAnswer(Long userId, Long postId, String answer, String idempotencyKey) {
+        requireRequest(userId, idempotencyKey);
+        if (!claim(userId, postId, "ANSWER", idempotencyKey)) {
+            return existingAttempt(userId, postId, true);
+        }
         boolean correct = isCorrect(postId, answer);
         int points = correct ? 20 : 0;
         try {
             jdbcClient.sql("""
-                            INSERT INTO deduction_attempt(post_id, user_id, answer, correct, points)
-                            VALUES (:postId, :userId, :answer, :correct, :points)
+                            INSERT INTO deduction_attempt(post_id, user_id, answer, correct, revealed, points)
+                            VALUES (:postId, :userId, :answer, :correct, FALSE, :points)
                             """)
-                    .param("postId", postId)
-                    .param("userId", userId)
-                    .param("answer", answer)
-                    .param("correct", correct)
-                    .param("points", points)
-                    .update();
+                    .param("postId", postId).param("userId", userId).param("answer", answer)
+                    .param("correct", correct).param("points", points).update();
             if (correct) {
                 jdbcClient.sql("UPDATE post SET solved_count = solved_count + 1 WHERE id = :postId")
-                        .param("postId", postId)
-                        .update();
+                        .param("postId", postId).update();
                 jdbcClient.sql("""
                                 INSERT INTO deduction_score(user_id, username, correct_count, total_points)
                                 VALUES (:userId, :username, 1, :points)
-                                ON DUPLICATE KEY UPDATE correct_count = correct_count + 1, total_points = total_points + :points
+                                ON DUPLICATE KEY UPDATE correct_count = correct_count + 1,
+                                                        total_points = total_points + :points
                                 """)
-                        .param("userId", userId)
-                        .param("username", "user-" + userId)
-                        .param("points", points)
-                        .update();
+                        .param("userId", userId).param("username", "user-" + userId)
+                        .param("points", points).update();
             }
-            return new DeductionAnswerResult(postId, userId, correct, false, points, explanation(postId, correct));
+            return result(postId, userId, correct, false, false, points);
         } catch (DuplicateKeyException ex) {
-            return existingAttempt(userId, postId);
-        } catch (DataAccessException ex) {
-            return new DeductionAnswerResult(postId, userId, correct, false, points, explanation(postId, correct));
+            return existingAttempt(userId, postId, true);
         }
+    }
+
+    @Transactional
+    public DeductionAnswerResult reveal(Long userId, Long postId, String idempotencyKey) {
+        requireRequest(userId, idempotencyKey);
+        if (!claim(userId, postId, "REVEAL", idempotencyKey)) {
+            return existingAttempt(userId, postId, true);
+        }
+        int updated = jdbcClient.sql("""
+                        UPDATE deduction_attempt SET revealed = TRUE, points = 0, revealed_at = CURRENT_TIMESTAMP
+                        WHERE user_id = :userId AND post_id = :postId AND correct = FALSE
+                        """)
+                .param("userId", userId).param("postId", postId).update();
+        if (updated == 0) {
+            try {
+                jdbcClient.sql("""
+                                INSERT INTO deduction_attempt(post_id, user_id, answer, correct, revealed, points, revealed_at)
+                                VALUES (:postId, :userId, '[REVEALED]', FALSE, TRUE, 0, CURRENT_TIMESTAMP)
+                                """)
+                        .param("postId", postId).param("userId", userId).update();
+            } catch (DuplicateKeyException ignored) {
+                // A concurrent answer won the unique constraint. Return its persisted state.
+            }
+        }
+        return existingAttempt(userId, postId, false);
     }
 
     public DeductionAnswerResult myAttempt(Long userId, Long postId) {
-        try {
-            return existingAttempt(userId, postId);
-        } catch (DataAccessException ex) {
-            return new DeductionAnswerResult(postId, userId, false, false, 0, "还没有提交推理答案。");
+        Integer count = jdbcClient.sql("""
+                        SELECT COUNT(*) FROM deduction_attempt WHERE user_id = :userId AND post_id = :postId
+                        """)
+                .param("userId", userId).param("postId", postId).query(Integer.class).single();
+        if (count == null || count == 0) {
+            return new DeductionAnswerResult(postId, userId, false, false, false, false,
+                    0, "还没有提交推理答案。", null);
         }
+        return existingAttempt(userId, postId, false);
     }
 
     public List<LeaderboardEntry> leaderboard() {
-        try {
-            return jdbcClient.sql("""
-                            SELECT user_id, username, correct_count, total_points
-                            FROM deduction_score
-                            ORDER BY total_points DESC, correct_count DESC, updated_at ASC
-                            LIMIT 20
-                            """)
-                    .query((rs, rowNum) -> new LeaderboardEntry(
-                            rs.getLong("user_id"),
-                            rs.getString("username"),
-                            rs.getLong("correct_count"),
-                            rs.getLong("total_points")
-                    ))
-                    .list();
-        } catch (DataAccessException ex) {
-            return List.of(
-                    new LeaderboardEntry(7L, "林墨", 39, 780),
-                    new LeaderboardEntry(12L, "顾白", 34, 680),
-                    new LeaderboardEntry(18L, "沈屿", 28, 560)
-            );
-        }
+        return jdbcClient.sql("""
+                        SELECT user_id, username, correct_count, total_points
+                        FROM deduction_score
+                        ORDER BY total_points DESC, correct_count DESC, updated_at ASC
+                        LIMIT 20
+                        """)
+                .query((rs, rowNum) -> new LeaderboardEntry(rs.getLong("user_id"), rs.getString("username"),
+                        rs.getLong("correct_count"), rs.getLong("total_points")))
+                .list();
     }
 
-    private DeductionAnswerResult existingAttempt(Long userId, Long postId) {
+    private DeductionAnswerResult existingAttempt(Long userId, Long postId, boolean duplicated) {
         return jdbcClient.sql("""
-                        SELECT correct, points
-                        FROM deduction_attempt
+                        SELECT correct, revealed, points FROM deduction_attempt
                         WHERE user_id = :userId AND post_id = :postId
                         """)
-                .param("userId", userId)
-                .param("postId", postId)
-                .query((rs, rowNum) -> new DeductionAnswerResult(
-                        postId,
-                        userId,
-                        rs.getBoolean("correct"),
-                        true,
-                        rs.getInt("points"),
-                        "你已经提交过答案，积分不会重复增加。"
-                ))
+                .param("userId", userId).param("postId", postId)
+                .query((rs, rowNum) -> result(postId, userId, rs.getBoolean("correct"), duplicated,
+                        rs.getBoolean("revealed"), rs.getInt("points")))
                 .single();
     }
 
-    private boolean isCorrect(Long postId, String answer) {
-        if (answer == null || answer.isBlank()) {
-            return false;
+    private DeductionAnswerResult result(Long postId, Long userId, boolean correct, boolean duplicated,
+                                         boolean revealed, int points) {
+        boolean unlocked = correct || revealed;
+        String message = duplicated ? "该请求已经处理，积分不会重复增加。" : explanation(postId, correct, revealed);
+        return new DeductionAnswerResult(postId, userId, correct, duplicated, revealed, unlocked, points,
+                message, unlocked ? solution(postId) : null);
+    }
+
+    private boolean claim(Long userId, Long postId, String operation, String key) {
+        int inserted = jdbcClient.sql("""
+                        INSERT IGNORE INTO deduction_idempotency(idempotency_key, user_id, post_id, operation)
+                        VALUES (:key, :userId, :postId, :operation)
+                        """)
+                .param("key", key).param("userId", userId).param("postId", postId)
+                .param("operation", operation).update();
+        if (inserted == 1) return true;
+        Idempotency existing = jdbcClient.sql("""
+                        SELECT user_id, post_id, operation FROM deduction_idempotency WHERE idempotency_key = :key
+                        """)
+                .param("key", key)
+                .query((rs, rowNum) -> new Idempotency(rs.getLong("user_id"), rs.getLong("post_id"),
+                        rs.getString("operation"))).single();
+        if (!existing.userId().equals(userId) || !existing.postId().equals(postId)
+                || !existing.operation().equals(operation)) {
+            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已用于其他解谜请求");
         }
+        return false;
+    }
+
+    private void requireRequest(Long userId, String key) {
+        if (userId == null || userId <= 0) throw new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录");
+        if (key == null || key.isBlank() || key.length() > 128) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "写操作必须提供有效的 Idempotency-Key");
+        }
+    }
+
+    private boolean isCorrect(Long postId, String answer) {
+        if (answer == null || answer.isBlank()) return false;
         String normalizedAnswer = normalize(answer);
         List<String> keywords = answerKeywords(postId);
-        if (keywords.isEmpty()) {
-            keywords = ThemeContentLibrary.find(postId)
-                    .map(seed -> ThemeContentLibrary.keywordsFromSeed(seed))
-                    .orElse(List.of("夹层", "钟楼", "时间差"));
-        }
         Set<String> normalizedKeywords = expandKeywords(keywords);
         long hits = normalizedKeywords.stream().filter(normalizedAnswer::contains).count();
-        boolean decisiveHit = normalizedKeywords.stream()
-                .filter(keyword -> keyword.length() >= 2)
+        boolean decisiveHit = normalizedKeywords.stream().filter(keyword -> keyword.length() >= 2)
                 .anyMatch(keyword -> normalizedAnswer.contains(keyword) && decisiveKeywords().contains(keyword));
         int requiredHits = Math.min(2, Math.max(1, normalizedKeywords.size()));
         return decisiveHit || hits >= requiredHits;
     }
 
     private List<String> answerKeywords(Long postId) {
-        try {
-            String json = jdbcClient.sql("SELECT answer_keywords FROM post_content WHERE post_id = :postId")
-                    .param("postId", postId)
-                    .query(String.class)
-                    .single();
-            if (json == null || json.isBlank()) {
-                return List.of();
-            }
-            return Arrays.stream(json.replace("[", "").replace("]", "").replace("\"", "").split(","))
-                    .map(String::trim)
-                    .filter(value -> !value.isBlank())
-                    .toList();
-        } catch (DataAccessException ex) {
-            return List.of();
-        }
+        String json = jdbcClient.sql("SELECT answer_keywords FROM post_content WHERE post_id = :postId")
+                .param("postId", postId).query(String.class).single();
+        if (json == null || json.isBlank()) return List.of();
+        return Arrays.stream(json.replace("[", "").replace("]", "").replace("\"", "").split(","))
+                .map(String::trim).filter(value -> !value.isBlank()).toList();
     }
 
     private Set<String> expandKeywords(List<String> keywords) {
@@ -179,25 +202,27 @@ public class DeductionService {
     }
 
     private Set<String> decisiveKeywords() {
-        return Set.of(
-                "夹层", "夹层藏身", "暗层", "钟楼夹层", "钟楼暗层",
-                "调换时钟", "伪造时间", "伪造脚印", "镜面反射", "潮汐延迟",
-                "证词串供", "密码替换", "灯塔盲区", "列车换厢", "档案重排"
-        );
+        return Set.of("夹层", "夹层藏身", "暗层", "钟楼夹层", "钟楼暗层", "调换时钟", "伪造时间",
+                "伪造脚印", "镜面反射", "潮汐延迟", "证词串供", "密码替换", "灯塔盲区", "列车换厢", "档案重排");
     }
 
     private String normalize(String value) {
-        return Normalizer.normalize(value, Normalizer.Form.NFKC)
-                .toLowerCase(Locale.ROOT)
+        return Normalizer.normalize(value, Normalizer.Form.NFKC).toLowerCase(Locale.ROOT)
                 .replaceAll("[\\s\\p{Punct}\\p{P}]", "");
     }
 
-    private String explanation(Long postId, boolean correct) {
-        if (correct) {
-            return ThemeContentLibrary.find(postId).map(seed -> seed.explanation().isBlank()
-                    ? "推理成立，关键线索已经闭合。"
-                    : seed.explanation()).orElse("推理成立，关键线索已经闭合。");
-        }
-        return "线索还没有闭合。建议重新检查时间线空档、证词避开的地点和物证记录之间的矛盾。";
+    private String explanation(Long postId, boolean correct, boolean revealed) {
+        if (revealed) return "答案已经揭示，本题不会再获得积分。";
+        return correct ? "推理成立，关键线索已经闭合。"
+                : "线索还没有闭合。建议重新检查时间线空档、证词避开的地点和物证记录之间的矛盾。";
+    }
+
+    private String solution(Long postId) {
+        String value = jdbcClient.sql("SELECT solution FROM post_content WHERE post_id = :postId")
+                .param("postId", postId).query(String.class).optional().orElse("");
+        return value == null ? "" : value;
+    }
+
+    private record Idempotency(Long userId, Long postId, String operation) {
     }
 }

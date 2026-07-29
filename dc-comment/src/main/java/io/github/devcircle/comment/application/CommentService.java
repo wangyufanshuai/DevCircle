@@ -1,6 +1,7 @@
 package io.github.devcircle.comment.application;
 
 import io.github.devcircle.comment.api.CommentView;
+import io.github.devcircle.comment.api.CommentThreadView;
 import io.github.devcircle.comment.api.CreateCommentRequest;
 import io.github.devcircle.comment.infrastructure.CommentRepository;
 import io.github.devcircle.common.error.BusinessException;
@@ -19,6 +20,10 @@ public class CommentService {
 
     public List<CommentView> list(Long postId, Long beforeId, int size) {
         return repository.list(postId, beforeId, size);
+    }
+
+    public List<CommentThreadView> listThreads(Long postId, Long cursor, int size) {
+        return repository.listThreads(postId, cursor, Math.max(1, Math.min(size, 50)));
     }
 
     public CommentView create(Long userId, String idempotencyKey, CreateCommentRequest request) {
