@@ -11,13 +11,15 @@ export default defineConfig({
     trace: 'on-first-retry'
   },
   webServer: {
-    command: `npm run dev -- --port ${port} --strictPort`,
+    command: `npx vite --host 127.0.0.1 --port ${port} --strictPort`,
     url: baseURL,
     reuseExistingServer: true,
     timeout: 60_000
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 1000 } } },
-    { name: 'mobile', use: { ...devices['Pixel 5'], viewport: { width: 390, height: 844 } } }
+    { name: 'chromium', use: { ...devices['Desktop Chrome'], channel: 'chromium', viewport: { width: 1440, height: 1000 } } },
+    { name: 'laptop', use: { ...devices['Desktop Chrome'], channel: 'chromium', viewport: { width: 1024, height: 900 } } },
+    { name: 'tablet', use: { ...devices['Desktop Chrome'], channel: 'chromium', viewport: { width: 768, height: 1024 } } },
+    { name: 'mobile', use: { ...devices['Pixel 5'], channel: 'chromium', viewport: { width: 390, height: 844 } } }
   ]
 })

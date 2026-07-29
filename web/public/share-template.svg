@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">MysticVerse 分享图模板</title>
+  <desc id="desc">深色星际观测站背景，左侧预留标题安全区，右侧为金色观测环。</desc>
+  <defs>
+    <radialGradient id="glow" cx="78%" cy="42%" r="55%"><stop offset="0" stop-color="#173746"/><stop offset=".48" stop-color="#09131d"/><stop offset="1" stop-color="#05090f"/></radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f4cf7d"/><stop offset="1" stop-color="#9f7431"/></linearGradient>
+    <pattern id="stars" width="86" height="86" patternUnits="userSpaceOnUse"><circle cx="12" cy="20" r="1" fill="#b9d8dc" opacity=".45"/><circle cx="70" cy="55" r="1.5" fill="#e2b75f" opacity=".35"/><circle cx="40" cy="8" r=".7" fill="#fff" opacity=".42"/></pattern>
+  </defs>
+  <rect width="1200" height="630" fill="url(#glow)"/><rect width="1200" height="630" fill="url(#stars)"/>
+  <path d="M836 74a240 240 0 1 0 0 480 240 240 0 1 0 0-480Zm0 38a202 202 0 1 1 0 404 202 202 0 1 1 0-404Z" fill="none" stroke="url(#gold)" stroke-width="2" opacity=".62"/>
+  <ellipse cx="836" cy="314" rx="268" ry="92" fill="none" stroke="#65c9d0" stroke-width="1.5" opacity=".42" transform="rotate(-18 836 314)"/>
+  <circle cx="836" cy="314" r="58" fill="#0a1822" stroke="#e2b75f" stroke-width="2"/><circle cx="836" cy="314" r="12" fill="#e2b75f" opacity=".9"/>
+  <path d="M72 72h520M72 558h650" stroke="#e2b75f" stroke-width="1" opacity=".35"/>
+  <text x="72" y="118" fill="#e2b75f" font-family="Georgia,serif" font-size="22" letter-spacing="5">MYSTICVERSE / OBSERVATORY</text>
+  <rect x="72" y="168" width="610" height="270" fill="none" stroke="#65c9d0" stroke-width="1" stroke-dasharray="6 10" opacity=".24"/>
+  <text x="72" y="526" fill="#929dab" font-family="sans-serif" font-size="18">1200 × 630 · 标题安全区</text>
+</svg>

@@ -1,0 +1,12 @@
+{
+  "direction": "星际观测站",
+  "heroes": ["hero-deduction", "hero-scifi", "hero-cosmos"],
+  "coverSeries": {
+    "deduction": { "count": 4, "alt": "雨夜观测站内的案件证物与黄铜仪器" },
+    "scifi": { "count": 4, "alt": "轨道温室实验舱与远方蓝色行星" },
+    "cosmos": { "count": 4, "alt": "雪山观测站、星空与黄铜星盘" }
+  },
+  "shareTemplate": "/share-template.svg",
+  "formats": ["avif", "webp"],
+  "titleSafeArea": "left 52%"
+}
