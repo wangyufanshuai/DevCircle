@@ -13,7 +13,9 @@ class InteractionServiceTest {
     void repeatedIdempotencyKeyDoesNotCreateSecondOperation() {
         InteractionRepository repository = mock(InteractionRepository.class);
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
-        when(repository.insertLike(1L, 1001L)).thenReturn(true);
+        when(repository.insertLike(1L, 1001L, "like-1001-user-1"))
+                .thenReturn(new InteractionRepository.InteractionWriteResult(true, false))
+                .thenReturn(new InteractionRepository.InteractionWriteResult(false, true));
         InteractionService service = new InteractionService(repository, redisTemplate);
 
         var first = service.like(1L, 1001L, "like-1001-user-1");

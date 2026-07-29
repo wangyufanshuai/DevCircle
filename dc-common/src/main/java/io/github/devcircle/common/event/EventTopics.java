@@ -2,6 +2,7 @@ package io.github.devcircle.common.event;
 
 public final class EventTopics {
     public static final String POST_CREATED = "post.created";
+    public static final String POST_SUBMITTED = "post.submitted";
     public static final String POST_UPDATED = "post.updated";
     public static final String POST_DELETED = "post.deleted";
     public static final String COMMENT_CREATED = "comment.created";

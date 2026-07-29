@@ -24,11 +24,17 @@ public class PostSearchDocument {
     private String status;
     @Field(type = FieldType.Date)
     private Instant createdAt;
+    @Field(type = FieldType.Date)
+    private Instant eventOccurredAt;
 
     public PostSearchDocument() {
     }
 
     public PostSearchDocument(Long id, String title, String excerpt, String author, List<String> tags, String status, Instant createdAt) {
+        this(id, title, excerpt, author, tags, status, createdAt, createdAt);
+    }
+
+    public PostSearchDocument(Long id, String title, String excerpt, String author, List<String> tags, String status, Instant createdAt, Instant eventOccurredAt) {
         this.id = id;
         this.title = title;
         this.excerpt = excerpt;
@@ -36,6 +42,7 @@ public class PostSearchDocument {
         this.tags = tags;
         this.status = status;
         this.createdAt = createdAt;
+        this.eventOccurredAt = eventOccurredAt;
     }
 
     public Long getId() {
@@ -65,5 +72,8 @@ public class PostSearchDocument {
     public Instant getCreatedAt() {
         return createdAt;
     }
-}
 
+    public Instant getEventOccurredAt() {
+        return eventOccurredAt;
+    }
+}

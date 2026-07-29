@@ -1,0 +1,8 @@
+<script setup lang="ts">
+import { onMounted, ref } from 'vue'; import { Bell, Check } from 'lucide-vue-next'; import { fetchNotifications, markNotificationRead } from '../api/client'; import type { NotificationItem } from '../api/types'; import StatusPanel from '../components/StatusPanel.vue'
+const items = ref<NotificationItem[]>([]); const error = ref(''); const loading = ref(true)
+async function load() { loading.value = true; error.value = ''; try { items.value = await fetchNotifications() } catch (reason) { error.value = reason instanceof Error ? reason.message : '通知暂时不可用' } finally { loading.value = false } }
+async function mark(item: NotificationItem) { if (item.read) return; try { await markNotificationRead(item.id); item.read = true } catch (reason) { error.value = reason instanceof Error ? reason.message : '标记失败' } }
+onMounted(load)
+</script>
+<template><div class="page-stack narrow-page"><section class="page-intro"><span class="eyebrow">SIGNAL INBOX</span><h1>通知</h1><p>审核、互动和系统消息都汇集在这里。</p></section><StatusPanel v-if="error" title="通知暂时无法加载" :detail="error" action-label="重试" @retry="load" /><div v-else-if="loading" class="loading-line">正在接收信号…</div><section v-else-if="items.length" class="notification-list"><button v-for="item in items" :key="item.id" type="button" :class="['notification-row', { unread: !item.read }]" @click="mark(item)"><span class="notification-icon"><Bell v-if="!item.read" :size="17" /><Check v-else :size="17" /></span><span><strong>{{ item.title }}</strong><p>{{ item.content }}</p><small>{{ item.createdAt }}</small></span></button></section><section v-else class="empty-panel"><Bell :size="22" /><h2>收件箱很安静</h2><p>有新的审核或互动消息时，会在这里出现。</p></section></div></template>

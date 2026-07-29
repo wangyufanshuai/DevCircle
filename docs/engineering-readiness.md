@@ -54,22 +54,20 @@ Copy-Item .env.example .env
 
 v1.2 保留演示降级，但不静默隐藏错误：
 
-- 后端响应继续保留 `degraded` 和 `source`。
-- 前端统一触发 `devcircle-api-degraded` 事件。
-- 页面顶部展示接口名、降级来源和失败原因。
-- 管理端“工程状态”面板展示 Outbox backlog、推荐事件和降级概览。
+- 生产读写路径不返回 seed 或 mock 数据；依赖不可用时返回统一错误码和 `traceId`。
+- 页面只展示用户可理解的空状态和重试入口。
+- 管理端工程状态展示真实 Outbox backlog、推荐事件和依赖健康。
 
 常见来源：
 
 - `DB`: 真实数据库路径。
 - `ES`: Elasticsearch 搜索路径。
-- `SEED_FALLBACK`: 后端 seed 兜底。
-- `MOCK_FALLBACK`: 前端 mock 兜底。
+- `DB` / `ES`: 真实持久化与索引路径。
 
 ## 常见故障
 
 - Docker 不可用：运行 `scripts/dev/doctor.ps1`，确认 Docker Desktop 已启动。
 - Kafka topic 缺失：运行 `deploy/kafka/create-topics.ps1`。
 - 前端一直降级：检查 `VITE_API_BASE_URL` 是否指向 Gateway。
-- 管理端 403：确认使用 `Bearer demo-access-token-admin` 或真实 JWT 中包含 `ADMIN`。
+- 管理端 403：确认真实 JWT 中包含 `ADMIN`。
 - Outbox 积压：查看 `/api/admin/ops/outbox`，必要时调用 replay 接口。

@@ -31,8 +31,12 @@ public class FeedService {
     private final RestClient contentClient;
     private final List<PostSummary> seedPosts = ThemeContentLibrary.summaries();
 
+    @Value("${devcircle.recommend.read-fallback-enabled:false}")
+    private boolean readFallbackEnabled;
+
     public FeedService(RecommendationScorer scorer, LightweightMlRanker mlRanker, StringRedisTemplate redisTemplate) {
         this(scorer, mlRanker, redisTemplate, null, "http://localhost:8103");
+        this.readFallbackEnabled = true;
     }
 
     @Autowired
@@ -55,7 +59,7 @@ public class FeedService {
     public CursorPage<FeedItem> feed(Long userId, String cursor, int size, String scene) {
         CandidateSet candidates = loadCandidates(scene, Math.max(size * 4, 80));
         CursorPage<FeedItem> page = feedFromPosts(userId, candidates.posts(), cursor, size, scene, candidates.source(), candidates.degraded());
-        if (page.records().isEmpty() && !"SEED_FALLBACK".equals(candidates.source())) {
+        if (readFallbackEnabled && page.records().isEmpty() && !"SEED_FALLBACK".equals(candidates.source())) {
             return feedFromPosts(userId, seedPosts, cursor, size, scene, "SEED_FALLBACK", true);
         }
         return page;
@@ -96,9 +100,19 @@ public class FeedService {
     }
 
     public int recordExposure(ExposureRequest request) {
+        return recordExposure(request, "internal-" + UUID.randomUUID());
+    }
+
+    public int recordExposure(ExposureRequest request, String idempotencyKey) {
         if (request.postIds() == null || request.postIds().isEmpty()) {
             return 0;
         }
+        requireWrite(request.userId(), idempotencyKey);
+        if (impressionRepository == null) {
+            throw new io.github.devcircle.common.error.BusinessException(
+                    io.github.devcircle.common.error.ErrorCode.DEPENDENCY_UNAVAILABLE, "推荐数据服务暂时不可用");
+        }
+        int recorded = impressionRepository.saveExposure(request.userId(), request.postIds(), normalizeScene(request.scene()), idempotencyKey);
         try {
             String key = "user:" + request.userId() + ":exposed-posts";
             String[] ids = request.postIds().stream().map(String::valueOf).toArray(String[]::new);
@@ -106,17 +120,20 @@ public class FeedService {
             redisTemplate.expire(key, Duration.ofDays(7));
         } catch (RuntimeException ignored) {
         }
-        return request.postIds().size();
+        return recorded;
     }
 
     public Map<String, Object> recordRecommendEvent(Long userId, Long postId, String eventType, String scene, String experimentId, String bucket, String requestId) {
+        requireWrite(userId, requestId);
         String normalizedEvent = normalizeEventType(eventType);
         String normalizedScene = normalizeScene(scene);
         String finalExperimentId = experimentId == null || experimentId.isBlank() ? "exp-theme-feed-v1" : experimentId;
         String finalBucket = bucket == null || bucket.isBlank() ? "control" : bucket;
-        if (impressionRepository != null) {
-            impressionRepository.saveRecommendEvent(userId, postId, normalizedEvent, normalizedScene, finalExperimentId, finalBucket, requestId);
+        if (impressionRepository == null) {
+            throw new io.github.devcircle.common.error.BusinessException(
+                    io.github.devcircle.common.error.ErrorCode.DEPENDENCY_UNAVAILABLE, "推荐数据服务暂时不可用");
         }
+        impressionRepository.saveRecommendEvent(userId, postId, normalizedEvent, normalizedScene, finalExperimentId, finalBucket, requestId);
         try {
             redisTemplate.opsForHash().increment("recommend:event:" + normalizedScene, normalizedEvent, 1);
         } catch (RuntimeException ignored) {
@@ -148,26 +165,23 @@ public class FeedService {
                 return new CandidateSet(response.data().records(), "DB", false);
             }
         } catch (RuntimeException ignored) {
+            if (!readFallbackEnabled) {
+                throw ignored;
+            }
         }
-        return new CandidateSet(seedPosts, "SEED_FALLBACK", true);
+        return readFallbackEnabled
+                ? new CandidateSet(seedPosts, "SEED_FALLBACK", true)
+                : new CandidateSet(List.of(), "DB", false);
     }
 
     private FeedItem toFeedItem(Long userId, PostSummary post, Set<String> interests, Set<Long> exposed, String scene, ExperimentContext experiment) {
         double hotScore = hotScore(post.id());
         boolean followedAuthor = followedAuthor(userId, post.author());
         boolean alreadyExposed = exposed.contains(post.id());
-        long mutualFollowees = mutualFollowees(userId, post.author());
-        try {
-            var ranked = mlRanker.rank(post, interests, hotScore, followedAuthor, mutualFollowees, alreadyExposed, scene);
-            double themeBoost = post.theme().equalsIgnoreCase(sceneToTheme(scene)) ? 18 : 0;
-            double solveBoost = post.solvable() && post.solvedCount() > 20 ? 8 : 0;
-            return new FeedItem(post, reason(post, interests, hotScore, followedAuthor, mutualFollowees), ranked.score() + themeBoost + solveBoost,
-                    false, false, "THEME_LINEAR_MODEL", post.type(), ranked.features(), experiment.experimentId(), experiment.bucket(), recallSources(post, scene, interests, followedAuthor, hotScore));
-        } catch (RuntimeException ex) {
-            double score = scorer.score(post, interests, hotScore, followedAuthor, alreadyExposed);
-            return new FeedItem(post, scorer.reason(post, interests, hotScore, followedAuthor), score,
-                    false, false, "RULE_FALLBACK", post.type(), Map.of(), experiment.experimentId(), experiment.bucket(), recallSources(post, scene, interests, followedAuthor, hotScore));
-        }
+        RecommendationScorer.ScoreResult ranked = scorer.rank(post, interests, hotScore, followedAuthor, alreadyExposed);
+        return new FeedItem(post, ranked.reason(), ranked.score(), false, false, "EXPLAINABLE_RULE_V1",
+                post.type(), ranked.features(), experiment.experimentId(), experiment.bucket(),
+                recallSources(post, scene, interests, followedAuthor, hotScore));
     }
 
     private String reason(PostSummary post, Set<String> interests, double hotScore, boolean followedAuthor, long mutualFollowees) {
@@ -251,6 +265,7 @@ public class FeedService {
             if (values != null && !values.isEmpty()) return values;
         } catch (RuntimeException ignored) {
         }
+        if (!readFallbackEnabled) return Set.of();
         return Set.of("密室", "世界观", "星云");
     }
 
@@ -267,6 +282,7 @@ public class FeedService {
         try {
             return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember("user:" + userId + ":followees", author));
         } catch (RuntimeException ignored) {
+            if (!readFallbackEnabled) return false;
             return "林墨".equals(author) && userId == 1L;
         }
     }
@@ -295,6 +311,17 @@ public class FeedService {
             return Math.max(0, Integer.parseInt(cursor));
         } catch (NumberFormatException ex) {
             return 0;
+        }
+    }
+
+    private void requireWrite(Long userId, String idempotencyKey) {
+        if (userId == null || userId <= 0) {
+            throw new io.github.devcircle.common.error.BusinessException(
+                    io.github.devcircle.common.error.ErrorCode.UNAUTHORIZED, "请先登录");
+        }
+        if (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > 128) {
+            throw new io.github.devcircle.common.error.BusinessException(
+                    io.github.devcircle.common.error.ErrorCode.VALIDATION_FAILED, "写操作必须提供有效的 Idempotency-Key");
         }
     }
 

@@ -1,0 +1,21 @@
+{
+  "ci": {
+    "collect": {
+      "staticDistDir": "./web/dist",
+      "isSinglePageApplication": true,
+      "url": ["/", "/discover", "/posts/1001"],
+      "numberOfRuns": 2,
+      "settings": {
+        "chromeFlags": "--no-sandbox --headless"
+      }
+    },
+    "assert": {
+      "assertions": {
+        "categories:accessibility": ["error", { "minScore": 0.95 }],
+        "color-contrast": "error",
+        "document-title": "error",
+        "html-has-lang": "error"
+      }
+    }
+  }
+}

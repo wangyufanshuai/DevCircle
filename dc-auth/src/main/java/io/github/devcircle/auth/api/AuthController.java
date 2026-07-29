@@ -1,177 +1,182 @@
 package io.github.devcircle.auth.api;
 
-import io.github.devcircle.auth.application.AuthTokenRepository;
-import io.github.devcircle.auth.application.JwtService;
+import io.github.devcircle.auth.application.AuthService;
+import io.github.devcircle.auth.application.GitHubOAuthService;
 import io.github.devcircle.common.api.ApiResponse;
-import io.jsonwebtoken.Claims;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
-import org.springframework.beans.factory.annotation.Autowired;
+import jakarta.validation.constraints.Size;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
+import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.util.UriComponentsBuilder;
 
+import java.time.Duration;
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/auth")
 class AuthController {
-    private final JwtService jwtService;
-    private final String publicBaseUrl;
-    private final AuthTokenRepository tokenRepository;
+    static final String REFRESH_COOKIE = "dc_refresh";
+    static final String CSRF_COOKIE = "dc_csrf";
+    private final AuthService authService;
+    private final GitHubOAuthService gitHubOAuthService;
+    private final boolean secureCookies;
+    private final String frontendCallbackUri;
 
-    AuthController(JwtService jwtService,
-                   @Value("${devcircle.auth.public-base-url:http://localhost:8080}") String publicBaseUrl) {
-        this(jwtService, publicBaseUrl, null);
+    AuthController(AuthService authService,
+                   GitHubOAuthService gitHubOAuthService,
+                   @Value("${devcircle.auth.frontend-callback-uri:http://localhost:5501/auth/callback}") String frontendCallbackUri,
+                   @Value("${devcircle.auth.cookie-secure:false}") boolean secureCookies) {
+        this.authService = authService;
+        this.gitHubOAuthService = gitHubOAuthService;
+        this.frontendCallbackUri = frontendCallbackUri;
+        this.secureCookies = secureCookies;
     }
 
-    @Autowired
-    AuthController(JwtService jwtService,
-                   @Value("${devcircle.auth.public-base-url:http://localhost:8080}") String publicBaseUrl,
-                   AuthTokenRepository tokenRepository) {
-        this.jwtService = jwtService;
-        this.publicBaseUrl = publicBaseUrl;
-        this.tokenRepository = tokenRepository;
+    @PostMapping("/register")
+    ApiResponse<LoginResponse> register(@Valid @RequestBody RegisterRequest request,
+                                        HttpServletRequest servletRequest,
+                                        HttpServletResponse servletResponse) {
+        AuthService.SessionTokens tokens = authService.register(
+                request.email(), request.password(), request.displayName(), traceId(servletRequest));
+        writeSessionCookies(servletResponse, tokens);
+        return ApiResponse.ok(LoginResponse.from(tokens));
     }
 
     @PostMapping("/login")
     ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request,
-                                     @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-        var roles = "admin".equalsIgnoreCase(request.username()) ? List.of("USER", "ADMIN") : List.of("USER");
-        Long userId = "admin".equalsIgnoreCase(request.username()) ? 1L : 2L;
-        LoginResponse response = tokens(userId, request.username(), roles);
-        audit(userId, "LOGIN", "USER", String.valueOf(userId), traceId, Map.of("username", request.username()));
-        return ApiResponse.ok(response);
-    }
-
-    ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
-        return login(request, null);
+                                     HttpServletRequest servletRequest,
+                                     HttpServletResponse servletResponse) {
+        AuthService.SessionTokens tokens = authService.login(request.email(), request.password(), traceId(servletRequest));
+        writeSessionCookies(servletResponse, tokens);
+        return ApiResponse.ok(LoginResponse.from(tokens));
     }
 
     @PostMapping("/refresh")
-    ApiResponse<LoginResponse> refresh(@Valid @RequestBody RefreshRequest request,
-                                       @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-        if (tokenRepository != null && !tokenRepository.refreshTokenActive(request.refreshToken())) {
-            throw new IllegalArgumentException("Refresh token is revoked or expired");
-        }
-        Claims claims = jwtService.parse(request.refreshToken());
-        Long userId = Long.valueOf(claims.getSubject());
-        String roles = claims.get("roles", String.class);
-        LoginResponse response = tokens(userId, claims.get("username", String.class), Arrays.asList(roles.split(",")));
-        audit(userId, "REFRESH_TOKEN", "USER", String.valueOf(userId), traceId, Map.of());
-        return ApiResponse.ok(response);
-    }
-
-    ApiResponse<LoginResponse> refresh(@Valid @RequestBody RefreshRequest request) {
-        return refresh(request, null);
+    ApiResponse<LoginResponse> refresh(@CookieValue(value = REFRESH_COOKIE, required = false) String refreshToken,
+                                       @CookieValue(value = CSRF_COOKIE, required = false) String csrfCookie,
+                                       @RequestHeader(value = "X-CSRF-Token", required = false) String csrfHeader,
+                                       HttpServletRequest servletRequest,
+                                       HttpServletResponse servletResponse) {
+        requireMatchingCsrf(csrfCookie, csrfHeader);
+        AuthService.SessionTokens tokens = authService.refresh(refreshToken, csrfHeader, traceId(servletRequest));
+        writeSessionCookies(servletResponse, tokens);
+        return ApiResponse.ok(LoginResponse.from(tokens));
     }
 
     @PostMapping("/logout")
-    ApiResponse<Void> logout(@Valid @RequestBody RefreshRequest request,
-                             @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-        Claims claims = jwtService.parse(request.refreshToken());
-        if (tokenRepository != null) {
-            tokenRepository.revokeRefreshToken(request.refreshToken());
-        }
-        audit(Long.valueOf(claims.getSubject()), "LOGOUT", "USER", claims.getSubject(), traceId, Map.of());
+    ApiResponse<Void> logout(@CookieValue(value = REFRESH_COOKIE, required = false) String refreshToken,
+                             @CookieValue(value = CSRF_COOKIE, required = false) String csrfCookie,
+                             @RequestHeader(value = "X-CSRF-Token", required = false) String csrfHeader,
+                             HttpServletRequest servletRequest,
+                             HttpServletResponse servletResponse) {
+        requireMatchingCsrf(csrfCookie, csrfHeader);
+        authService.logout(refreshToken, csrfHeader, traceId(servletRequest));
+        clearSessionCookies(servletResponse);
         return ApiResponse.ok();
     }
 
     @GetMapping("/me")
     ApiResponse<UserSession> me(@RequestHeader(HttpHeaders.AUTHORIZATION) String authorization) {
-        Claims claims = jwtService.parse(authorization.replace("Bearer ", ""));
-        String roles = claims.get("roles", String.class);
-        return ApiResponse.ok(new UserSession(Long.valueOf(claims.getSubject()), claims.get("username", String.class), Arrays.asList(roles.split(","))));
+        AuthService.UserSession user = authService.parseAccessToken(authorization);
+        return ApiResponse.ok(new UserSession(user.userId(), user.displayName(), user.roles()));
     }
 
-    @GetMapping("/oauth2/providers")
-    ApiResponse<List<String>> providers() {
-        return ApiResponse.ok(List.of("github", "gitee"));
+    @GetMapping("/oauth2/github/start")
+    ApiResponse<OAuthStartResponse> startGitHubOAuth(HttpServletResponse response) {
+        GitHubOAuthService.OAuthStart start = gitHubOAuthService.start();
+        response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from("dc_oauth_state", start.state())
+                .httpOnly(true)
+                .secure(secureCookies)
+                .sameSite("Lax")
+                .path("/api/auth/oauth2/github")
+                .maxAge(Duration.ofMinutes(10))
+                .build().toString());
+        return ApiResponse.ok(new OAuthStartResponse(start.authorizationUrl()));
     }
 
-    @GetMapping("/oauth2/authorize/{provider}")
-    ApiResponse<OAuthAuthorizeResponse> authorize(@PathVariable String provider,
-                                                  @RequestParam(defaultValue = "devcircle-demo-state") String state) {
-        validateProvider(provider);
-        String redirectUri = publicBaseUrl + "/api/auth/oauth2/callback/" + provider;
-        String authorizationUrl = UriComponentsBuilder.fromUriString(providerAuthorizationEndpoint(provider))
-                .queryParam("client_id", "${" + provider.toUpperCase() + "_CLIENT_ID}")
-                .queryParam("redirect_uri", redirectUri)
-                .queryParam("state", state)
-                .queryParam("scope", "user:email")
-                .build()
-                .toUriString();
-        return ApiResponse.ok(new OAuthAuthorizeResponse(provider, authorizationUrl, state));
+    @GetMapping("/oauth2/github/callback")
+    void finishGitHubOAuth(@RequestParam String code,
+                           @RequestParam String state,
+                           @CookieValue(value = "dc_oauth_state", required = false) String stateCookie,
+                           HttpServletRequest request,
+                           HttpServletResponse response) throws java.io.IOException {
+        requireMatchingCsrf(stateCookie, state);
+        var account = gitHubOAuthService.callback(code, state);
+        AuthService.SessionTokens tokens = authService.oauthLogin(account, traceId(request));
+        writeSessionCookies(response, tokens);
+        response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from("dc_oauth_state", "")
+                .httpOnly(true).secure(secureCookies).sameSite("Lax")
+                .path("/api/auth/oauth2/github").maxAge(0).build().toString());
+        response.sendRedirect(frontendCallbackUri);
     }
 
-    @GetMapping("/oauth2/callback/{provider}")
-    ApiResponse<LoginResponse> callback(@PathVariable String provider,
-                                        @RequestParam(required = false) String code,
-                                        @RequestParam(defaultValue = "devcircle-demo-state") String state) {
-        validateProvider(provider);
-        String username = provider + "-user";
-        Long userId = provider.equals("github") ? 101L : 102L;
-        LoginResponse response = tokens(userId, username, List.of("USER"));
-        audit(userId, "OAUTH2_LOGIN", "OAUTH2_PROVIDER", provider, null, Map.of("state", state, "mockProfile", code == null || code.isBlank()));
-        return ApiResponse.ok(response);
-    }
-
-    private LoginResponse tokens(Long userId, String username, List<String> roles) {
-        Instant accessExpiresAt = Instant.now().plusSeconds(3600);
-        Instant refreshExpiresAt = Instant.now().plusSeconds(604800);
-        String accessToken = jwtService.issue(userId, username, roles, accessExpiresAt);
-        String refreshToken = jwtService.issue(userId, username, roles, refreshExpiresAt);
-        if (tokenRepository != null) {
-            tokenRepository.saveRefreshToken(userId, refreshToken, refreshExpiresAt);
-        }
-        return new LoginResponse(
-                accessToken,
-                refreshToken,
-                username,
-                roles,
-                accessExpiresAt
-        );
-    }
-
-    private void audit(Long userId, String action, String targetType, String targetId, String traceId, Map<String, Object> metadata) {
-        if (tokenRepository != null) {
-            tokenRepository.audit(userId, action, targetType, targetId, traceId, metadata);
+    private void requireMatchingCsrf(String cookie, String header) {
+        if (cookie == null || header == null || !java.security.MessageDigest.isEqual(
+                cookie.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                header.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
+            throw new io.github.devcircle.common.error.BusinessException(
+                    io.github.devcircle.common.error.ErrorCode.TOKEN_REVOKED, "CSRF 校验失败");
         }
     }
 
-    private void validateProvider(String provider) {
-        if (!Map.of("github", true, "gitee", true).containsKey(provider)) {
-            throw new IllegalArgumentException("Unsupported OAuth2 provider: " + provider);
+    private void writeSessionCookies(HttpServletResponse response, AuthService.SessionTokens tokens) {
+        long maxAge = Math.max(0, Duration.between(Instant.now(), tokens.refreshExpiresAt()).toSeconds());
+        response.addHeader(HttpHeaders.SET_COOKIE, cookie(REFRESH_COOKIE, tokens.refreshToken(), true, maxAge, "/api/auth").toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, cookie(CSRF_COOKIE, tokens.csrfToken(), false, maxAge, "/").toString());
+    }
+
+    private void clearSessionCookies(HttpServletResponse response) {
+        response.addHeader(HttpHeaders.SET_COOKIE, cookie(REFRESH_COOKIE, "", true, 0, "/api/auth").toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, cookie(CSRF_COOKIE, "", false, 0, "/").toString());
+    }
+
+    private ResponseCookie cookie(String name, String value, boolean httpOnly, long maxAge, String path) {
+        return ResponseCookie.from(name, value)
+                .httpOnly(httpOnly)
+                .secure(secureCookies)
+                .sameSite("Lax")
+                .path(path)
+                .maxAge(maxAge)
+                .build();
+    }
+
+    private String traceId(HttpServletRequest request) {
+        return request.getHeader("X-Trace-Id");
+    }
+
+    record RegisterRequest(@NotBlank @Email String email,
+                           @NotBlank @Size(min = 12, max = 128) String password,
+                           @NotBlank @Size(min = 2, max = 32) String displayName) {
+    }
+
+    record LoginRequest(@NotBlank @Email String email, @NotBlank String password) {
+    }
+
+    record LoginResponse(String accessToken, Instant expiresAt, UserSession user) {
+        static LoginResponse from(AuthService.SessionTokens tokens) {
+            AuthService.UserSession user = tokens.user();
+            return new LoginResponse(tokens.accessToken(), tokens.accessExpiresAt(),
+                    new UserSession(user.userId(), user.displayName(), user.roles()));
         }
     }
 
-    private String providerAuthorizationEndpoint(String provider) {
-        return "github".equals(provider) ? "https://github.com/login/oauth/authorize" : "https://gitee.com/oauth/authorize";
+    record UserSession(Long userId, String displayName, List<String> roles) {
     }
 
-    record LoginRequest(@NotBlank String username, @NotBlank String password) {
-    }
-
-    record RefreshRequest(@NotBlank String refreshToken) {
-    }
-
-    record LoginResponse(String accessToken, String refreshToken, String username, List<String> roles, Instant expiresAt) {
-    }
-
-    record UserSession(Long userId, String username, List<String> roles) {
-    }
-
-    record OAuthAuthorizeResponse(String provider, String authorizationUrl, String state) {
+    record OAuthStartResponse(String authorizationUrl) {
     }
 }

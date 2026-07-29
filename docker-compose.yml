@@ -16,7 +16,7 @@ x-service-env: &service-env
   OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
   OTEL_SERVICE_NAME: devcircle
   MANAGEMENT_TRACING_SAMPLING_PROBABILITY: 1.0
-  GATEWAY_DEMO_TOKEN_ENABLED: "true"
+  GATEWAY_DEMO_TOKEN_ENABLED: "false"
 
 x-service-build: &service-build
   context: .

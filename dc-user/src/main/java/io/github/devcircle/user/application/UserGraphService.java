@@ -2,11 +2,15 @@ package io.github.devcircle.user.application;
 
 import io.github.devcircle.user.api.FollowResult;
 import io.github.devcircle.user.api.UserRecommendation;
+import io.github.devcircle.common.error.BusinessException;
+import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.user.infrastructure.UserGraphRepository;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Optional;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class UserGraphService {
@@ -18,19 +22,30 @@ public class UserGraphService {
         this.redisTemplate = redisTemplate;
     }
 
-    public FollowResult follow(Long userId, Long targetUserId) {
+    @Transactional
+    public FollowResult follow(Long userId, Long targetUserId, String idempotencyKey) {
+        validate(userId, targetUserId, idempotencyKey);
+        if (!repository.claimOperation(userId, targetUserId, "FOLLOW", idempotencyKey)) {
+            return new FollowResult(targetUserId, repository.isFollowing(userId, targetUserId), true);
+        }
         boolean inserted = repository.follow(userId, targetUserId);
         cacheFollow(userId, targetUserId);
         return new FollowResult(targetUserId, true, !inserted);
     }
 
-    public FollowResult unfollow(Long userId, Long targetUserId) {
-        repository.unfollow(userId, targetUserId);
-        try {
-            redisTemplate.opsForSet().remove("user:" + userId + ":followees", targetUserId.toString());
-        } catch (RuntimeException ignored) {
+    @Transactional
+    public FollowResult unfollow(Long userId, Long targetUserId, String idempotencyKey) {
+        validate(userId, targetUserId, idempotencyKey);
+        if (!repository.claimOperation(userId, targetUserId, "UNFOLLOW", idempotencyKey)) {
+            return new FollowResult(targetUserId, repository.isFollowing(userId, targetUserId), true);
         }
+        repository.unfollow(userId, targetUserId);
+        redisTemplate.opsForSet().remove("user:" + userId + ":followees", targetUserId.toString());
         return new FollowResult(targetUserId, false, false);
+    }
+
+    public Optional<UserGraphRepository.UserProfile> profile(Long userId) {
+        return repository.profile(userId);
     }
 
     public List<Long> followees(Long userId) {
@@ -48,10 +63,16 @@ public class UserGraphService {
     }
 
     private void cacheFollow(Long userId, Long targetUserId) {
-        try {
-            redisTemplate.opsForSet().add("user:" + userId + ":followees", targetUserId.toString());
-            redisTemplate.opsForHash().put("user:" + userId + ":graph-features", "followee:" + targetUserId, "1");
-        } catch (RuntimeException ignored) {
+        redisTemplate.opsForSet().add("user:" + userId + ":followees", targetUserId.toString());
+        redisTemplate.opsForHash().put("user:" + userId + ":graph-features", "followee:" + targetUserId, "1");
+    }
+
+    private void validate(Long userId, Long targetUserId, String idempotencyKey) {
+        if (userId.equals(targetUserId)) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "不能关注自己");
+        }
+        if (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > 128) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "写操作必须提供有效的 Idempotency-Key");
         }
     }
 }

@@ -14,6 +14,9 @@
     <modules>
         <module>dc-common</module>
         <module>dc-gateway</module>
+        <module>dc-identity</module>
+        <module>dc-content-deployment</module>
+        <module>dc-discovery</module>
         <module>dc-auth</module>
         <module>dc-user</module>
         <module>dc-content</module>
@@ -36,6 +39,7 @@
         <jjwt.version>0.12.6</jjwt.version>
         <testcontainers.version>1.21.3</testcontainers.version>
         <testcontainers.core.version>2.0.5</testcontainers.core.version>
+        <jacoco.version>0.8.13</jacoco.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
@@ -147,4 +151,29 @@
             </plugins>
         </pluginManagement>
     </build>
+
+    <profiles>
+        <profile>
+            <id>coverage</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                        <version>${jacoco.version}</version>
+                        <executions>
+                            <execution>
+                                <goals><goal>prepare-agent</goal></goals>
+                            </execution>
+                            <execution>
+                                <id>report</id>
+                                <phase>verify</phase>
+                                <goals><goal>report</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

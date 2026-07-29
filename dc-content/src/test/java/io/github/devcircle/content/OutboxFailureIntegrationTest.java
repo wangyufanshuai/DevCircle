@@ -22,7 +22,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(properties = {
         "spring.kafka.bootstrap-servers=127.0.0.1:1",
         "spring.kafka.producer.properties.max.block.ms=1000",

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/wangyufanshuai/DevCircle/actions/workflows/ci.yml/badge.svg)](https://github.com/wangyufanshuai/DevCircle/actions/workflows/ci.yml)
 
-DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“推理馆、科幻馆、宇宙档案”的主题内容平台。v1.3 在工程化硬化基础上深度扩充推理馆，将推理内容库提升到 100 条，并恢复本地全量验收。
+DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“推理馆、科幻馆、宇宙档案”的读者与解谜玩家内容社区。
 
 ## 技术栈
 
@@ -16,7 +16,7 @@ DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“
 
 | 能力 | 状态 |
 | --- | --- |
-| 主题内容库 | 100 条推理、40 条科幻、40 条宇宙样例作为 seed，启动导入 MySQL，seed 只作为显式降级兜底 |
+| 主题内容库 | 100 条推理、40 条科幻、40 条宇宙内容作为首次初始化数据；生产读请求不使用 seed 降级 |
 | 推理馆 | 覆盖密室、时间线、证词矛盾、物证误导、密码谜题、航海、列车、剧院、档案室、冷案复盘 |
 | 内容闭环 | 发帖写 MySQL、标签、媒体、Outbox，审核前状态为 `PENDING` |
 | 内容治理 | 发帖生成审核任务，包含机审结果、风险等级、SLA、复审状态和人工决策 |
@@ -25,22 +25,25 @@ DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“
 | 工程启动 | `.env.example`、Windows dev scripts、Compose `infra/app/demo` profiles |
 | 运行韧性 | Graceful shutdown、Actuator probes、Gateway 请求日志、显式降级来源 |
 | 运维接口 | 系统健康、Outbox backlog、Outbox replay、推荐降级概览 |
-| 前端工程化 | API base URL、token localStorage、统一 request wrapper、全局降级状态条 |
+| 前端工程化 | Vue Router、内存 Access Token、HttpOnly Refresh Cookie、统一响应和幂等写请求 |
 | 可观测 | Prometheus alerts、Grafana dashboard、Jaeger OTLP endpoint |
 
 ## 模块
 
-- `dc-gateway`: 统一入口、TraceId、JWT/demo token 鉴权、角色拦截、用户上下文透传、请求日志。
-- `dc-auth`: 登录、刷新、退出、OAuth2 mock/真实 provider 配置入口、审计日志。
+- `dc-gateway`: 统一入口、TraceId、JWT 鉴权、角色拦截、限流、用户上下文透传、请求日志。
+- `dc-identity`: auth、user、interaction、notification 的兼容聚合部署门面。
+- `dc-content-deployment`: content、comment、file、moderation 的兼容聚合部署门面。
+- `dc-discovery`: search、recommend、experiment 的兼容聚合部署门面。
+- `dc-auth`: 邮箱密码登录、Refresh Token 轮换、GitHub OAuth、审计日志。
 - `dc-user`: 关注关系、共同关注、二跳推荐。
 - `dc-content`: 主题内容、详情、相关内容、推理解谜、审核状态、Outbox。
 - `dc-interaction`: 点赞、收藏、幂等写入、Redis 热度信号。
 - `dc-search`: Elasticsearch 索引、Kafka 内容事件同步、重建入口。
-- `dc-recommend`: 规则 fallback + 轻量线性模型、候选召回、曝光去重、推荐实验。
+- `dc-recommend`: 可解释固定权重规则、候选召回、曝光去重、推荐实验。
 - `dc-notification`: 站内通知、Kafka 消费、WebSocket 推送。
 - `dc-file`: MinIO 上传、媒体元数据、上传安全校验。
 - `dc-admin`: 内容治理、风险运营、推荐实验、审计日志、工程运维接口。
-- `web`: MysticVerse 前台演示和管理入口。
+- `web`: MysticVerse 路由化前台与独立运营入口。
 
 ## 本地启动
 
@@ -78,30 +81,15 @@ Copy-Item .env.example .env
 - Grafana：`http://localhost:13000`
 - Jaeger：`http://localhost:16686`
 
-## Demo 鉴权
+## 认证与前端配置
 
-开发演示默认允许 demo token：
-
-```http
-Authorization: Bearer demo-access-token-demo
-Authorization: Bearer demo-access-token-admin
-```
-
-准生产或生产部署应关闭 demo token：
-
-```bash
-GATEWAY_DEMO_TOKEN_ENABLED=false
-DEVCIRCLE_JWT_SECRET=<strong-random-secret>
-```
-
-前端通过这些变量配置 API 和演示模式：
+Demo Token、前端本地 Token 和 Mock fallback 已删除。使用邮箱密码注册/登录或 GitHub OAuth；Access Token 只驻留内存，Refresh Token 使用 Secure、HttpOnly Cookie。前端只需要配置 API 地址：
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
-VITE_DEMO_TOKEN=Bearer demo-access-token-demo
-VITE_DEMO_ADMIN_TOKEN=Bearer demo-access-token-admin
-VITE_ENABLE_DEMO_FALLBACK=true
 ```
+
+生产部署使用固定提交 SHA 与强随机密钥，详见 [生产运行手册](docs/production-runbook.md)。
 
 ## 本轮验证边界
 

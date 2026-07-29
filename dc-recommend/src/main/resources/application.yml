@@ -26,3 +26,6 @@ management:
 logging:
   pattern:
     level: "%5p traceId=%X{traceId:-} userId=%X{userId:-}"
+devcircle:
+  recommend:
+    read-fallback-enabled: ${DEVCIRCLE_READ_FALLBACK_ENABLED:false}

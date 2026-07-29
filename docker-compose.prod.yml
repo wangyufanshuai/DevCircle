@@ -1,0 +1,341 @@
+name: devcircle-prod
+
+x-app-env: &app-env
+  MYSQL_HOST: mysql
+  MYSQL_PORT: 3306
+  MYSQL_USER: ${MYSQL_USER:-devcircle}
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  ELASTICSEARCH_URIS: http://elasticsearch:9200
+  S3_ENDPOINT: http://minio:9000
+  S3_PRESIGN_ENDPOINT: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN is required}
+  S3_PUBLIC_BASE_URL: ${PUBLIC_ORIGIN}/devcircle
+  S3_BUCKET: devcircle
+  S3_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+  S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+  DEVCIRCLE_JWT_SECRET: ${DEVCIRCLE_JWT_SECRET:?DEVCIRCLE_JWT_SECRET is required}
+  DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
+  DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
+  GATEWAY_DEMO_TOKEN_ENABLED: "false"
+  AUTH_COOKIE_SECURE: "true"
+  AUTH_FRONTEND_CALLBACK_URI: ${PUBLIC_ORIGIN}/auth/callback
+  GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+  GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+  GITHUB_CALLBACK_URI: ${PUBLIC_ORIGIN}/api/auth/oauth2/github/callback
+  MANAGEMENT_TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLE_RATE:-0.1}
+
+x-app-defaults: &app-defaults
+  restart: unless-stopped
+  stop_grace_period: 40s
+  networks: [devcircle]
+  security_opt: [no-new-privileges:true]
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+services:
+  mysql:
+    image: mysql:8.4.6
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+      MYSQL_USER: ${MYSQL_USER:-devcircle}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - ./deploy/mysql/init:/docker-entrypoint-initdb.d:ro
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [devcircle]
+
+  redis:
+    image: redis:8.2.3-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a '$$REDIS_PASSWORD' ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    networks: [devcircle]
+
+  kafka:
+    image: apache/kafka:4.1.1
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    volumes: [kafka-data:/var/lib/kafka/data]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+    networks: [devcircle]
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.2.2
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+    volumes: [elasticsearch-data:/usr/share/elasticsearch/data]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+    networks: [devcircle]
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    volumes: [minio-data:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+    networks: [devcircle]
+
+  dc-auth:
+    <<: *app-defaults
+    image: ghcr.io/wangyufanshuai/devcircle/dc-auth:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    environment: *app-env
+    expose: ["8101"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8101/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
+
+  dc-user:
+    <<: *app-defaults
+    image: ghcr.io/wangyufanshuai/devcircle/dc-user:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    environment: *app-env
+    expose: ["8102"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8102/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
+
+  dc-content:
+    <<: *app-defaults
+    image: ghcr.io/wangyufanshuai/devcircle/dc-content:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    environment: *app-env
+    expose: ["8103"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8103/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
+
+  dc-comment:
+    <<: *app-defaults
+    image: ghcr.io/wangyufanshuai/devcircle/dc-comment:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    environment: *app-env
+    expose: ["8104"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8104/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
+
+  dc-interaction:
+    <<: *app-defaults
+    image: ghcr.io/wangyufanshuai/devcircle/dc-interaction:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    environment: *app-env
+    expose: ["8105"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8105/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
+
+  dc-search:
+    <<: *app-defaults
+    image: ghcr.io/wangyufanshuai/devcircle/dc-search:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    environment: *app-env
+    expose: ["8106"]
+    depends_on:
+      elasticsearch: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8106/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
+
+  dc-recommend:
+    <<: *app-defaults
+    image: ghcr.io/wangyufanshuai/devcircle/dc-recommend:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    environment: *app-env
+    expose: ["8107"]
+    depends_on:
+      redis: { condition: service_healthy }
+      dc-content: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8107/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
+
+  dc-notification:
+    <<: *app-defaults
+    image: ghcr.io/wangyufanshuai/devcircle/dc-notification:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    environment: *app-env
+    expose: ["8108"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8108/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
+
+  dc-file:
+    <<: *app-defaults
+    image: ghcr.io/wangyufanshuai/devcircle/dc-file:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    environment: *app-env
+    expose: ["8109"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8109/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
+
+  dc-admin:
+    <<: *app-defaults
+    image: ghcr.io/wangyufanshuai/devcircle/dc-admin:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    environment: *app-env
+    expose: ["8110"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8110/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
+
+  dc-identity:
+    <<: *app-defaults
+    image: ghcr.io/wangyufanshuai/devcircle/dc-identity:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    environment:
+      <<: *app-env
+      DC_AUTH_URI: http://dc-auth:8101
+      DC_USER_URI: http://dc-user:8102
+      DC_INTERACTION_URI: http://dc-interaction:8105
+      DC_NOTIFICATION_URI: http://dc-notification:8108
+    expose: ["8201"]
+    depends_on:
+      dc-auth: { condition: service_healthy }
+      dc-user: { condition: service_healthy }
+      dc-interaction: { condition: service_healthy }
+      dc-notification: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8201/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
+
+  dc-content-aggregate:
+    <<: *app-defaults
+    image: ghcr.io/wangyufanshuai/devcircle/dc-content-aggregate:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    environment:
+      <<: *app-env
+      DC_CONTENT_URI: http://dc-content:8103
+      DC_COMMENT_URI: http://dc-comment:8104
+      DC_FILE_URI: http://dc-file:8109
+      DC_ADMIN_URI: http://dc-admin:8110
+    expose: ["8202"]
+    depends_on:
+      dc-content: { condition: service_healthy }
+      dc-comment: { condition: service_healthy }
+      dc-file: { condition: service_healthy }
+      dc-admin: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8202/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
+
+  dc-discovery:
+    <<: *app-defaults
+    image: ghcr.io/wangyufanshuai/devcircle/dc-discovery:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    environment:
+      <<: *app-env
+      DC_SEARCH_URI: http://dc-search:8106
+      DC_RECOMMEND_URI: http://dc-recommend:8107
+    expose: ["8203"]
+    depends_on:
+      dc-search: { condition: service_healthy }
+      dc-recommend: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8203/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
+
+  dc-gateway:
+    <<: *app-defaults
+    image: ghcr.io/wangyufanshuai/devcircle/dc-gateway:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    environment:
+      <<: *app-env
+      SPRING_PROFILES_ACTIVE: aggregate
+      DC_IDENTITY_URI: http://dc-identity:8201
+      DC_CONTENT_AGGREGATE_URI: http://dc-content-aggregate:8202
+      DC_DISCOVERY_URI: http://dc-discovery:8203
+      DC_AUTH_URI: http://dc-auth:8101
+      DC_USER_URI: http://dc-user:8102
+      DC_CONTENT_URI: http://dc-content:8103
+      DC_COMMENT_URI: http://dc-comment:8104
+      DC_INTERACTION_URI: http://dc-interaction:8105
+      DC_SEARCH_URI: http://dc-search:8106
+      DC_RECOMMEND_URI: http://dc-recommend:8107
+      DC_NOTIFICATION_URI: http://dc-notification:8108
+      DC_FILE_URI: http://dc-file:8109
+      DC_ADMIN_URI: http://dc-admin:8110
+    ports: ["8080:8080"]
+    depends_on:
+      dc-identity: { condition: service_healthy }
+      dc-content-aggregate: { condition: service_healthy }
+      dc-discovery: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
+
+  web-static:
+    image: ghcr.io/wangyufanshuai/devcircle/web:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    restart: unless-stopped
+    expose: ["80"]
+    depends_on:
+      dc-gateway: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    networks: [devcircle]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+    healthcheck: { test: ["CMD", "wget", "-qO-", "http://localhost/"], interval: 15s, timeout: 5s, retries: 12 }
+
+  web:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN is required}
+      TLS_EMAIL: ${TLS_EMAIL:?TLS_EMAIL is required}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      web-static: { condition: service_healthy }
+    networks: [devcircle]
+    security_opt: [no-new-privileges:true]
+    healthcheck: { test: ["CMD", "wget", "-qO-", "http://localhost:2019/config/"], interval: 15s, timeout: 5s, retries: 12 }
+
+networks:
+  devcircle:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  redis-data:
+  kafka-data:
+  elasticsearch-data:
+  minio-data:
+  caddy-data:
+  caddy-config:

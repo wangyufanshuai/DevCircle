@@ -12,6 +12,16 @@ spring:
     password: ${MYSQL_PASSWORD:devcircle}
   flyway:
     enabled: true
+devcircle:
+  jwt:
+    secret: ${DEVCIRCLE_JWT_SECRET:local-development-secret-must-be-at-least-forty-eight-characters-long}
+  auth:
+    cookie-secure: ${AUTH_COOKIE_SECURE:false}
+    frontend-callback-uri: ${AUTH_FRONTEND_CALLBACK_URI:http://localhost:5501/auth/callback}
+    github:
+      client-id: ${GITHUB_CLIENT_ID:}
+      client-secret: ${GITHUB_CLIENT_SECRET:}
+      callback-uri: ${GITHUB_CALLBACK_URI:http://localhost:8080/api/auth/oauth2/github/callback}
 management:
   endpoints:
     web:

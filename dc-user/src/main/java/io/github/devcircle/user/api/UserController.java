@@ -1,6 +1,8 @@
 package io.github.devcircle.user.api;
 
 import io.github.devcircle.common.api.ApiResponse;
+import io.github.devcircle.common.error.BusinessException;
+import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.user.application.UserGraphService;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,19 +25,24 @@ class UserController {
 
     @GetMapping("/{id}")
     ApiResponse<UserProfile> profile(@PathVariable Long id) {
-        return ApiResponse.ok(new UserProfile(id, "lin", "后端工程师，关注微服务、搜索和可靠消息。", 128, 42, "ACTIVE"));
+        return userGraphService.profile(id)
+                .map(profile -> ApiResponse.ok(new UserProfile(profile.userId(), profile.username(), profile.bio(),
+                        profile.followerCount(), profile.followingCount(), "ACTIVE")))
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "用户不存在"));
     }
 
     @PostMapping("/{id}/follow")
-    ApiResponse<FollowResult> follow(@RequestHeader(value = "X-User-Id", defaultValue = "2") Long userId,
+    ApiResponse<FollowResult> follow(@RequestHeader("X-User-Id") Long userId,
+                                     @RequestHeader("Idempotency-Key") String idempotencyKey,
                                      @PathVariable Long id) {
-        return ApiResponse.ok(userGraphService.follow(userId, id));
+        return ApiResponse.ok(userGraphService.follow(userId, id, idempotencyKey));
     }
 
     @DeleteMapping("/{id}/follow")
-    ApiResponse<FollowResult> unfollow(@RequestHeader(value = "X-User-Id", defaultValue = "2") Long userId,
+    ApiResponse<FollowResult> unfollow(@RequestHeader("X-User-Id") Long userId,
+                                       @RequestHeader("Idempotency-Key") String idempotencyKey,
                                        @PathVariable Long id) {
-        return ApiResponse.ok(userGraphService.unfollow(userId, id));
+        return ApiResponse.ok(userGraphService.unfollow(userId, id, idempotencyKey));
     }
 
     @GetMapping("/{id}/followees")

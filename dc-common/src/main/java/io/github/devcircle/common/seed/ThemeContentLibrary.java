@@ -189,10 +189,10 @@ public final class ThemeContentLibrary {
 
     private static List<MediaAssetView> media(long id, String type, String seed) {
         if ("IMAGE".equals(type)) {
-            return List.of(new MediaAssetView(id, "demo/" + seed + ".webp", "https://picsum.photos/seed/" + seed + "/720/960", "image/webp", 128000, 720, 960, null, "PENDING_REVIEW"));
+            return List.of(new MediaAssetView(id, "seed/" + seed + ".webp", "/media/seed/" + seed + ".webp", "image/webp", 128000, 1280, 720, null, "PENDING_REVIEW"));
         }
         if ("VIDEO".equals(type)) {
-            return List.of(new MediaAssetView(id, "demo/" + seed + ".mp4", "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4", "video/mp4", 1200000, 720, 1280, 18, "PENDING_REVIEW"));
+            return List.of(new MediaAssetView(id, "seed/" + seed + ".mp4", "/media/seed/" + seed + ".mp4", "video/mp4", 1200000, 1280, 720, 18, "PENDING_REVIEW"));
         }
         return List.of();
     }

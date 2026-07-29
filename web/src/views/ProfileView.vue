@@ -1,0 +1,5 @@
+<script setup lang="ts">
+import { computed } from 'vue'; import { BookOpen, FilePenLine, ShieldCheck } from 'lucide-vue-next'; import { RouterLink } from 'vue-router'; import { currentSession } from '../api/client'
+const session = computed(() => currentSession())
+</script>
+<template><div class="page-stack narrow-page"><section class="profile-hero"><div class="profile-avatar">{{ session?.displayName?.slice(0, 1) ?? '?' }}</div><div><span class="eyebrow">OBSERVER PROFILE</span><h1>{{ session?.displayName ?? '尚未登录' }}</h1><p>{{ session ? `观测者 #${session.userId}` : '登录后保存阅读进度、收藏和草稿。' }}</p></div></section><section class="profile-grid"><RouterLink to="/write"><FilePenLine :size="20" /><strong>我的创作</strong><span>草稿、投稿和审核进度</span></RouterLink><RouterLink to="/discover"><BookOpen :size="20" /><strong>阅读轨道</strong><span>继续探索三个主题频道</span></RouterLink><RouterLink v-if="session?.roles.includes('ADMIN')" to="/admin"><ShieldCheck :size="20" /><strong>运营后台</strong><span>审核、风险和事件重放</span></RouterLink><RouterLink v-if="!session" to="/auth"><ShieldCheck :size="20" /><strong>登录或注册</strong><span>建立你的观测者档案</span></RouterLink></section></div></template>

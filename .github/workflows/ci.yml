@@ -20,12 +20,18 @@ jobs:
           distribution: temurin
           java-version: "21"
           cache: maven
-      - run: ./mvnw -B test
+      - run: ./mvnw -B verify -Pcoverage
       - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: surefire-reports
           path: "**/target/surefire-reports/*"
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: jacoco-reports
+          path: "**/target/site/jacoco/**"
           if-no-files-found: ignore
 
   frontend:
@@ -39,12 +45,19 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
         working-directory: web
+      - run: npm audit --audit-level=high
+        working-directory: web
       - run: npm run build
         working-directory: web
       - run: npx playwright install --with-deps chromium
         working-directory: web
       - run: npx playwright test
         working-directory: web
+      - uses: treosh/lighthouse-ci-action@v12
+        with:
+          configPath: ./lighthouserc.json
+          uploadArtifacts: false
+          temporaryPublicStorage: false
 
   delivery:
     runs-on: ubuntu-latest
@@ -55,6 +68,7 @@ jobs:
       - run: helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-prod.yaml
       - run: docker compose --profile infra config
       - run: docker compose --profile demo config
+      - run: docker compose --env-file .env.production.example -f docker-compose.prod.yml config --quiet
 
   images:
     if: github.event_name == 'push'
@@ -63,7 +77,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [gateway, auth, user, content, comment, interaction, search, recommend, notification, file, admin]
+        include:
+          - { module: dc-gateway, image: dc-gateway }
+          - { module: dc-identity, image: dc-identity }
+          - { module: dc-content-deployment, image: dc-content-aggregate }
+          - { module: dc-discovery, image: dc-discovery }
+          - { module: dc-auth, image: dc-auth }
+          - { module: dc-user, image: dc-user }
+          - { module: dc-content, image: dc-content }
+          - { module: dc-comment, image: dc-comment }
+          - { module: dc-interaction, image: dc-interaction }
+          - { module: dc-search, image: dc-search }
+          - { module: dc-recommend, image: dc-recommend }
+          - { module: dc-notification, image: dc-notification }
+          - { module: dc-file, image: dc-file }
+          - { module: dc-admin, image: dc-admin }
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v5
@@ -82,14 +110,14 @@ jobs:
           context: .
           file: Dockerfile.service
           push: true
-          build-args: JAR_FILE=dc-${{ matrix.service }}/target/dc-${{ matrix.service }}-0.1.0-SNAPSHOT.jar
-          tags: ghcr.io/wangyufanshuai/devcircle/dc-${{ matrix.service }}:${{ github.sha }}
+          build-args: JAR_FILE=${{ matrix.module }}/target/${{ matrix.module }}-0.1.0-SNAPSHOT.jar
+          tags: ghcr.io/wangyufanshuai/devcircle/${{ matrix.image }}:${{ github.sha }}
       - uses: aquasecurity/trivy-action@0.36.0
         with:
-          image-ref: ghcr.io/wangyufanshuai/devcircle/dc-${{ matrix.service }}:${{ github.sha }}
+          image-ref: ghcr.io/wangyufanshuai/devcircle/${{ matrix.image }}:${{ github.sha }}
           format: table
           severity: CRITICAL,HIGH
-          exit-code: "0"
+          exit-code: "1"
 
   web-image:
     if: github.event_name == 'push'
@@ -113,4 +141,4 @@ jobs:
           image-ref: ghcr.io/wangyufanshuai/devcircle/web:${{ github.sha }}
           format: table
           severity: CRITICAL,HIGH
-          exit-code: "0"
+          exit-code: "1"

@@ -17,7 +17,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest
 @Sql(scripts = "classpath:db/migration/V1__user_schema.sql")
 class UserGraphServiceIntegrationTest {
@@ -51,6 +51,7 @@ class UserGraphServiceIntegrationTest {
 
     @BeforeEach
     void cleanState() {
+        jdbcClient.sql("DELETE FROM user_idempotency").update();
         jdbcClient.sql("DELETE FROM user_follow").update();
         jdbcClient.sql("DELETE FROM user_profile").update();
         redisTemplate.execute((RedisCallback<Void>) connection -> {
@@ -61,8 +62,8 @@ class UserGraphServiceIntegrationTest {
 
     @Test
     void followIsIdempotentAndCachedInRedis() {
-        var first = service.follow(1L, 2L);
-        var duplicate = service.follow(1L, 2L);
+        var first = service.follow(1L, 2L, "follow-1-2");
+        var duplicate = service.follow(1L, 2L, "follow-1-2");
 
         assertThat(first.duplicated()).isFalse();
         assertThat(duplicate.duplicated()).isTrue();
@@ -70,17 +71,17 @@ class UserGraphServiceIntegrationTest {
         assertThat(service.followers(2L)).containsExactly(1L);
         assertThat(redisTemplate.opsForSet().isMember("user:1:followees", "2")).isTrue();
 
-        service.unfollow(1L, 2L);
+        service.unfollow(1L, 2L, "unfollow-1-2");
         assertThat(service.followees(1L)).isEmpty();
     }
 
     @Test
     void twoHopRecommendationsUseMutualFollowees() {
-        service.follow(1L, 10L);
-        service.follow(2L, 10L);
-        service.follow(3L, 10L);
-        service.follow(3L, 11L);
-        service.follow(1L, 11L);
+        service.follow(1L, 10L, "f-1-10");
+        service.follow(2L, 10L, "f-2-10");
+        service.follow(3L, 10L, "f-3-10");
+        service.follow(3L, 11L, "f-3-11");
+        service.follow(1L, 11L, "f-1-11");
 
         var recommendations = service.recommendations(1L);
 

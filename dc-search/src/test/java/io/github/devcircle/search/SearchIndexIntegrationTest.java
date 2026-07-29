@@ -5,8 +5,8 @@ import io.github.devcircle.search.application.SearchService;
 import io.github.devcircle.search.infrastructure.PostSearchDocument;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -17,10 +17,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@Testcontainers
-@SpringBootTest(properties = {
-        "spring.kafka.bootstrap-servers=localhost:65535"
-})
+@Testcontainers(disabledWithoutDocker = true)
+@SpringBootTest(properties = "spring.kafka.bootstrap-servers=localhost:65535")
 class SearchIndexIntegrationTest {
     @Container
     static final ElasticsearchContainer elasticsearch = new ElasticsearchContainer("docker.elastic.co/elasticsearch/elasticsearch:9.2.2")
@@ -32,42 +30,26 @@ class SearchIndexIntegrationTest {
         registry.add("spring.elasticsearch.uris", elasticsearch::getHttpHostAddress);
     }
 
-    @Autowired
-    SearchService searchService;
-
-    @Autowired
-    ElasticsearchOperations elasticsearchOperations;
+    @Autowired SearchService searchService;
+    @Autowired ElasticsearchOperations elasticsearchOperations;
 
     @TestConfiguration
     static class TestBeans {
-        @Bean
-        ObjectMapper objectMapper() {
-            return new ObjectMapper();
-        }
+        @Bean ObjectMapper objectMapper() { return new ObjectMapper().findAndRegisterModules(); }
     }
 
     @Test
-    void postEventCanBeIndexedAndSearched() throws Exception {
+    void publishedEnvelopeCanBeIndexedAndSearched() throws Exception {
         searchService.upsertPostFromEvent("""
-                {"postId":8801,"authorId":42,"title":"Kafka Outbox 集成测试","tags":["Kafka","MySQL"]}
+                {"eventId":"ab093343-47bb-4b59-902c-260ece9e80ff","type":"post.created","version":1,
+                 "occurredAt":"2026-07-28T10:00:00Z","producer":"dc-content","aggregateId":"8801",
+                 "payload":{"postId":8801,"authorId":42,"title":"Kafka Outbox integration",
+                 "tags":["Kafka","MySQL"],"status":"PUBLISHED"}}
                 """);
 
-        PostSearchDocument document = waitForDocument("8801");
+        PostSearchDocument document = elasticsearchOperations.get("8801", PostSearchDocument.class);
         assertThat(document).isNotNull();
-        assertThat(document.getTitle()).isEqualTo("Kafka Outbox 集成测试");
-
-        var result = searchService.search("Outbox", null, "latest");
-        assertThat(result.records()).extracting("id").contains(8801L);
-    }
-
-    private PostSearchDocument waitForDocument(String id) throws InterruptedException {
-        for (int i = 0; i < 20; i++) {
-            PostSearchDocument document = elasticsearchOperations.get(id, PostSearchDocument.class);
-            if (document != null) {
-                return document;
-            }
-            Thread.sleep(250);
-        }
-        return null;
+        assertThat(document.getTitle()).isEqualTo("Kafka Outbox integration");
+        assertThat(searchService.search("Outbox", null, "latest").records()).extracting("id").contains(8801L);
     }
 }

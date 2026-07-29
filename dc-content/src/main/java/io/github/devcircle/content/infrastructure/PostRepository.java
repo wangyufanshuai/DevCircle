@@ -3,11 +3,15 @@ package io.github.devcircle.content.infrastructure;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.seed.ThemeSeedPost;
+import io.github.devcircle.common.error.BusinessException;
+import io.github.devcircle.common.error.ErrorCode;
+import io.github.devcircle.common.event.EventEnvelope;
 import io.github.devcircle.common.event.EventTopics;
-import io.github.devcircle.common.event.PostCreatedPayload;
 import io.github.devcircle.common.model.MediaAssetView;
 import io.github.devcircle.common.model.PostSummary;
 import io.github.devcircle.content.api.CreatePostRequest;
+import io.github.devcircle.content.api.DraftView;
+import io.github.devcircle.content.api.SaveDraftRequest;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -16,6 +20,8 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
 import java.util.Arrays;
@@ -51,7 +57,8 @@ public class PostRepository {
                         JOIN post_content pc ON pc.post_id = p.id
                         LEFT JOIN post_tag pt ON pt.post_id = p.id
                         LEFT JOIN tag t ON t.id = pt.tag_id
-                        WHERE (:theme IS NULL OR p.theme = :theme)
+                        WHERE p.status = 'PUBLISHED'
+                          AND (:theme IS NULL OR p.theme = :theme)
                           AND (:contentKind IS NULL OR p.content_kind = :contentKind)
                           AND (:difficulty IS NULL OR p.difficulty = :difficulty)
                         GROUP BY p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
@@ -185,6 +192,15 @@ public class PostRepository {
 
     @Transactional
     public PostSummary create(Long authorId, CreatePostRequest request) {
+        return create(authorId, request, "internal-" + UUID.randomUUID());
+    }
+
+    @Transactional
+    public PostSummary create(Long authorId, CreatePostRequest request, String idempotencyKey) {
+        Long existingId = claimIdempotency(authorId, "CREATE_POST", idempotencyKey);
+        if (existingId != null) {
+            return detail(existingId);
+        }
         var keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement(
@@ -235,9 +251,132 @@ public class PostRepository {
         }
         createModerationTask(postId, authorId, request);
         writeOutbox(postId, authorId, request);
+        attachIdempotencyResource(idempotencyKey, postId);
         return new PostSummary(postId, normalizeType(request.type()), normalizeTheme(request.theme()), normalizeContentKind(request.contentKind()),
                 normalizeDifficulty(request.difficulty()), Boolean.TRUE.equals(request.solvable()), 0,
                 request.title(), excerpt(request.content()), "user-" + authorId, safeTags(request.tags()), mediaAssets(postId), 0, 0, 0, "PENDING", Instant.now());
+    }
+
+    @Transactional
+    public DraftView createDraft(Long authorId, SaveDraftRequest request, String idempotencyKey) {
+        Long existingId = claimIdempotency(authorId, "CREATE_DRAFT", idempotencyKey);
+        if (existingId != null) {
+            return getDraft(authorId, existingId);
+        }
+        var keyHolder = new GeneratedKeyHolder();
+        jdbcTemplate.update(connection -> {
+            PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO post(author_id, title, type, theme, content_kind, difficulty, solvable, status, version, last_saved_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', 0, CURRENT_TIMESTAMP)
+                    """, Statement.RETURN_GENERATED_KEYS);
+            statement.setLong(1, authorId);
+            statement.setString(2, safeText(request.title()));
+            statement.setString(3, normalizeType(request.type()));
+            statement.setString(4, normalizeTheme(request.theme()));
+            statement.setString(5, normalizeContentKind(request.contentKind()));
+            statement.setString(6, normalizeDifficulty(request.difficulty()));
+            statement.setBoolean(7, Boolean.TRUE.equals(request.solvable()));
+            return statement;
+        }, keyHolder);
+        Number key = keyHolder.getKey();
+        if (key == null) {
+            throw new IllegalStateException("Failed to create draft");
+        }
+        Long draftId = key.longValue();
+        insertDraftContent(draftId, request);
+        replaceDraftRelations(draftId, request.tags(), request.mediaIds());
+        attachIdempotencyResource(idempotencyKey, draftId);
+        return getDraft(authorId, draftId);
+    }
+
+    public List<DraftView> listDrafts(Long authorId, int size) {
+        return draftQuery("WHERE p.author_id = :authorId")
+                .param("authorId", authorId)
+                .param("size", size)
+                .query(this::mapDraft)
+                .list();
+    }
+
+    public DraftView getDraft(Long authorId, Long draftId) {
+        List<DraftView> drafts = draftQuery("WHERE p.author_id = :authorId AND p.id = :draftId")
+                .param("authorId", authorId)
+                .param("draftId", draftId)
+                .param("size", 1)
+                .query(this::mapDraft)
+                .list();
+        if (drafts.isEmpty()) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "草稿不存在");
+        }
+        return drafts.getFirst();
+    }
+
+    @Transactional
+    public DraftView updateDraft(Long authorId, Long draftId, SaveDraftRequest request, String idempotencyKey) {
+        Long duplicateId = claimIdempotency(authorId, "UPDATE_DRAFT:" + draftId, idempotencyKey);
+        if (duplicateId != null) {
+            return getDraft(authorId, duplicateId);
+        }
+        int updated = jdbcClient.sql("""
+                        UPDATE post
+                        SET title = :title, type = :type, theme = :theme, content_kind = :contentKind,
+                            difficulty = :difficulty, solvable = :solvable, version = version + 1,
+                            last_saved_at = CURRENT_TIMESTAMP
+                        WHERE id = :draftId AND author_id = :authorId
+                          AND status IN ('DRAFT', 'CHANGES_REQUIRED') AND version = :version
+                        """)
+                .param("title", safeText(request.title()))
+                .param("type", normalizeType(request.type()))
+                .param("theme", normalizeTheme(request.theme()))
+                .param("contentKind", normalizeContentKind(request.contentKind()))
+                .param("difficulty", normalizeDifficulty(request.difficulty()))
+                .param("solvable", Boolean.TRUE.equals(request.solvable()))
+                .param("draftId", draftId)
+                .param("authorId", authorId)
+                .param("version", request.version())
+                .update();
+        if (updated == 0) {
+            assertDraftWritable(authorId, draftId);
+            throw new BusinessException(ErrorCode.VERSION_CONFLICT, "草稿已在其他位置更新，请刷新后重试");
+        }
+        updateDraftContent(draftId, request);
+        replaceDraftRelations(draftId, request.tags(), request.mediaIds());
+        attachIdempotencyResource(idempotencyKey, draftId);
+        return getDraft(authorId, draftId);
+    }
+
+    @Transactional
+    public DraftView submitDraft(Long authorId, Long draftId, long version, String idempotencyKey) {
+        Long duplicateId = claimIdempotency(authorId, "SUBMIT_DRAFT:" + draftId, idempotencyKey);
+        if (duplicateId != null) {
+            return getDraft(authorId, duplicateId);
+        }
+        DraftView draft = getDraft(authorId, draftId);
+        if (draft.title().isBlank() || draft.content().isBlank()) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "标题和正文填写完整后才能投稿");
+        }
+        int updated = jdbcClient.sql("""
+                        UPDATE post
+                        SET status = 'PENDING', version = version + 1, submitted_at = CURRENT_TIMESTAMP, review_reason = NULL
+                        WHERE id = :draftId AND author_id = :authorId
+                          AND status IN ('DRAFT', 'CHANGES_REQUIRED') AND version = :version
+                        """)
+                .param("draftId", draftId)
+                .param("authorId", authorId)
+                .param("version", version)
+                .update();
+        if (updated == 0) {
+            assertDraftWritable(authorId, draftId);
+            throw new BusinessException(ErrorCode.VERSION_CONFLICT, "草稿版本已变化，请刷新后重新提交");
+        }
+        CreatePostRequest submitted = new CreatePostRequest(
+                draft.title(), draft.content(), draft.tags(), draft.type(), draft.mediaIds(), draft.theme(),
+                draft.contentKind(), draft.difficulty(), draft.solvable(), draft.clues(), draft.solution());
+        createModerationTask(draftId, authorId, submitted);
+        writeOutbox(EventTopics.POST_SUBMITTED, "POST", draftId.toString(), Map.of(
+                "postId", draftId, "authorId", authorId, "title", draft.title(),
+                "theme", draft.theme(), "contentKind", draft.contentKind()));
+        attachIdempotencyResource(idempotencyKey, draftId);
+        return getDraft(authorId, draftId);
     }
 
     @Transactional
@@ -309,7 +448,22 @@ public class PostRepository {
     }
 
     @Transactional
-    public Map<String, Object> createAppeal(Long userId, Long postId, String reason) {
+    public Map<String, Object> createAppeal(Long userId, Long postId, String reason, String idempotencyKey) {
+        Long existingId = claimIdempotency(userId, "CREATE_APPEAL", idempotencyKey);
+        if (existingId != null) {
+            return Map.of("appealId", existingId, "postId", postId, "status", "PENDING", "duplicateRequest", true);
+        }
+        Long owned = jdbcClient.sql("""
+                        SELECT COUNT(*) FROM post
+                        WHERE id = :postId AND author_id = :userId AND status IN ('REJECTED', 'CHANGES_REQUIRED')
+                        """)
+                .param("postId", postId)
+                .param("userId", userId)
+                .query(Long.class)
+                .single();
+        if (owned == null || owned == 0) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "只能对自己被驳回或要求修改的投稿发起申诉");
+        }
         var keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement(
@@ -324,7 +478,161 @@ public class PostRepository {
         Number key = keyHolder.getKey();
         Long appealId = key == null ? 0L : key.longValue();
         writeOutbox(EventTopics.APPEAL_CREATED, "APPEAL", appealId.toString(), Map.of("appealId", appealId, "postId", postId, "userId", userId));
+        attachIdempotencyResource(idempotencyKey, appealId);
         return Map.of("appealId", appealId, "postId", postId, "status", "PENDING");
+    }
+
+    private JdbcClient.StatementSpec draftQuery(String whereClause) {
+        return jdbcClient.sql("""
+                        SELECT p.id, p.author_id, p.title, p.type, p.theme, p.content_kind, p.difficulty,
+                               p.solvable, p.status, p.version, p.last_saved_at, p.submitted_at,
+                               pc.markdown, pc.clues, pc.suspects, pc.timeline, pc.question,
+                               pc.answer_keywords, pc.solution,
+                               GROUP_CONCAT(DISTINCT t.name ORDER BY t.name SEPARATOR ',') AS tags,
+                               GROUP_CONCAT(DISTINCT pm.media_id ORDER BY pm.sort_order SEPARATOR ',') AS media_ids
+                        FROM post p
+                        JOIN post_content pc ON pc.post_id = p.id
+                        LEFT JOIN post_tag pt ON pt.post_id = p.id
+                        LEFT JOIN tag t ON t.id = pt.tag_id
+                        LEFT JOIN post_media pm ON pm.post_id = p.id
+                        """ + whereClause + """
+                        GROUP BY p.id, p.author_id, p.title, p.type, p.theme, p.content_kind, p.difficulty,
+                                 p.solvable, p.status, p.version, p.last_saved_at, p.submitted_at,
+                                 pc.markdown, pc.clues, pc.suspects, pc.timeline, pc.question,
+                                 pc.answer_keywords, pc.solution
+                        ORDER BY COALESCE(p.last_saved_at, p.updated_at) DESC
+                        LIMIT :size
+                        """);
+    }
+
+    private DraftView mapDraft(ResultSet rs, int rowNum) throws SQLException {
+        return new DraftView(
+                rs.getLong("id"),
+                rs.getLong("author_id"),
+                safeText(rs.getString("title")),
+                safeText(rs.getString("markdown")),
+                splitTags(rs.getString("tags")),
+                rs.getString("type"),
+                readLongCsv(rs.getString("media_ids")),
+                rs.getString("theme"),
+                rs.getString("content_kind"),
+                rs.getString("difficulty"),
+                rs.getBoolean("solvable"),
+                String.join("\n", readStringList(rs.getString("clues"))),
+                String.join("\n", readStringList(rs.getString("suspects"))),
+                String.join("\n", readStringList(rs.getString("timeline"))),
+                safeText(rs.getString("question")),
+                String.join("\n", readStringList(rs.getString("answer_keywords"))),
+                safeText(rs.getString("solution")),
+                rs.getString("status"),
+                rs.getLong("version"),
+                rs.getTimestamp("last_saved_at") == null ? null : rs.getTimestamp("last_saved_at").toInstant(),
+                rs.getTimestamp("submitted_at") == null ? null : rs.getTimestamp("submitted_at").toInstant()
+        );
+    }
+
+    private void insertDraftContent(Long draftId, SaveDraftRequest request) {
+        jdbcClient.sql("""
+                        INSERT INTO post_content(post_id, markdown, clues, suspects, timeline, question,
+                                                 answer_keywords, solution, explanation)
+                        VALUES (:postId, :markdown, CAST(:clues AS JSON), CAST(:suspects AS JSON),
+                                CAST(:timeline AS JSON), :question, CAST(:answerKeywords AS JSON), :solution, :explanation)
+                        """)
+                .param("postId", draftId)
+                .param("markdown", safeText(request.content()))
+                .param("clues", cluesJson(request.clues()))
+                .param("suspects", cluesJson(request.suspects()))
+                .param("timeline", cluesJson(request.timeline()))
+                .param("question", safeText(request.question()))
+                .param("answerKeywords", cluesJson(request.answerKeywords()))
+                .param("solution", safeText(request.solution()))
+                .param("explanation", safeText(request.solution()))
+                .update();
+    }
+
+    private void updateDraftContent(Long draftId, SaveDraftRequest request) {
+        jdbcClient.sql("""
+                        UPDATE post_content
+                        SET markdown = :markdown, clues = CAST(:clues AS JSON), suspects = CAST(:suspects AS JSON),
+                            timeline = CAST(:timeline AS JSON), question = :question,
+                            answer_keywords = CAST(:answerKeywords AS JSON), solution = :solution, explanation = :explanation
+                        WHERE post_id = :postId
+                        """)
+                .param("postId", draftId)
+                .param("markdown", safeText(request.content()))
+                .param("clues", cluesJson(request.clues()))
+                .param("suspects", cluesJson(request.suspects()))
+                .param("timeline", cluesJson(request.timeline()))
+                .param("question", safeText(request.question()))
+                .param("answerKeywords", cluesJson(request.answerKeywords()))
+                .param("solution", safeText(request.solution()))
+                .param("explanation", safeText(request.solution()))
+                .update();
+    }
+
+    private void replaceDraftRelations(Long draftId, List<String> tags, List<Long> mediaIds) {
+        jdbcClient.sql("DELETE FROM post_tag WHERE post_id = :postId").param("postId", draftId).update();
+        for (String tagName : safeTags(tags).stream().map(String::trim).filter(tag -> !tag.isBlank()).distinct().limit(10).toList()) {
+            Long tagId = upsertTag(tagName);
+            jdbcClient.sql("INSERT INTO post_tag(post_id, tag_id) VALUES (:postId, :tagId)")
+                    .param("postId", draftId).param("tagId", tagId).update();
+        }
+        jdbcClient.sql("DELETE FROM post_media WHERE post_id = :postId").param("postId", draftId).update();
+        int sortOrder = 0;
+        for (Long mediaId : safeMediaIds(mediaIds).stream().distinct().limit(20).toList()) {
+            jdbcClient.sql("INSERT INTO post_media(post_id, media_id, sort_order) VALUES (:postId, :mediaId, :sortOrder)")
+                    .param("postId", draftId).param("mediaId", mediaId).param("sortOrder", sortOrder++).update();
+        }
+    }
+
+    private Long claimIdempotency(Long userId, String operation, String idempotencyKey) {
+        int inserted = jdbcClient.sql("""
+                        INSERT IGNORE INTO content_idempotency_record(idempotency_key, user_id, operation)
+                        VALUES (:key, :userId, :operation)
+                        """)
+                .param("key", idempotencyKey)
+                .param("userId", userId)
+                .param("operation", operation)
+                .update();
+        if (inserted == 1) {
+            return null;
+        }
+        IdempotencyRecord existing = jdbcClient.sql("""
+                        SELECT user_id, operation, resource_id
+                        FROM content_idempotency_record WHERE idempotency_key = :key
+                        """)
+                .param("key", idempotencyKey)
+                .query((rs, rowNum) -> new IdempotencyRecord(
+                        rs.getLong("user_id"), rs.getString("operation"), (Long) rs.getObject("resource_id")))
+                .single();
+        if (!existing.userId().equals(userId) || !existing.operation().equals(operation)) {
+            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已被其他写操作使用");
+        }
+        if (existing.resourceId() == null) {
+            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "相同请求正在处理中");
+        }
+        return existing.resourceId();
+    }
+
+    private void attachIdempotencyResource(String idempotencyKey, Long resourceId) {
+        jdbcClient.sql("UPDATE content_idempotency_record SET resource_id = :resourceId WHERE idempotency_key = :key")
+                .param("resourceId", resourceId)
+                .param("key", idempotencyKey)
+                .update();
+    }
+
+    private void assertDraftWritable(Long authorId, Long draftId) {
+        List<String> statuses = jdbcClient.sql("SELECT status FROM post WHERE id = :draftId AND author_id = :authorId")
+                .param("draftId", draftId)
+                .param("authorId", authorId)
+                .query(String.class)
+                .list();
+        if (statuses.isEmpty()) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "草稿不存在");
+        }
+        if (!List.of("DRAFT", "CHANGES_REQUIRED").contains(statuses.getFirst())) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "当前状态不允许编辑或重复提交");
+        }
     }
 
     private Long upsertTag(String name) {
@@ -338,20 +646,14 @@ public class PostRepository {
     }
 
     private void writeOutbox(Long postId, Long authorId, CreatePostRequest request) {
-        try {
-            String payload = objectMapper.writeValueAsString(new PostCreatedPayload(postId, authorId, request.title(), request.tags(), normalizeTheme(request.theme()), normalizeContentKind(request.contentKind())));
-            jdbcClient.sql("""
-                            INSERT INTO outbox_event(event_id, topic, aggregate_type, aggregate_id, payload)
-                            VALUES (:eventId, :topic, 'POST', :aggregateId, CAST(:payload AS JSON))
-                            """)
-                    .param("eventId", UUID.randomUUID().toString())
-                    .param("topic", EventTopics.POST_CREATED)
-                    .param("aggregateId", postId.toString())
-                    .param("payload", payload)
-                    .update();
-        } catch (JsonProcessingException ex) {
-            throw new IllegalStateException("Failed to serialize post.created payload", ex);
-        }
+        writeOutbox(EventTopics.POST_SUBMITTED, "POST", postId.toString(), Map.of(
+                "postId", postId,
+                "authorId", authorId,
+                "title", request.title(),
+                "tags", safeTags(request.tags()),
+                "theme", normalizeTheme(request.theme()),
+                "contentKind", normalizeContentKind(request.contentKind())
+        ));
     }
 
     private List<String> splitTags(String tags) {
@@ -448,15 +750,20 @@ public class PostRepository {
 
     private void writeOutbox(String topic, String aggregateType, String aggregateId, Object payload) {
         try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> eventPayload = payload instanceof Map<?, ?> map
+                    ? (Map<String, Object>) map
+                    : objectMapper.convertValue(payload, Map.class);
+            EventEnvelope event = EventEnvelope.now(topic, "dc-content", aggregateId, eventPayload);
             jdbcClient.sql("""
                             INSERT INTO outbox_event(event_id, topic, aggregate_type, aggregate_id, payload)
                             VALUES (:eventId, :topic, :aggregateType, :aggregateId, CAST(:payload AS JSON))
                             """)
-                    .param("eventId", UUID.randomUUID().toString())
-                    .param("topic", topic)
+                    .param("eventId", event.eventId().toString())
+                    .param("topic", event.type())
                     .param("aggregateType", aggregateType)
-                    .param("aggregateId", aggregateId)
-                    .param("payload", objectMapper.writeValueAsString(payload))
+                    .param("aggregateId", event.aggregateId())
+                    .param("payload", objectMapper.writeValueAsString(event))
                     .update();
         } catch (JsonProcessingException ex) {
             throw new IllegalStateException("Failed to serialize outbox payload", ex);
@@ -552,6 +859,17 @@ public class PostRepository {
         }
     }
 
+    private List<Long> readLongCsv(String values) {
+        if (values == null || values.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(values.split(","))
+                .map(String::trim)
+                .filter(value -> !value.isBlank())
+                .map(Long::valueOf)
+                .toList();
+    }
+
     private List<String> safeTags(List<String> tags) {
         return tags == null ? List.of() : tags;
     }
@@ -564,6 +882,13 @@ public class PostRepository {
         return content.substring(0, Math.min(140, content.length()));
     }
 
+    private String safeText(String value) {
+        return value == null ? "" : value;
+    }
+
     private record ModerationRisk(String queueName, String machineResult, String riskLevel, double score, String reason, String reviewLevel, int slaHours, String signalType) {
+    }
+
+    private record IdempotencyRecord(Long userId, String operation, Long resourceId) {
     }
 }

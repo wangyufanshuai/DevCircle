@@ -1,9 +1,12 @@
 package io.github.devcircle.user.infrastructure;
 
+import io.github.devcircle.common.error.BusinessException;
+import io.github.devcircle.common.error.ErrorCode;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public class UserGraphRepository {
@@ -32,6 +35,41 @@ public class UserGraphRepository {
                     .update();
         }
         return rows > 0;
+    }
+
+    public boolean claimOperation(Long userId, Long targetUserId, String operation, String idempotencyKey) {
+        int rows = jdbcClient.sql("INSERT IGNORE INTO user_idempotency(user_id, idempotency_key, operation, target_user_id) VALUES (:userId, :key, :operation, :targetUserId)")
+                .param("userId", userId)
+                .param("key", idempotencyKey)
+                .param("operation", operation)
+                .param("targetUserId", targetUserId)
+                .update();
+        if (rows > 0) return true;
+        IdempotencyRecord existing = jdbcClient.sql("SELECT operation, target_user_id FROM user_idempotency WHERE user_id = :userId AND idempotency_key = :key")
+                .param("userId", userId)
+                .param("key", idempotencyKey)
+                .query((rs, rowNum) -> new IdempotencyRecord(rs.getString("operation"), rs.getLong("target_user_id")))
+                .single();
+        if (!operation.equals(existing.operation()) || !targetUserId.equals(existing.targetUserId())) {
+            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已用于其他操作");
+        }
+        return false;
+    }
+
+    public boolean isFollowing(Long userId, Long targetUserId) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM user_follow WHERE follower_id = :userId AND followee_id = :targetUserId")
+                .param("userId", userId)
+                .param("targetUserId", targetUserId)
+                .query(Integer.class)
+                .single() > 0;
+    }
+
+    public Optional<UserProfile> profile(Long userId) {
+        return jdbcClient.sql("SELECT user_id, username, bio, follower_count, following_count FROM user_profile WHERE user_id = :userId")
+                .param("userId", userId)
+                .query((rs, rowNum) -> new UserProfile(rs.getLong("user_id"), rs.getString("username"), rs.getString("bio"),
+                        rs.getLong("follower_count"), rs.getLong("following_count")))
+                .optional();
     }
 
     public void unfollow(Long userId, Long targetUserId) {
@@ -82,5 +120,11 @@ public class UserGraphRepository {
     }
 
     public record TwoHopUser(Long userId, long mutualFollowees) {
+    }
+
+    private record IdempotencyRecord(String operation, Long targetUserId) {
+    }
+
+    public record UserProfile(Long userId, String username, String bio, long followerCount, long followingCount) {
     }
 }

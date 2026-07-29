@@ -19,15 +19,15 @@ class InteractionController {
 
     @PostMapping("/{id}/like")
     ApiResponse<InteractionResult> like(@PathVariable Long id,
-                                        @RequestHeader(value = "X-User-Id", defaultValue = "2") Long userId,
-                                        @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+                                        @RequestHeader("X-User-Id") Long userId,
+                                        @RequestHeader("Idempotency-Key") String idempotencyKey) {
         return ApiResponse.ok(interactionService.like(userId, id, idempotencyKey));
     }
 
     @PostMapping("/{id}/favorite")
     ApiResponse<InteractionResult> favorite(@PathVariable Long id,
-                                            @RequestHeader(value = "X-User-Id", defaultValue = "2") Long userId,
-                                            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+                                            @RequestHeader("X-User-Id") Long userId,
+                                            @RequestHeader("Idempotency-Key") String idempotencyKey) {
         return ApiResponse.ok(interactionService.favorite(userId, id, idempotencyKey));
     }
 }

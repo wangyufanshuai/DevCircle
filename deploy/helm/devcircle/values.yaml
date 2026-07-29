@@ -7,6 +7,9 @@ replicaCount: 1
 
 services:
   gateway: { port: 8080 }
+  identity: { port: 8201 }
+  content-aggregate: { port: 8202 }
+  discovery: { port: 8203 }
   auth: { port: 8101 }
   user: { port: 8102 }
   content: { port: 8103 }
@@ -28,12 +31,27 @@ env:
   S3_ENDPOINT: http://minio:9000
   S3_BUCKET: devcircle
   GATEWAY_DEMO_TOKEN_ENABLED: "false"
+  DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
+  DC_AUTH_URI: http://dc-auth:8101
+  DC_USER_URI: http://dc-user:8102
+  DC_CONTENT_URI: http://dc-content:8103
+  DC_COMMENT_URI: http://dc-comment:8104
+  DC_INTERACTION_URI: http://dc-interaction:8105
+  DC_SEARCH_URI: http://dc-search:8106
+  DC_RECOMMEND_URI: http://dc-recommend:8107
+  DC_NOTIFICATION_URI: http://dc-notification:8108
+  DC_FILE_URI: http://dc-file:8109
+  DC_ADMIN_URI: http://dc-admin:8110
 
 secretEnv:
   MYSQL_PASSWORD: change-me
   S3_ACCESS_KEY: minioadmin
   S3_SECRET_KEY: minioadmin
   DEVCIRCLE_JWT_SECRET: change-me-change-me-change-me-change-me
+
+secrets:
+  create: true
+  existingSecret: ""
 
 resources:
   requests:

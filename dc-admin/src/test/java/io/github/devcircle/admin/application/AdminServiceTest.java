@@ -1,17 +1,17 @@
 package io.github.devcircle.admin.application;
 
+import io.github.devcircle.common.error.BusinessException;
+import io.github.devcircle.common.error.ErrorCode;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AdminServiceTest {
     @Test
-    void approvePostEmitsAuditCompletedShape() {
-        var result = new AdminService().approve(1002L);
-
-        assertThat(result.action()).isEqualTo("APPROVE_POST");
-        assertThat(result.attributes()).containsEntry("status", "PUBLISHED");
-        assertThat(result.attributes()).containsEntry("event", "audit.completed");
+    void moderationWriteNeverReturnsFakeSuccessWithoutDatabase() {
+        assertThatThrownBy(() -> new AdminService().approve(1002L))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.code()).isEqualTo(ErrorCode.DEPENDENCY_UNAVAILABLE));
     }
 }
-

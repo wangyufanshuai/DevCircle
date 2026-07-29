@@ -1,10 +1,15 @@
 package io.github.devcircle.content.application;
 
 import io.github.devcircle.common.api.PageResponse;
+import io.github.devcircle.common.error.BusinessException;
+import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.model.PostSummary;
 import io.github.devcircle.common.seed.ThemeContentLibrary;
 import io.github.devcircle.content.api.CreatePostRequest;
+import io.github.devcircle.content.api.DraftView;
+import io.github.devcircle.content.api.SaveDraftRequest;
 import io.github.devcircle.content.infrastructure.PostRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
@@ -14,7 +19,10 @@ import java.util.Map;
 @Service
 public class PostService {
     private final PostRepository postRepository;
-    private final List<PostSummary> demoPosts = ThemeContentLibrary.summaries();
+    private final List<PostSummary> seedPosts = ThemeContentLibrary.summaries();
+
+    @Value("${devcircle.content.read-fallback-enabled:false}")
+    private boolean readFallbackEnabled;
 
     public PostService(PostRepository postRepository) {
         this.postRepository = postRepository;
@@ -25,45 +33,98 @@ public class PostService {
     }
 
     public PageResponse<PostSummary> list(int page, int size, String type, String theme, String contentKind, String difficulty) {
+        int safeSize = Math.max(1, Math.min(size, 20));
         try {
-            var records = filterByType(postRepository.list(page, size, theme, contentKind, difficulty), type);
-            return PageResponse.of(records, records.size(), page, size);
+            var records = filterByType(postRepository.list(page, safeSize, theme, contentKind, difficulty), type);
+            return PageResponse.of(records, records.size(), page, safeSize);
         } catch (DataAccessException ex) {
-            var records = filterByTheme(filterByType(demoPosts, type), theme, contentKind, difficulty);
-            return PageResponse.of(records, records.size(), page, size);
+            if (!readFallbackEnabled) {
+                throw ex;
+            }
+            var records = filterByTheme(filterByType(seedPosts, type), theme, contentKind, difficulty);
+            return PageResponse.of(records, records.size(), page, safeSize);
         }
     }
 
     public PostSummary detail(Long id) {
         try {
-            return postRepository.detail(id);
+            PostSummary post = postRepository.detail(id);
+            if (!"PUBLISHED".equals(post.status())) {
+                throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "内容不存在或尚未发布");
+            }
+            return post;
         } catch (DataAccessException ex) {
-            return ThemeContentLibrary.find(id).map(seed -> seed.toSummary()).orElse(demoPosts.getFirst());
+            if (!readFallbackEnabled) {
+                throw ex;
+            }
+            return ThemeContentLibrary.find(id)
+                    .map(seed -> seed.toSummary())
+                    .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "内容不存在"));
         }
     }
 
     public List<PostSummary> related(Long id, int size) {
         try {
-            var records = postRepository.related(id, size);
-            return records.isEmpty() ? ThemeContentLibrary.related(id, size) : records;
+            return postRepository.related(id, size);
         } catch (DataAccessException ex) {
+            if (!readFallbackEnabled) {
+                throw ex;
+            }
             return ThemeContentLibrary.related(id, size);
         }
     }
 
-    public PostSummary create(Long authorId, CreatePostRequest request) {
-        try {
-            return postRepository.create(authorId, request);
-        } catch (DataAccessException ex) {
-            return fallbackCreate(request);
+    public PostSummary create(Long authorId, CreatePostRequest request, String idempotencyKey) {
+        requireWriteHeaders(authorId, idempotencyKey);
+        return postRepository.create(authorId, request, idempotencyKey);
+    }
+
+    public DraftView createDraft(Long authorId, SaveDraftRequest request, String idempotencyKey) {
+        requireWriteHeaders(authorId, idempotencyKey);
+        return postRepository.createDraft(authorId, request, idempotencyKey);
+    }
+
+    public List<DraftView> listDrafts(Long authorId, int size) {
+        requireUser(authorId);
+        return postRepository.listDrafts(authorId, Math.max(1, Math.min(size, 50)));
+    }
+
+    public DraftView getDraft(Long authorId, Long draftId) {
+        requireUser(authorId);
+        return postRepository.getDraft(authorId, draftId);
+    }
+
+    public DraftView updateDraft(Long authorId, Long draftId, SaveDraftRequest request, String idempotencyKey) {
+        requireWriteHeaders(authorId, idempotencyKey);
+        if (request.version() == null) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "保存草稿必须携带 version");
+        }
+        return postRepository.updateDraft(authorId, draftId, request, idempotencyKey);
+    }
+
+    public DraftView submitDraft(Long authorId, Long draftId, long version, String idempotencyKey) {
+        requireWriteHeaders(authorId, idempotencyKey);
+        return postRepository.submitDraft(authorId, draftId, version, idempotencyKey);
+    }
+
+    public Map<String, Object> createAppeal(Long userId, Long postId, String reason, String idempotencyKey) {
+        requireWriteHeaders(userId, idempotencyKey);
+        return postRepository.createAppeal(userId, postId, reason, idempotencyKey);
+    }
+
+    private void requireWriteHeaders(Long userId, String idempotencyKey) {
+        requireUser(userId);
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "写操作必须提供 Idempotency-Key");
+        }
+        if (idempotencyKey.length() > 128) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "Idempotency-Key 长度不能超过 128");
         }
     }
 
-    public Map<String, Object> createAppeal(Long userId, Long postId, String reason) {
-        try {
-            return postRepository.createAppeal(userId, postId, reason);
-        } catch (DataAccessException ex) {
-            return Map.of("appealId", System.currentTimeMillis(), "postId", postId, "status", "PENDING", "degraded", true);
+    private void requireUser(Long userId) {
+        if (userId == null || userId <= 0) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录");
         }
     }
 
@@ -79,40 +140,6 @@ public class PostService {
                 .filter(post -> theme == null || theme.isBlank() || post.theme().equalsIgnoreCase(theme))
                 .filter(post -> contentKind == null || contentKind.isBlank() || post.contentKind().equalsIgnoreCase(contentKind))
                 .filter(post -> difficulty == null || difficulty.isBlank() || post.difficulty().equalsIgnoreCase(difficulty))
-                .toList();
-    }
-
-    private PostSummary fallbackCreate(CreatePostRequest request) {
-        String excerpt = request.content().substring(0, Math.min(60, request.content().length()));
-        return new PostSummary(2001L, normalizeType(request.type()), normalizeTheme(request.theme()), normalizeContentKind(request.contentKind()),
-                normalizeDifficulty(request.difficulty()), Boolean.TRUE.equals(request.solvable()), 0,
-                request.title(), excerpt, "demo", request.tags() == null ? List.of() : request.tags(), List.of(), 0, 0, 0, "PENDING", java.time.Instant.now(),
-                splitDetails(request.clues()), List.of(), List.of(), Boolean.TRUE.equals(request.solvable()) ? "请根据线索提交你的推理结论。" : "", splitDetails(request.solution()), request.solution() == null ? "" : request.solution(), List.of(), List.of(), List.of());
-    }
-
-    private String normalizeType(String type) {
-        return type == null || type.isBlank() ? "TEXT" : type.toUpperCase();
-    }
-
-    private String normalizeTheme(String theme) {
-        return theme == null || theme.isBlank() ? "DEDUCTION" : theme.toUpperCase();
-    }
-
-    private String normalizeContentKind(String contentKind) {
-        return contentKind == null || contentKind.isBlank() ? "CASE_FILE" : contentKind.toUpperCase();
-    }
-
-    private String normalizeDifficulty(String difficulty) {
-        return difficulty == null || difficulty.isBlank() ? "MEDIUM" : difficulty.toUpperCase();
-    }
-
-    private List<String> splitDetails(String value) {
-        if (value == null || value.isBlank()) {
-            return List.of();
-        }
-        return java.util.Arrays.stream(value.split("\\R|;|；"))
-                .map(String::trim)
-                .filter(item -> !item.isBlank())
                 .toList();
     }
 }

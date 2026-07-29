@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.admin.api.AdminActionResult;
 import io.github.devcircle.admin.api.AuditItem;
 import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.common.event.EventEnvelope;
+import io.github.devcircle.common.error.BusinessException;
+import io.github.devcircle.common.error.ErrorCode;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -33,7 +36,7 @@ public class AdminService {
     }
 
     public List<AuditItem> pendingPosts() {
-        if (jdbcClient == null) return fallbackPendingPosts();
+        requireDatabase();
         try {
             return jdbcClient.sql("""
                             SELECT p.id, p.title, p.status, p.author_id
@@ -45,12 +48,12 @@ public class AdminService {
                     .query((rs, rowNum) -> new AuditItem(rs.getLong("id"), rs.getString("title"), rs.getString("status"), "user-" + rs.getLong("author_id")))
                     .list();
         } catch (DataAccessException ex) {
-            return fallbackPendingPosts();
+            throw dependencyUnavailable();
         }
     }
 
     public List<Map<String, Object>> moderationTasks(String queue, String riskLevel, String status, int page, int size) {
-        if (jdbcClient == null) return fallbackModerationTasks();
+        requireDatabase();
         int offset = Math.max(page - 1, 0) * size;
         try {
             return jdbcClient.sql("""
@@ -89,56 +92,58 @@ public class AdminService {
                     })
                     .list();
         } catch (DataAccessException ex) {
-            return fallbackModerationTasks();
+            throw dependencyUnavailable();
         }
     }
 
     @Transactional
-    public AdminActionResult approve(Long postId, Long auditorId, String traceId) {
-        return auditPost(postId, auditorId, traceId, "APPROVE_POST", "PUBLISHED", "APPROVED", EventTopics.AUDIT_COMPLETED);
+    public AdminActionResult approve(Long postId, Long auditorId, String traceId, String reason) {
+        return auditPost(postId, auditorId, traceId, "APPROVE_POST", "PUBLISHED", "APPROVED", EventTopics.AUDIT_COMPLETED, reason);
     }
 
     public AdminActionResult approve(Long postId) {
-        return approve(postId, 1L, null);
+        return approve(postId, 1L, null, "审核通过");
     }
 
     @Transactional
-    public AdminActionResult reject(Long postId, Long auditorId, String traceId) {
-        return auditPost(postId, auditorId, traceId, "REJECT_POST", "REJECTED", "REJECTED", EventTopics.CONTENT_REJECTED);
+    public AdminActionResult reject(Long postId, Long auditorId, String traceId, String reason) {
+        return auditPost(postId, auditorId, traceId, "REJECT_POST", "REJECTED", "REJECTED", EventTopics.CONTENT_REJECTED, reason);
     }
 
     public AdminActionResult reject(Long postId) {
-        return reject(postId, 1L, null);
+        return reject(postId, 1L, null, "审核驳回");
     }
 
     @Transactional
-    public AdminActionResult approveModerationTask(Long taskId, Long auditorId, String traceId) {
+    public AdminActionResult approveModerationTask(Long taskId, Long auditorId, String traceId, String reason) {
         Long postId = postIdByTask(taskId);
-        return postId == null
-                ? new AdminActionResult("APPROVE_MODERATION_TASK", Map.of("taskId", taskId, "degraded", true))
-                : auditPost(postId, auditorId, traceId, "APPROVE_POST", "PUBLISHED", "APPROVED", EventTopics.AUDIT_COMPLETED);
+        return auditPost(postId, auditorId, traceId, "APPROVE_POST", "PUBLISHED", "APPROVED", EventTopics.AUDIT_COMPLETED, reason);
     }
 
     @Transactional
-    public AdminActionResult rejectModerationTask(Long taskId, Long auditorId, String traceId) {
+    public AdminActionResult rejectModerationTask(Long taskId, Long auditorId, String traceId, String reason) {
         Long postId = postIdByTask(taskId);
-        return postId == null
-                ? new AdminActionResult("REJECT_MODERATION_TASK", Map.of("taskId", taskId, "degraded", true))
-                : auditPost(postId, auditorId, traceId, "REJECT_POST", "REJECTED", "REJECTED", EventTopics.CONTENT_REJECTED);
+        return auditPost(postId, auditorId, traceId, "REJECT_POST", "REJECTED", "REJECTED", EventTopics.CONTENT_REJECTED, reason);
     }
 
     @Transactional
-    public AdminActionResult escalateModerationTask(Long taskId, Long auditorId, String traceId) {
+    public AdminActionResult escalateModerationTask(Long taskId, Long auditorId, String traceId, String decisionReason) {
+        if (decisionReason != null) {
+            return updateModerationTask(taskId, auditorId, traceId, "ESCALATE_REVIEW", "ESCALATED", "ESCALATED", decisionReason);
+        }
         return updateModerationTask(taskId, auditorId, traceId, "ESCALATE_REVIEW", "ESCALATED", "ESCALATED", "升级复审");
     }
 
     @Transactional
-    public AdminActionResult requireChanges(Long taskId, Long auditorId, String traceId) {
+    public AdminActionResult requireChanges(Long taskId, Long auditorId, String traceId, String decisionReason) {
+        if (decisionReason != null) {
+            return updateModerationTask(taskId, auditorId, traceId, "REQUIRE_CHANGES", "CHANGES_REQUIRED", "NORMAL", decisionReason);
+        }
         return updateModerationTask(taskId, auditorId, traceId, "REQUIRE_CHANGES", "CHANGES_REQUIRED", "NORMAL", "要求作者修改");
     }
 
     public List<Map<String, Object>> appeals(String status, int page, int size) {
-        if (jdbcClient == null) return List.of(Map.of("appealId", 1, "postId", 1001, "status", "PENDING", "reason", "演示申诉"));
+        requireDatabase();
         int offset = Math.max(page - 1, 0) * size;
         try {
             return jdbcClient.sql("""
@@ -163,12 +168,12 @@ public class AdminService {
                     ))
                     .list();
         } catch (DataAccessException ex) {
-            return List.of(Map.of("appealId", 1, "postId", 1001, "status", "PENDING", "reason", "演示申诉"));
+            throw dependencyUnavailable();
         }
     }
 
     public List<Map<String, Object>> riskUsers(String status, int page, int size) {
-        if (jdbcClient == null) return fallbackRiskUsers();
+        requireDatabase();
         int offset = Math.max(page - 1, 0) * size;
         try {
             return jdbcClient.sql("""
@@ -191,12 +196,12 @@ public class AdminService {
                     ))
                     .list();
         } catch (DataAccessException ex) {
-            return fallbackRiskUsers();
+            throw dependencyUnavailable();
         }
     }
 
     public Map<String, Object> riskProfile(Long userId) {
-        if (jdbcClient == null) return Map.of("userId", userId, "status", "WATCH", "riskScore", 58, "signals", List.of());
+        requireDatabase();
         try {
             Map<String, Object> profile = jdbcClient.sql("SELECT user_id, status, risk_score, reason, updated_at FROM user_risk_profile WHERE user_id = :userId")
                     .param("userId", userId)
@@ -226,13 +231,13 @@ public class AdminService {
                     .list();
             return Map.of("profile", profile, "signals", signals);
         } catch (DataAccessException ex) {
-            return Map.of("userId", userId, "status", "WATCH", "riskScore", 58, "signals", List.of());
+            throw dependencyUnavailable();
         }
     }
 
     public AdminActionResult restrictUser(Long userId, String status) {
-        if (jdbcClient != null) {
-            jdbcClient.sql("""
+        requireDatabase();
+        jdbcClient.sql("""
                             INSERT INTO user_risk_profile(user_id, status, risk_score, reason, restricted_until)
                             VALUES (:userId, :status, 90, :reason, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 7 DAY))
                             ON DUPLICATE KEY UPDATE status = VALUES(status), risk_score = VALUES(risk_score), reason = VALUES(reason), restricted_until = VALUES(restricted_until)
@@ -240,23 +245,21 @@ public class AdminService {
                     .param("userId", userId)
                     .param("status", status == null || status.isBlank() ? "NO_POST" : status)
                     .param("reason", "管理员手动治理")
-                    .update();
-            logAudit(1L, "RESTRICT_USER", "USER", String.valueOf(userId), null, null, Map.of("status", status));
-        }
+                .update();
+        logAudit(1L, "RESTRICT_USER", "USER", String.valueOf(userId), null, null, Map.of("status", status));
         return new AdminActionResult("RESTRICT_USER", Map.of("userId", userId, "status", status == null ? "NO_POST" : status));
     }
 
     public AdminActionResult unrestrictUser(Long userId) {
-        if (jdbcClient != null) {
-            jdbcClient.sql("""
+        requireDatabase();
+        jdbcClient.sql("""
                             INSERT INTO user_risk_profile(user_id, status, risk_score, reason, restricted_until)
                             VALUES (:userId, 'NORMAL', 0, '', NULL)
                             ON DUPLICATE KEY UPDATE status = 'NORMAL', risk_score = 0, reason = '', restricted_until = NULL
                             """)
                     .param("userId", userId)
-                    .update();
-            logAudit(1L, "UNRESTRICT_USER", "USER", String.valueOf(userId), null, null, Map.of());
-        }
+                .update();
+        logAudit(1L, "UNRESTRICT_USER", "USER", String.valueOf(userId), null, null, Map.of());
         return new AdminActionResult("UNRESTRICT_USER", Map.of("userId", userId, "status", "NORMAL"));
     }
 
@@ -265,18 +268,18 @@ public class AdminService {
     }
 
     public AdminActionResult createTag() {
-        if (jdbcClient == null) return new AdminActionResult("CREATE_TAG", Map.of("tagId", 88, "name", "MysticVerse精选", "degraded", true));
+        requireDatabase();
         try {
             jdbcClient.sql("INSERT INTO tag(name, use_count) VALUES ('MysticVerse精选', 1) ON DUPLICATE KEY UPDATE use_count = use_count + 1").update();
             Long tagId = jdbcClient.sql("SELECT id FROM tag WHERE name = 'MysticVerse精选'").query(Long.class).single();
             return new AdminActionResult("CREATE_TAG", Map.of("tagId", tagId, "name", "MysticVerse精选"));
         } catch (DataAccessException ex) {
-            return new AdminActionResult("CREATE_TAG", Map.of("tagId", 88, "name", "MysticVerse精选", "degraded", true));
+            throw dependencyUnavailable();
         }
     }
 
     public Map<String, Object> overview() {
-        if (jdbcClient == null) return fallbackOverview();
+        requireDatabase();
         try {
             Long posts = oneLong("SELECT COUNT(*) FROM post");
             Long pending = oneLong("SELECT COUNT(*) FROM moderation_task WHERE status = 'PENDING'");
@@ -292,21 +295,15 @@ public class AdminService {
                     "auditPassRate", passRate,
                     "recommendImpressions", impressions,
                     "recommendEvents", recEvents,
-                    "riskUsers", riskUsers,
-                    "searchQps", 42.7,
-                    "dau", 3860
+                    "riskUsers", riskUsers
             );
         } catch (DataAccessException ex) {
-            return fallbackOverview();
+            throw dependencyUnavailable();
         }
     }
 
     public List<Map<String, Object>> themeMetrics() {
-        if (jdbcClient == null) return List.of(
-                Map.of("theme", "DEDUCTION", "completionRate", 0.42, "ctr", 0.18),
-                Map.of("theme", "SCI_FI", "favoriteRate", 0.31, "ctr", 0.15),
-                Map.of("theme", "COSMOS", "readDepth", 0.67, "ctr", 0.16)
-        );
+        requireDatabase();
         try {
             return jdbcClient.sql("""
                             SELECT theme,
@@ -326,12 +323,12 @@ public class AdminService {
                     ))
                     .list();
         } catch (DataAccessException ex) {
-            return List.of();
+            throw dependencyUnavailable();
         }
     }
 
     public List<Map<String, Object>> experiments() {
-        if (jdbcClient == null) return fallbackExperiments();
+        requireDatabase();
         try {
             return jdbcClient.sql("""
                             SELECT experiment_id, name, scene, status, traffic_percent, weights, updated_at
@@ -349,7 +346,7 @@ public class AdminService {
                     ))
                     .list();
         } catch (DataAccessException ex) {
-            return fallbackExperiments();
+            throw dependencyUnavailable();
         }
     }
 
@@ -357,9 +354,9 @@ public class AdminService {
         String experimentId = String.valueOf(payload.getOrDefault("experimentId", "exp-manual-" + System.currentTimeMillis()));
         String name = String.valueOf(payload.getOrDefault("name", "手动推荐实验"));
         String scene = String.valueOf(payload.getOrDefault("scene", "home"));
-        if (jdbcClient != null) {
-            try {
-                jdbcClient.sql("""
+        requireDatabase();
+        try {
+            jdbcClient.sql("""
                                 INSERT INTO recommend_experiment(experiment_id, name, scene, status, traffic_percent, weights)
                                 VALUES (:experimentId, :name, :scene, 'DRAFT', 0, CAST(:weights AS JSON))
                                 ON DUPLICATE KEY UPDATE name = VALUES(name), scene = VALUES(scene)
@@ -368,25 +365,27 @@ public class AdminService {
                         .param("name", name)
                         .param("scene", scene)
                         .param("weights", objectMapper.writeValueAsString(payload.getOrDefault("weights", Map.of("theme", 1.0))))
-                        .update();
-            } catch (DataAccessException | JsonProcessingException ignored) {
-            }
+                    .update();
+        } catch (DataAccessException | JsonProcessingException ex) {
+            throw dependencyUnavailable();
         }
         return new AdminActionResult("CREATE_RECOMMEND_EXPERIMENT", Map.of("experimentId", experimentId, "scene", scene, "status", "DRAFT"));
     }
 
     public AdminActionResult updateExperimentStatus(String experimentId, String status) {
-        if (jdbcClient != null) {
-            jdbcClient.sql("UPDATE recommend_experiment SET status = :status, traffic_percent = CASE WHEN :status = 'ACTIVE' THEN 100 ELSE traffic_percent END WHERE experiment_id = :experimentId")
+        requireDatabase();
+        int changed = jdbcClient.sql("UPDATE recommend_experiment SET status = :status, traffic_percent = CASE WHEN :status = 'ACTIVE' THEN 100 ELSE traffic_percent END WHERE experiment_id = :experimentId")
                     .param("status", status)
                     .param("experimentId", experimentId)
-                    .update();
+                .update();
+        if (changed != 1) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "推荐实验不存在");
         }
         return new AdminActionResult("UPDATE_RECOMMEND_EXPERIMENT", Map.of("experimentId", experimentId, "status", status));
     }
 
     public List<Map<String, Object>> auditLogs(int page, int size, String action) {
-        if (jdbcClient == null) return List.of(Map.of("action", "DEGRADED_AUDIT_LOG", "targetType", "SYSTEM", "targetId", "fallback"));
+        requireDatabase();
         int offset = Math.max(page - 1, 0) * size;
         try {
             return jdbcClient.sql("""
@@ -411,13 +410,13 @@ public class AdminService {
                     ))
                     .list();
         } catch (DataAccessException ex) {
-            return List.of(Map.of("action", "DEGRADED_AUDIT_LOG", "targetType", "SYSTEM", "targetId", "fallback"));
+            throw dependencyUnavailable();
         }
     }
 
     public Map<String, Object> opsHealth() {
         if (jdbcClient == null) {
-            return Map.of("database", "DEGRADED", "outboxBacklog", 0, "source", "MOCK_FALLBACK", "degraded", true);
+            return Map.of("database", "DOWN", "source", "HEALTH_CHECK", "degraded", true);
         }
         try {
             Long posts = oneLong("SELECT COUNT(*) FROM post");
@@ -433,14 +432,12 @@ public class AdminService {
                     "source", "DB"
             );
         } catch (DataAccessException ex) {
-            return Map.of("database", "DOWN", "outboxBacklog", 0, "source", "MOCK_FALLBACK", "degraded", true, "degradationReason", ex.getClass().getSimpleName());
+            return Map.of("database", "DOWN", "source", "HEALTH_CHECK", "degraded", true);
         }
     }
 
     public List<Map<String, Object>> outboxEvents(String status, String topic, int page, int size) {
-        if (jdbcClient == null) {
-            return List.of(Map.of("eventId", "demo-outbox", "topic", "post.created", "status", "NEW", "source", "MOCK_FALLBACK"));
-        }
+        requireDatabase();
         int offset = Math.max(page - 1, 0) * size;
         try {
             return jdbcClient.sql("""
@@ -469,14 +466,12 @@ public class AdminService {
                     })
                     .list();
         } catch (DataAccessException ex) {
-            return List.of(Map.of("eventId", "demo-outbox", "topic", "post.created", "status", "NEW", "source", "MOCK_FALLBACK", "degradationReason", ex.getClass().getSimpleName()));
+            throw dependencyUnavailable();
         }
     }
 
     public AdminActionResult replayOutbox(String topic, int batchSize) {
-        if (jdbcClient == null) {
-            return new AdminActionResult("REPLAY_OUTBOX", Map.of("affected", 0, "source", "MOCK_FALLBACK", "degraded", true));
-        }
+        requireDatabase();
         try {
             int affected = jdbcClient.sql("""
                             UPDATE outbox_event
@@ -492,13 +487,13 @@ public class AdminService {
             logAudit(1L, "REPLAY_OUTBOX", "OUTBOX", topic == null ? "*" : topic, null, null, Map.of("affected", affected));
             return new AdminActionResult("REPLAY_OUTBOX", Map.of("affected", affected, "topic", topic == null ? "*" : topic));
         } catch (DataAccessException ex) {
-            return new AdminActionResult("REPLAY_OUTBOX", Map.of("affected", 0, "degraded", true, "source", "MOCK_FALLBACK", "degradationReason", ex.getClass().getSimpleName()));
+            throw dependencyUnavailable();
         }
     }
 
     public Map<String, Object> degradation() {
         if (jdbcClient == null) {
-            return Map.of("degraded", true, "source", "MOCK_FALLBACK", "reason", "Admin service is running without JdbcClient");
+            return Map.of("degraded", true, "source", "HEALTH_CHECK", "reason", "DATABASE_UNAVAILABLE");
         }
         try {
             Long outboxBacklog = oneLong("SELECT COUNT(*) FROM outbox_event WHERE status = 'NEW'");
@@ -514,26 +509,34 @@ public class AdminService {
                     "pendingModeration", moderationPending
             );
         } catch (DataAccessException ex) {
-            return Map.of("degraded", true, "source", "MOCK_FALLBACK", "reason", ex.getClass().getSimpleName());
+            return Map.of("degraded", true, "source", "HEALTH_CHECK", "reason", "DATABASE_UNAVAILABLE");
         }
     }
 
-    private AdminActionResult auditPost(Long postId, Long auditorId, String traceId, String action, String postStatus, String taskStatus, String topic) {
-        if (jdbcClient == null) return new AdminActionResult(action, Map.of("postId", postId, "status", postStatus, "event", topic, "degraded", true));
+    private AdminActionResult auditPost(Long postId, Long auditorId, String traceId, String action, String postStatus, String taskStatus, String topic, String reason) {
+        requireDatabase();
+        requireReason(reason);
         try {
-            jdbcClient.sql("UPDATE post SET status = :status WHERE id = :postId")
+            int postRows = jdbcClient.sql("UPDATE post SET status = :status, review_reason = :reason WHERE id = :postId AND status = 'PENDING'")
                     .param("status", postStatus)
+                    .param("reason", reason.trim())
                     .param("postId", postId)
                     .update();
-            jdbcClient.sql("""
+            if (postRows == 0) {
+                throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "待审核内容不存在或状态已变化");
+            }
+            int taskRows = jdbcClient.sql("""
                             UPDATE moderation_task
                             SET status = :taskStatus, reviewer_id = :auditorId, reviewed_at = CURRENT_TIMESTAMP
-                            WHERE post_id = :postId AND status IN ('PENDING', 'ESCALATED', 'CHANGES_REQUIRED')
+                            WHERE post_id = :postId AND status IN ('PENDING', 'ESCALATED')
                             """)
                     .param("taskStatus", taskStatus)
                     .param("auditorId", auditorId)
                     .param("postId", postId)
                     .update();
+            if (taskRows == 0) {
+                throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "审核任务不存在或已处理");
+            }
             Long taskId = jdbcClient.sql("SELECT COALESCE(MAX(id), 0) FROM moderation_task WHERE post_id = :postId")
                     .param("postId", postId)
                     .query(Long.class)
@@ -542,40 +545,54 @@ public class AdminService {
                     .param("postId", postId)
                     .param("auditorId", auditorId)
                     .param("action", action)
-                    .param("reason", "v1.1 governance moderation")
+                    .param("reason", reason.trim())
                     .update();
             jdbcClient.sql("INSERT INTO moderation_decision(task_id, post_id, reviewer_id, action, reason) VALUES (:taskId, :postId, :auditorId, :action, :reason)")
                     .param("taskId", taskId)
                     .param("postId", postId)
                     .param("auditorId", auditorId)
                     .param("action", action)
-                    .param("reason", "v1.1 governance moderation")
+                    .param("reason", reason.trim())
                     .update();
+            if ("PUBLISHED".equals(postStatus)) {
+                jdbcClient.sql("""
+                                UPDATE media_asset m
+                                JOIN post_media pm ON pm.media_id = m.id
+                                SET m.status = 'APPROVED'
+                                WHERE pm.post_id = :postId AND m.status = 'PENDING_REVIEW'
+                                """)
+                        .param("postId", postId)
+                        .update();
+            }
             logAudit(auditorId, action, "POST", String.valueOf(postId), null, traceId, Map.of("status", postStatus));
             writeOutbox(postId, action, postStatus, topic);
             return new AdminActionResult(action, Map.of("postId", postId, "status", postStatus, "event", topic));
         } catch (DataAccessException ex) {
-            return new AdminActionResult(action, Map.of("postId", postId, "status", postStatus, "event", topic, "degraded", true));
+            throw ex;
         }
     }
 
     private AdminActionResult updateModerationTask(Long taskId, Long auditorId, String traceId, String action, String status, String reviewLevel, String reason) {
-        if (jdbcClient == null) return new AdminActionResult(action, Map.of("taskId", taskId, "status", status, "degraded", true));
+        requireDatabase();
+        requireReason(reason);
         try {
             Long postId = jdbcClient.sql("SELECT post_id FROM moderation_task WHERE id = :taskId")
                     .param("taskId", taskId)
                     .query(Long.class)
                     .single();
-            jdbcClient.sql("""
+            int updated = jdbcClient.sql("""
                             UPDATE moderation_task
                             SET status = :status, review_level = :reviewLevel, reviewer_id = :auditorId, reviewed_at = CURRENT_TIMESTAMP
-                            WHERE id = :taskId
+                            WHERE id = :taskId AND status IN ('PENDING', 'ESCALATED')
                             """)
                     .param("status", status)
                     .param("reviewLevel", reviewLevel)
                     .param("auditorId", auditorId)
                     .param("taskId", taskId)
                     .update();
+            if (updated == 0) {
+                throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "审核任务不存在或已处理");
+            }
             jdbcClient.sql("INSERT INTO moderation_decision(task_id, post_id, reviewer_id, action, reason) VALUES (:taskId, :postId, :auditorId, :action, :reason)")
                     .param("taskId", taskId)
                     .param("postId", postId)
@@ -583,27 +600,35 @@ public class AdminService {
                     .param("action", action)
                     .param("reason", reason)
                     .update();
+            if ("CHANGES_REQUIRED".equals(status)) {
+                jdbcClient.sql("UPDATE post SET status = 'CHANGES_REQUIRED', review_reason = :reason WHERE id = :postId AND status = 'PENDING'")
+                        .param("reason", reason.trim())
+                        .param("postId", postId)
+                        .update();
+                writeOutbox(postId, action, "CHANGES_REQUIRED", EventTopics.CONTENT_REJECTED);
+            }
             logAudit(auditorId, action, "MODERATION_TASK", String.valueOf(taskId), null, traceId, Map.of("postId", postId, "status", status));
             return new AdminActionResult(action, Map.of("taskId", taskId, "postId", postId, "status", status));
         } catch (DataAccessException ex) {
-            return new AdminActionResult(action, Map.of("taskId", taskId, "status", status, "degraded", true));
+            throw ex;
         }
     }
 
     private Long postIdByTask(Long taskId) {
-        if (jdbcClient == null) return null;
+        requireDatabase();
         try {
             return jdbcClient.sql("SELECT post_id FROM moderation_task WHERE id = :taskId")
                     .param("taskId", taskId)
                     .query(Long.class)
-                    .single();
+                    .optional()
+                    .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "审核任务不存在"));
         } catch (DataAccessException ex) {
-            return null;
+            throw ex;
         }
     }
 
     private void logAudit(Long userId, String action, String targetType, String targetId, String ip, String traceId, Map<String, Object> metadata) {
-        if (jdbcClient == null) return;
+        requireDatabase();
         try {
             jdbcClient.sql("""
                             INSERT INTO audit_log(user_id, action, target_type, target_id, ip, trace_id, metadata)
@@ -617,24 +642,51 @@ public class AdminService {
                     .param("traceId", traceId)
                     .param("metadata", objectMapper.writeValueAsString(metadata))
                     .update();
-        } catch (DataAccessException | JsonProcessingException ignored) {
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Failed to serialize audit metadata", ex);
         }
     }
 
     private void writeOutbox(Long postId, String action, String status, String topic) {
-        if (jdbcClient == null) return;
+        requireDatabase();
         try {
-            String payload = objectMapper.writeValueAsString(Map.of("postId", postId, "action", action, "status", status, "topic", topic));
+            Long receiverId = jdbcClient.sql("SELECT author_id FROM post WHERE id = :postId")
+                    .param("postId", postId)
+                    .query(Long.class)
+                    .single();
+            EventEnvelope event = EventEnvelope.now(topic, "dc-content", String.valueOf(postId),
+                    Map.of("postId", postId, "receiverId", receiverId, "action", action, "status", status));
+            String payload = objectMapper.writeValueAsString(event);
             jdbcClient.sql("""
                             INSERT INTO outbox_event(event_id, topic, aggregate_type, aggregate_id, payload)
                             VALUES (:eventId, :topic, 'POST_AUDIT', :aggregateId, CAST(:payload AS JSON))
                             """)
-                    .param("eventId", UUID.randomUUID().toString())
-                    .param("topic", topic)
+                    .param("eventId", event.eventId().toString())
+                    .param("topic", event.type())
                     .param("aggregateId", String.valueOf(postId))
                     .param("payload", payload)
                     .update();
-        } catch (DataAccessException | JsonProcessingException ignored) {
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Failed to serialize moderation event", ex);
+        }
+    }
+
+    private void requireDatabase() {
+        if (jdbcClient == null) {
+            throw new BusinessException(ErrorCode.DEPENDENCY_UNAVAILABLE, "审核数据服务暂时不可用");
+        }
+    }
+
+    private BusinessException dependencyUnavailable() {
+        return new BusinessException(ErrorCode.DEPENDENCY_UNAVAILABLE, "运营数据暂时不可用");
+    }
+
+    private void requireReason(String reason) {
+        if (reason == null || reason.isBlank()) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "审核操作必须填写理由");
+        }
+        if (reason.length() > 512) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "审核理由不能超过 512 个字符");
         }
     }
 
@@ -647,35 +699,4 @@ public class AdminService {
         return value == null || value.isBlank() ? null : value;
     }
 
-    private List<AuditItem> fallbackPendingPosts() {
-        return List.of(
-                new AuditItem(1002L, "雾港钟楼的第十三声", "PENDING", "林墨"),
-                new AuditItem(1043L, "土卫六雨季城市设定稿", "PENDING", "秦川")
-        );
-    }
-
-    private List<Map<String, Object>> fallbackModerationTasks() {
-        return List.of(
-                Map.of("taskId", 1, "postId", 1002, "title", "雾港钟楼的第十三声", "queue", "manual-review", "riskLevel", "MEDIUM", "riskScore", 62, "status", "PENDING", "reason", "标题与正文高度重复"),
-                Map.of("taskId", 2, "postId", 1043, "title", "土卫六雨季城市设定稿", "queue", "fast-lane", "riskLevel", "LOW", "riskScore", 18, "status", "PENDING", "reason", "常规机审通过后等待人工抽样")
-        );
-    }
-
-    private List<Map<String, Object>> fallbackRiskUsers() {
-        return List.of(
-                Map.of("userId", 12, "status", "WATCH", "riskScore", 58, "reason", "短时间高频发帖"),
-                Map.of("userId", 18, "status", "NO_POST", "riskScore", 91, "reason", "多次命中敏感标签")
-        );
-    }
-
-    private List<Map<String, Object>> fallbackExperiments() {
-        return List.of(
-                Map.of("experimentId", "exp-theme-feed-v1", "name", "主题内容多路召回实验", "scene", "home", "status", "ACTIVE", "trafficPercent", 100),
-                Map.of("experimentId", "exp-deduction-solve-v1", "name", "推理馆解谜完成率实验", "scene", "deduction", "status", "ACTIVE", "trafficPercent", 100)
-        );
-    }
-
-    private Map<String, Object> fallbackOverview() {
-        return Map.of("users", 12890, "posts", 120, "pendingAudits", 18, "auditPassRate", 0.83, "recommendImpressions", 24000, "riskUsers", 7, "searchQps", 42.7, "degraded", true);
-    }
 }

@@ -1,0 +1,28 @@
+server:
+  port: 8203
+  shutdown: graceful
+spring:
+  application:
+    name: dc-discovery
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: search
+              uri: ${DC_SEARCH_URI:http://localhost:8106}
+              predicates: [Path=/api/search/**]
+            - id: recommend
+              uri: ${DC_RECOMMEND_URI:http://localhost:8107}
+              predicates: [Path=/api/recommend/**]
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true

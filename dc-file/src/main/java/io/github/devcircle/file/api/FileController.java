@@ -4,21 +4,27 @@ import io.github.devcircle.common.api.ApiResponse;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.file.infrastructure.MediaRepository;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.multipart.MultipartFile;
-import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.BucketAlreadyExistsException;
 import software.amazon.awssdk.services.s3.model.BucketAlreadyOwnedByYouException;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
-import java.io.IOException;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -29,63 +35,87 @@ import java.util.UUID;
 class FileController {
     private static final Set<String> ALLOWED_TYPES = Set.of("image/png", "image/jpeg", "image/webp", "video/mp4");
     private static final Map<String, Set<String>> ALLOWED_EXTENSIONS = Map.of(
-            "image/png", Set.of("png"),
-            "image/jpeg", Set.of("jpg", "jpeg"),
-            "image/webp", Set.of("webp"),
-            "video/mp4", Set.of("mp4")
-    );
+            "image/png", Set.of("png"), "image/jpeg", Set.of("jpg", "jpeg"),
+            "image/webp", Set.of("webp"), "video/mp4", Set.of("mp4"));
 
     private final S3Client s3Client;
+    private final S3Presigner presigner;
     private final MediaRepository mediaRepository;
     private final String bucket;
-    private final String publicBaseUrl;
+    private final String internalBaseUrl;
     private final long maxBytes;
+    private final Duration intentTtl;
 
-    FileController(S3Client s3Client,
-                   MediaRepository mediaRepository,
+    FileController(S3Client s3Client, S3Presigner presigner, MediaRepository mediaRepository,
                    @Value("${devcircle.s3.bucket}") String bucket,
-                   @Value("${devcircle.s3.public-base-url}") String publicBaseUrl,
-                   @Value("${devcircle.upload.max-bytes:10485760}") long maxBytes) {
+                   @Value("${devcircle.s3.public-base-url}") String internalBaseUrl,
+                   @Value("${devcircle.upload.max-bytes:10485760}") long maxBytes,
+                   @Value("${devcircle.upload.intent-ttl-minutes:15}") long intentTtlMinutes) {
         this.s3Client = s3Client;
+        this.presigner = presigner;
         this.mediaRepository = mediaRepository;
         this.bucket = bucket;
-        this.publicBaseUrl = publicBaseUrl;
+        this.internalBaseUrl = internalBaseUrl;
         this.maxBytes = maxBytes;
+        this.intentTtl = Duration.ofMinutes(Math.max(1, Math.min(intentTtlMinutes, 60)));
     }
 
-    @PostMapping
-    ApiResponse<FileUploadResult> upload(@RequestPart MultipartFile file,
-                                         @RequestParam(required = false) Integer width,
-                                         @RequestParam(required = false) Integer height,
-                                         @RequestParam(required = false) Integer durationSeconds) throws IOException {
-        byte[] bytes = file.getBytes();
-        String contentType = normalizeContentType(file.getContentType());
-        validateUpload(file.getOriginalFilename(), contentType, bytes);
+    @PostMapping("/intents")
+    ApiResponse<UploadIntentResult> createIntent(@RequestHeader("X-User-Id") Long userId,
+                                                  @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                                  @Valid @RequestBody UploadIntentRequest input) {
+        requireKey(idempotencyKey);
+        String contentType = normalizeContentType(input.contentType());
+        validateMetadata(input.filename(), contentType, input.size());
         ensureBucket();
-        var objectKey = "uploads/" + UUID.randomUUID() + "-" + sanitizeFilename(file.getOriginalFilename());
-        s3Client.putObject(PutObjectRequest.builder()
-                        .bucket(bucket)
-                        .key(objectKey)
-                        .contentType(contentType)
-                        .build(),
-                RequestBody.fromBytes(bytes));
-        String url = publicBaseUrl.replaceAll("/$", "") + "/" + objectKey;
-        return ApiResponse.ok(mediaRepository.save(objectKey, url, contentType, file.getSize(), width, height, durationSeconds));
+        Instant expiresAt = Instant.now().plus(intentTtl);
+        String objectKey = "private/uploads/" + userId + "/" + UUID.randomUUID() + "-" + sanitizeFilename(input.filename());
+        UploadIntentRequest request = new UploadIntentRequest(input.filename(), contentType, input.size(),
+                input.width(), input.height(), input.durationSeconds());
+        MediaRepository.AssetIntent asset = mediaRepository.createIntent(userId, idempotencyKey, objectKey,
+                internalBaseUrl.replaceAll("/$", "") + "/" + objectKey, request, expiresAt);
+        PutObjectRequest putObject = PutObjectRequest.builder()
+                .bucket(bucket).key(asset.objectKey()).contentType(asset.contentType()).contentLength(asset.expectedSize()).build();
+        var signed = presigner.presignPutObject(PutObjectPresignRequest.builder()
+                .signatureDuration(intentTtl).putObjectRequest(putObject).build());
+        return ApiResponse.ok(new UploadIntentResult(asset.id(), asset.objectKey(), signed.url().toString(),
+                Map.of("Content-Type", asset.contentType()), expiresAt));
     }
 
-    private void validateUpload(String filename, String contentType, byte[] bytes) {
-        if (bytes.length == 0 || bytes.length > maxBytes) {
-            throw new BusinessException(ErrorCode.UPLOAD_REJECTED, "文件为空或超过上传大小限制");
+    @PostMapping("/{id}/complete")
+    ApiResponse<FileUploadResult> complete(@RequestHeader("X-User-Id") Long userId,
+                                           @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                           @PathVariable Long id) {
+        requireKey(idempotencyKey);
+        MediaRepository.AssetIntent asset = mediaRepository.requireOwned(userId, id);
+        if (asset.expiresAt() != null && asset.expiresAt().isBefore(Instant.now()) && !"COMPLETED".equals(asset.uploadStatus())) {
+            throw new BusinessException(ErrorCode.UPLOAD_REJECTED, "上传凭证已过期，请重新申请");
         }
-        if (!ALLOWED_TYPES.contains(contentType)) {
-            throw new BusinessException(ErrorCode.UPLOAD_REJECTED, "仅允许上传 png、jpeg、webp 图片或 mp4 视频");
+        var head = s3Client.headObject(HeadObjectRequest.builder().bucket(bucket).key(asset.objectKey()).build());
+        try {
+            if (head.contentLength() != asset.expectedSize() || head.contentLength() <= 0 || head.contentLength() > maxBytes) {
+                throw new BusinessException(ErrorCode.UPLOAD_REJECTED, "上传文件大小与申请信息不一致");
+            }
+            if (!asset.contentType().equalsIgnoreCase(normalizeContentType(head.contentType()))) {
+                throw new BusinessException(ErrorCode.UPLOAD_REJECTED, "上传文件 MIME 类型与申请信息不一致");
+            }
+            byte[] prefix = s3Client.getObjectAsBytes(GetObjectRequest.builder()
+                    .bucket(bucket).key(asset.objectKey()).range("bytes=0-15").build()).asByteArray();
+            if (!magicMatches(asset.contentType(), prefix)) {
+                throw new BusinessException(ErrorCode.UPLOAD_REJECTED, "文件头校验失败，上传内容与声明类型不一致");
+            }
+        } catch (BusinessException ex) {
+            s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(asset.objectKey()).build());
+            throw ex;
         }
-        String extension = extension(filename);
-        if (!ALLOWED_EXTENSIONS.get(contentType).contains(extension)) {
+        return ApiResponse.ok(mediaRepository.complete(userId, id, idempotencyKey, head.contentLength()));
+    }
+
+    private void validateMetadata(String filename, String contentType, long size) {
+        if (size <= 0 || size > maxBytes) throw new BusinessException(ErrorCode.UPLOAD_REJECTED, "文件为空或超过上传大小限制");
+        if (!ALLOWED_TYPES.contains(contentType)) throw new BusinessException(ErrorCode.UPLOAD_REJECTED, "仅允许 PNG、JPEG、WebP 图片或 MP4 视频");
+        if (!ALLOWED_EXTENSIONS.get(contentType).contains(extension(filename))) {
             throw new BusinessException(ErrorCode.UPLOAD_REJECTED, "文件扩展名与 MIME 类型不匹配");
-        }
-        if (!magicMatches(contentType, bytes)) {
-            throw new BusinessException(ErrorCode.UPLOAD_REJECTED, "文件头校验失败，疑似伪造上传类型");
         }
     }
 
@@ -101,34 +131,22 @@ class FileController {
     }
 
     private boolean startsWith(byte[] bytes, int... magic) {
-        if (bytes.length < magic.length) {
-            return false;
-        }
-        for (int i = 0; i < magic.length; i++) {
-            if ((bytes[i] & 0xFF) != magic[i]) {
-                return false;
-            }
-        }
+        if (bytes.length < magic.length) return false;
+        for (int i = 0; i < magic.length; i++) if ((bytes[i] & 0xFF) != magic[i]) return false;
         return true;
     }
 
-    private String normalizeContentType(String contentType) {
-        return contentType == null ? "" : contentType.toLowerCase(Locale.ROOT);
+    private void requireKey(String key) {
+        if (key == null || key.isBlank() || key.length() > 128) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "写操作必须提供有效的 Idempotency-Key");
+        }
     }
 
+    private String normalizeContentType(String value) { return value == null ? "" : value.toLowerCase(Locale.ROOT); }
     private String extension(String filename) {
-        if (filename == null || !filename.contains(".")) {
-            return "";
-        }
-        return filename.substring(filename.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
+        return filename == null || !filename.contains(".") ? "" : filename.substring(filename.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
     }
-
-    private String sanitizeFilename(String filename) {
-        if (filename == null || filename.isBlank()) {
-            return "upload.bin";
-        }
-        return filename.replaceAll("[^a-zA-Z0-9._-]", "_");
-    }
+    private String sanitizeFilename(String filename) { return filename.replaceAll("[^a-zA-Z0-9._-]", "_"); }
 
     private void ensureBucket() {
         try {

@@ -2,22 +2,48 @@ package io.github.devcircle.comment.application;
 
 import io.github.devcircle.comment.api.CommentView;
 import io.github.devcircle.comment.api.CreateCommentRequest;
+import io.github.devcircle.comment.infrastructure.CommentRepository;
+import io.github.devcircle.common.error.BusinessException;
+import io.github.devcircle.common.error.ErrorCode;
 import org.springframework.stereotype.Service;
 
-import java.time.Instant;
 import java.util.List;
 
 @Service
 public class CommentService {
-    public List<CommentView> list(Long postId) {
-        return List.of(
-                new CommentView(501L, postId, null, "zhou", "这个 Outbox 表建议加状态索引和补偿任务。", "VISIBLE", Instant.now().minusSeconds(1800)),
-                new CommentView(502L, postId, 501L, "lin", "同意，计划放到可靠事件模块。", "VISIBLE", Instant.now().minusSeconds(900))
-        );
+    private final CommentRepository repository;
+
+    public CommentService(CommentRepository repository) {
+        this.repository = repository;
     }
 
-    public CommentView create(CreateCommentRequest request) {
-        return new CommentView(9001L, request.postId(), request.parentId(), "demo", request.content(), "PENDING", Instant.now());
+    public List<CommentView> list(Long postId, Long beforeId, int size) {
+        return repository.list(postId, beforeId, size);
+    }
+
+    public CommentView create(Long userId, String idempotencyKey, CreateCommentRequest request) {
+        if (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > 128) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "写操作必须提供有效的 Idempotency-Key");
+        }
+        return repository.create(userId, request.postId(), request.parentId(), request.content(), idempotencyKey);
+    }
+
+    public void deleteOwn(Long commentId, Long userId, String idempotencyKey) {
+        requireKey(idempotencyKey);
+        repository.deleteOwn(commentId, userId, idempotencyKey);
+    }
+
+    public void hide(Long commentId, Long moderatorId, String roles, String idempotencyKey, String reason) {
+        if (roles == null || (!roles.contains("MODERATOR") && !roles.contains("ADMIN"))) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "需要审核权限");
+        }
+        requireKey(idempotencyKey);
+        repository.hide(commentId, moderatorId, idempotencyKey, reason);
+    }
+
+    private void requireKey(String key) {
+        if (key == null || key.isBlank() || key.length() > 128) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "写操作必须提供有效的 Idempotency-Key");
+        }
     }
 }
-

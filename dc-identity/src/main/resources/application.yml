@@ -1,0 +1,34 @@
+server:
+  port: 8201
+  shutdown: graceful
+spring:
+  application:
+    name: dc-identity
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: auth
+              uri: ${DC_AUTH_URI:http://localhost:8101}
+              predicates: [Path=/api/auth/**]
+            - id: user
+              uri: ${DC_USER_URI:http://localhost:8102}
+              predicates: [Path=/api/users/**]
+            - id: interaction
+              uri: ${DC_INTERACTION_URI:http://localhost:8105}
+              predicates: [Path=/api/posts/*/like,/api/posts/*/favorite]
+            - id: notification
+              uri: ${DC_NOTIFICATION_URI:http://localhost:8108}
+              predicates: [Path=/api/notifications/**,/ws/notifications/**]
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true

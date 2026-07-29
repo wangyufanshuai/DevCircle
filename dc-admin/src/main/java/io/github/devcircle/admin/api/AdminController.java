@@ -8,6 +8,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestBody;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -29,16 +31,18 @@ class AdminController {
 
     @PostMapping("/audits/posts/{id}/approve")
     ApiResponse<AdminActionResult> approve(@PathVariable Long id,
-                                           @RequestHeader(value = "X-User-Id", defaultValue = "1") Long userId,
-                                           @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-        return ApiResponse.ok(adminService.approve(id, userId, traceId));
+                                           @RequestHeader("X-User-Id") Long userId,
+                                           @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
+                                           @Valid @RequestBody ModerationDecisionRequest request) {
+        return ApiResponse.ok(adminService.approve(id, userId, traceId, request.reason()));
     }
 
     @PostMapping("/audits/posts/{id}/reject")
     ApiResponse<AdminActionResult> reject(@PathVariable Long id,
-                                          @RequestHeader(value = "X-User-Id", defaultValue = "1") Long userId,
-                                          @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-        return ApiResponse.ok(adminService.reject(id, userId, traceId));
+                                          @RequestHeader("X-User-Id") Long userId,
+                                          @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
+                                          @Valid @RequestBody ModerationDecisionRequest request) {
+        return ApiResponse.ok(adminService.reject(id, userId, traceId, request.reason()));
     }
 
     @GetMapping("/moderation/tasks")
@@ -52,30 +56,34 @@ class AdminController {
 
     @PostMapping("/moderation/tasks/{id}/approve")
     ApiResponse<AdminActionResult> approveTask(@PathVariable Long id,
-                                               @RequestHeader(value = "X-User-Id", defaultValue = "1") Long userId,
-                                               @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-        return ApiResponse.ok(adminService.approveModerationTask(id, userId, traceId));
+                                               @RequestHeader("X-User-Id") Long userId,
+                                               @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
+                                               @Valid @RequestBody ModerationDecisionRequest request) {
+        return ApiResponse.ok(adminService.approveModerationTask(id, userId, traceId, request.reason()));
     }
 
     @PostMapping("/moderation/tasks/{id}/reject")
     ApiResponse<AdminActionResult> rejectTask(@PathVariable Long id,
-                                              @RequestHeader(value = "X-User-Id", defaultValue = "1") Long userId,
-                                              @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-        return ApiResponse.ok(adminService.rejectModerationTask(id, userId, traceId));
+                                              @RequestHeader("X-User-Id") Long userId,
+                                              @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
+                                              @Valid @RequestBody ModerationDecisionRequest request) {
+        return ApiResponse.ok(adminService.rejectModerationTask(id, userId, traceId, request.reason()));
     }
 
     @PostMapping("/moderation/tasks/{id}/escalate")
     ApiResponse<AdminActionResult> escalateTask(@PathVariable Long id,
-                                                @RequestHeader(value = "X-User-Id", defaultValue = "1") Long userId,
-                                                @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-        return ApiResponse.ok(adminService.escalateModerationTask(id, userId, traceId));
+                                                @RequestHeader("X-User-Id") Long userId,
+                                                @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
+                                                @Valid @RequestBody ModerationDecisionRequest request) {
+        return ApiResponse.ok(adminService.escalateModerationTask(id, userId, traceId, request.reason()));
     }
 
     @PostMapping("/moderation/tasks/{id}/require-changes")
     ApiResponse<AdminActionResult> requireChanges(@PathVariable Long id,
-                                                  @RequestHeader(value = "X-User-Id", defaultValue = "1") Long userId,
-                                                  @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-        return ApiResponse.ok(adminService.requireChanges(id, userId, traceId));
+                                                  @RequestHeader("X-User-Id") Long userId,
+                                                  @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
+                                                  @Valid @RequestBody ModerationDecisionRequest request) {
+        return ApiResponse.ok(adminService.requireChanges(id, userId, traceId, request.reason()));
     }
 
     @GetMapping("/appeals")

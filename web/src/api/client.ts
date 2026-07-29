@@ -1,366 +1,132 @@
-import { mockAudits, mockLeaderboard, mockNotifications, mockPosts, mockRecommendations } from './mock'
 import type {
-  ApiResponse,
-  AuditItem,
-  CreatePostRequest,
-  CursorPage,
-  DeductionAnswerResult,
-  DegradationNotice,
-  DegradationOverview,
-  FeedItem,
-  FileUploadResult,
-  FollowResult,
-  InteractionResult,
-  LeaderboardEntry,
-  ModerationTask,
-  NotificationItem,
-  OpsHealth,
-  OutboxEvent,
-  PageResponse,
-  Post,
-  RecommendExperiment,
-  RiskUser
+  ApiResponse, CommentItem, CursorPage, DeductionAnswerResult, Draft, FeedItem, InteractionResult,
+  LoginResponse, ModerationTask, NotificationItem, PageResponse, Post, SaveDraftRequest,
+  Theme, UploadIntent, UserSession
 } from './types'
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
-const DEMO_TOKEN = import.meta.env.VITE_DEMO_TOKEN ?? 'Bearer demo-access-token-demo'
-const DEMO_ADMIN_TOKEN = import.meta.env.VITE_DEMO_ADMIN_TOKEN ?? 'Bearer demo-access-token-admin'
-const ENABLE_DEMO_FALLBACK = import.meta.env.VITE_ENABLE_DEMO_FALLBACK !== 'false'
-const TOKEN_KEY = 'devcircle.accessToken'
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
+let accessToken = ''
+let session: UserSession | null = null
+let refreshPromise: Promise<LoginResponse | null> | null = null
 
-export function currentToken(): string {
-  return localStorage.getItem(TOKEN_KEY) || DEMO_ADMIN_TOKEN || DEMO_TOKEN
-}
-
-export function setAccessToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token)
-}
-
-function endpoint(path: string): string {
-  return path.startsWith('http') ? path : `${API_BASE_URL}${path}`
-}
-
-function markDegraded(feature: string, reason: string, source = 'MOCK_FALLBACK'): void {
-  const detail: DegradationNotice = { feature, source, reason, at: new Date().toISOString() }
-  window.dispatchEvent(new CustomEvent('devcircle-api-degraded', { detail }))
-}
-
-async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers)
-  headers.set('Authorization', currentToken())
-  if (init.body !== undefined && !headers.has('Content-Type') && !(init.body instanceof FormData)) {
-    headers.set('Content-Type', 'application/json')
+export class ApiError extends Error {
+  constructor(public code: string, message: string, public traceId?: string, public fieldErrors?: Record<string, string>) {
+    super(message)
   }
-  const response = await fetch(endpoint(path), { ...init, headers })
-  if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`)
-  const body = (await response.json()) as ApiResponse<T>
-  if (body.code !== 'OK') throw new Error(body.message || body.code)
+}
+
+export function currentSession() { return session }
+export function hasRole(role: string) { return session?.roles.includes(role) ?? false }
+export function clearSession() { accessToken = ''; session = null }
+export function idempotencyKey() { return crypto.randomUUID() }
+
+function cookie(name: string): string {
+  const prefix = `${encodeURIComponent(name)}=`
+  const entry = document.cookie.split('; ').find(value => value.startsWith(prefix))
+  return entry ? decodeURIComponent(entry.slice(prefix.length)) : ''
+}
+
+async function parse<T>(response: Response): Promise<T> {
+  let body: ApiResponse<T> | null = null
+  try { body = await response.json() as ApiResponse<T> } catch { /* sanitized below */ }
+  if (!response.ok || !body || body.code !== 'OK') {
+    const fields = body?.fieldErrors ?? body?.meta?.fieldErrors as Record<string, string> | undefined
+    throw new ApiError(body?.code ?? 'REQUEST_FAILED', body?.message || '请求未完成，请稍后重试', body?.traceId, fields)
+  }
   return body.data
 }
 
-async function getJson<T>(path: string): Promise<T> {
-  return requestJson<T>(path)
-}
-
-async function postJson<T>(path: string, payload?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
-  return requestJson<T>(path, {
-    method: 'POST',
-    headers: extraHeaders,
-    body: payload === undefined ? undefined : JSON.stringify(payload)
-  })
-}
-
-function fallbackAllowed(feature: string, error: unknown): void {
-  if (!ENABLE_DEMO_FALLBACK) throw error
-  markDegraded(feature, error instanceof Error ? error.message : '后端接口不可用')
-}
-
-function fallbackFeed(scene: string, reason = '后端推荐接口不可用'): CursorPage<FeedItem> {
-  const themeMap: Record<string, string> = { deduction: 'DEDUCTION', sci_fi: 'SCI_FI', cosmos: 'COSMOS' }
-  const records = scene === 'home' || scene === 'mixed'
-    ? mockRecommendations
-    : mockRecommendations.filter((item) => item.post.theme === themeMap[scene])
-  return { records, nextCursor: String(records.length), hasMore: false, degraded: true, source: 'MOCK_FALLBACK', degradationReason: reason }
-}
-
-export async function fetchPosts(type?: string): Promise<Post[]> {
-  try {
-    const query = type ? `?type=${encodeURIComponent(type)}` : ''
-    return (await getJson<PageResponse<Post>>(`/api/posts${query}`)).records
-  } catch (error) {
-    fallbackAllowed('posts', error)
-    return type ? mockPosts.filter((post) => post.type === type) : mockPosts
-  }
-}
-
-export async function fetchFeed(scene = 'home', cursor?: string): Promise<CursorPage<FeedItem>> {
-  try {
-    return await getJson<CursorPage<FeedItem>>(`/api/recommend/feed?scene=${scene}&size=12${cursor ? `&cursor=${cursor}` : ''}`)
-  } catch (error) {
-    fallbackAllowed('feed', error)
-    return fallbackFeed(scene, error instanceof Error ? error.message : '推荐接口不可用')
-  }
-}
-
-export async function recordExposures(postIds: number[], scene = 'home_feed'): Promise<void> {
-  try {
-    await postJson('/api/recommend/exposures', { userId: 2, postIds, scene })
-  } catch {
-    // Exposure is non-critical for demo rendering.
-  }
-}
-
-export async function recordRecommendEvent(item: FeedItem, eventType: 'click' | 'like' | 'favorite' | 'answer' | 'detail_view'): Promise<void> {
-  try {
-    await postJson('/api/recommend/events', {
-      postId: item.post.id,
-      eventType,
-      scene: item.post.theme.toLowerCase(),
-      experimentId: item.experimentId,
-      bucket: item.bucket,
-      requestId: `web-${Date.now()}`
+async function refresh(): Promise<LoginResponse | null> {
+  if (refreshPromise) return refreshPromise
+  refreshPromise = (async () => {
+    const csrf = cookie('dc_csrf')
+    if (!csrf) return null
+    const response = await fetch(`${API_BASE}/api/auth/refresh`, {
+      method: 'POST', credentials: 'include', headers: { 'X-CSRF-Token': csrf }
     })
-  } catch (error) {
-    fallbackAllowed('recommend-event', error)
-  }
+    if (!response.ok) { clearSession(); return null }
+    const data = await parse<LoginResponse>(response)
+    accessToken = data.accessToken
+    session = data.user
+    return data
+  })().finally(() => { refreshPromise = null })
+  return refreshPromise
 }
 
-export async function createPost(payload: CreatePostRequest): Promise<Post> {
-  try {
-    return await postJson<Post>('/api/posts', payload)
-  } catch (error) {
-    fallbackAllowed('create-post', error)
-    return {
-      id: Date.now(),
-      type: payload.type ?? 'TEXT',
-      theme: payload.theme ?? 'DEDUCTION',
-      contentKind: payload.contentKind ?? 'CASE_FILE',
-      difficulty: payload.difficulty ?? 'MEDIUM',
-      solvable: payload.solvable ?? false,
-      solvedCount: 0,
-      title: payload.title,
-      excerpt: payload.content.slice(0, 140),
-      author: 'demo',
-      tags: payload.tags,
-      mediaAssets: [],
-      likes: 0,
-      comments: 0,
-      views: 0,
-      status: 'PENDING'
+async function request<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
+  const headers = new Headers(init.headers)
+  if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+  if (init.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  let response = await fetch(`${API_BASE}${path}`, { ...init, headers, credentials: 'include' })
+  if (response.status === 401 && retry && !path.startsWith('/api/auth/')) {
+    if (await refresh()) {
+      const retryHeaders = new Headers(headers)
+      retryHeaders.set('Authorization', `Bearer ${accessToken}`)
+      response = await fetch(`${API_BASE}${path}`, { ...init, headers: retryHeaders, credentials: 'include' })
     }
   }
+  return parse<T>(response)
 }
 
-export async function uploadMedia(file: File): Promise<FileUploadResult> {
-  const form = new FormData()
-  form.append('file', file)
-  try {
-    const response = await fetch(endpoint('/api/files'), { method: 'POST', headers: { Authorization: currentToken() }, body: form })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const body = (await response.json()) as ApiResponse<FileUploadResult>
-    return body.data
-  } catch (error) {
-    fallbackAllowed('upload', error)
-    return {
-      mediaId: Date.now(),
-      objectKey: `demo/${file.name}`,
-      url: file.type.startsWith('video/') ? 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4' : 'https://picsum.photos/seed/upload-demo/720/960',
-      contentType: file.type || 'image/png',
-      size: file.size,
-      width: 720,
-      height: file.type.startsWith('video/') ? 1280 : 960,
-      durationSeconds: file.type.startsWith('video/') ? 18 : undefined,
-      status: 'PENDING_REVIEW'
-    }
-  }
+function write<T>(path: string, method: 'POST' | 'PUT' | 'DELETE', payload?: unknown, key = idempotencyKey()) {
+  return request<T>(path, { method, headers: { 'Idempotency-Key': key }, body: payload === undefined ? undefined : JSON.stringify(payload) })
 }
 
-export async function interact(postId: number, type: 'like' | 'favorite'): Promise<InteractionResult> {
-  const idempotencyKey = `${type}-${postId}-${Date.now()}`
-  try {
-    return await postJson<InteractionResult>(`/api/posts/${postId}/${type}`, undefined, { 'Idempotency-Key': idempotencyKey })
-  } catch (error) {
-    fallbackAllowed('interaction', error)
-    return { targetId: postId, type: type.toUpperCase(), active: true, duplicated: false, idempotencyKey }
-  }
+export async function restoreSession() { try { return await refresh() } catch { clearSession(); return null } }
+export async function register(email: string, password: string, displayName: string) {
+  const data = await request<LoginResponse>('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, displayName }) }, false)
+  accessToken = data.accessToken; session = data.user; return data
+}
+export async function login(email: string, password: string) {
+  const data = await request<LoginResponse>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }, false)
+  accessToken = data.accessToken; session = data.user; return data
+}
+export async function logout() {
+  const csrf = cookie('dc_csrf')
+  await request<void>('/api/auth/logout', { method: 'POST', headers: { 'X-CSRF-Token': csrf } }, false)
+  clearSession()
+}
+export async function startGitHubLogin() {
+  const { authorizationUrl } = await request<{ authorizationUrl: string }>('/api/auth/oauth2/github/start')
+  window.location.assign(authorizationUrl)
 }
 
-export async function followUser(userId: number): Promise<FollowResult> {
-  try {
-    return await postJson<FollowResult>(`/api/users/${userId}/follow`)
-  } catch (error) {
-    fallbackAllowed('follow', error)
-    return { targetUserId: userId, followed: true, duplicated: false }
-  }
+export function fetchFeed(scene = 'home', cursor?: string) {
+  return request<CursorPage<FeedItem>>(`/api/recommend/feed?scene=${encodeURIComponent(scene)}&size=20${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
+}
+export function fetchPosts(page = 1, theme?: Theme) {
+  return request<PageResponse<Post>>(`/api/posts?page=${page}&size=20${theme ? `&theme=${theme}` : ''}`)
+}
+export function fetchPost(id: number) { return request<Post>(`/api/posts/${id}`) }
+export function fetchRelated(id: number) { return request<Post[]>(`/api/posts/${id}/related?size=6`) }
+export function searchPosts(keyword: string, theme?: Theme) {
+  return request<PageResponse<Post>>(`/api/search/posts?keyword=${encodeURIComponent(keyword)}${theme ? `&theme=${theme}` : ''}`)
 }
 
-export async function demoOAuthLogin(provider: 'github' | 'gitee'): Promise<string> {
-  try {
-    const response = await getJson<{ username: string }>(`/api/auth/oauth2/callback/${provider}?code=demo-code&state=devcircle`)
-    setAccessToken(currentToken())
-    return `${provider} 登录成功：${response.username}`
-  } catch (error) {
-    fallbackAllowed('oauth2', error)
-    setAccessToken(provider === 'github' ? DEMO_ADMIN_TOKEN : DEMO_TOKEN)
-    return `${provider} 演示登录成功：${provider}-user`
-  }
+export function listDrafts() { return request<Draft[]>('/api/posts/drafts?size=50') }
+export function fetchDraft(id: number) { return request<Draft>(`/api/posts/drafts/${id}`) }
+export function createDraft(payload: SaveDraftRequest) { return write<Draft>('/api/posts/drafts', 'POST', payload) }
+export function updateDraft(id: number, payload: SaveDraftRequest) { return write<Draft>(`/api/posts/drafts/${id}`, 'PUT', payload) }
+export function submitDraft(id: number, version: number) { return write<Draft>(`/api/posts/drafts/${id}/submit?version=${version}`, 'POST') }
+
+export async function uploadMedia(file: File): Promise<number> {
+  const intent = await write<UploadIntent>('/api/files/intents', 'POST', { filename: file.name, contentType: file.type, size: file.size })
+  const upload = await fetch(intent.uploadUrl, { method: 'PUT', headers: intent.requiredHeaders, body: file })
+  if (!upload.ok) throw new ApiError('UPLOAD_FAILED', '媒体上传失败，请重试')
+  const completed = await write<{ mediaId: number }>(`/api/files/${intent.mediaId}/complete`, 'POST')
+  return completed.mediaId
 }
 
-export async function searchPosts(keyword: string): Promise<Post[]> {
-  if (!keyword.trim()) return []
-  try {
-    return (await getJson<PageResponse<Post>>(`/api/search/posts?keyword=${encodeURIComponent(keyword)}`)).records
-  } catch (error) {
-    fallbackAllowed('search', error)
-    return mockPosts.filter((post) => [post.title, post.excerpt, post.author, ...post.tags].some((value) => value.toLowerCase().includes(keyword.toLowerCase())))
-  }
+export function interact(postId: number, type: 'like' | 'favorite') { return write<InteractionResult>(`/api/posts/${postId}/${type}`, 'POST') }
+export function recordExposures(postIds: number[], scene: string) { return write<void>('/api/recommend/exposures', 'POST', { postIds, scene }) }
+export function recordRecommendEvent(item: FeedItem, eventType: string) {
+  return write<void>('/api/recommend/events', 'POST', { postId: item.post.id, eventType, scene: item.post.theme.toLowerCase(), experimentId: item.experimentId, bucket: item.bucket })
 }
-
-export async function fetchPostDetail(postId: number): Promise<Post> {
-  try {
-    return await getJson<Post>(`/api/posts/${postId}`)
-  } catch (error) {
-    fallbackAllowed('post-detail', error)
-    return mockPosts.find((post) => post.id === postId) ?? mockPosts[0]
-  }
-}
-
-export async function fetchRelatedPosts(postId: number): Promise<Post[]> {
-  try {
-    return await getJson<Post[]>(`/api/posts/${postId}/related?size=6`)
-  } catch (error) {
-    fallbackAllowed('related', error)
-    const current = mockPosts.find((post) => post.id === postId) ?? mockPosts[0]
-    return mockPosts
-      .filter((post) => post.id !== postId)
-      .filter((post) => post.theme === current.theme || post.tags.some((tag) => current.tags.includes(tag)))
-      .slice(0, 6)
-  }
-}
-
-export async function submitDeductionAnswer(postId: number, answer: string): Promise<DeductionAnswerResult> {
-  try {
-    return await postJson<DeductionAnswerResult>(`/api/deduction/cases/${postId}/answers`, { answer })
-  } catch (error) {
-    fallbackAllowed('deduction-answer', error)
-    const target = mockPosts.find((post) => post.id === postId)
-    const normalized = answer.replace(/\s|，|。|、|；|：|！|？/g, '')
-    const correct = (target?.answerKeywords ?? ['夹层藏身', '怀表', '时间差']).some((keyword) => normalized.includes(keyword.replace(/\s/g, '')))
-    return {
-      postId,
-      userId: 2,
-      correct,
-      duplicated: false,
-      points: correct ? 20 : 0,
-      explanation: correct
-        ? (target?.explanation ?? '推理成立：关键证据和时间线已经闭合。')
-        : '线索还没有闭合，建议重新检查时间线、物证和证词之间的矛盾。'
-    }
-  }
-}
-
-export async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
-  try {
-    return await getJson<LeaderboardEntry[]>('/api/deduction/leaderboard')
-  } catch (error) {
-    fallbackAllowed('leaderboard', error)
-    return mockLeaderboard
-  }
-}
-
-export async function fetchAudits(): Promise<AuditItem[]> {
-  try {
-    return await getJson<AuditItem[]>('/api/admin/audits/posts')
-  } catch (error) {
-    fallbackAllowed('audits', error)
-    return mockAudits
-  }
-}
-
-export async function fetchModerationTasks(): Promise<ModerationTask[]> {
-  try {
-    return await getJson<ModerationTask[]>('/api/admin/moderation/tasks?status=PENDING&page=1&size=20')
-  } catch (error) {
-    fallbackAllowed('moderation-tasks', error)
-    return [
-      { taskId: 1, postId: 1002, title: '雾港钟楼无声证词', queue: 'manual-review', riskLevel: 'MEDIUM', riskScore: 62, reason: '标题与正文高度重复，等待人工复核', status: 'PENDING' },
-      { taskId: 2, postId: 2003, title: '木卫二冰下城短篇', queue: 'fast-lane', riskLevel: 'LOW', riskScore: 18, reason: '常规机审通过后等待抽检', status: 'PENDING' }
-    ]
-  }
-}
-
-export async function moderationAction(taskId: number, action: 'approve' | 'reject' | 'escalate' | 'require-changes'): Promise<void> {
-  try {
-    await postJson(`/api/admin/moderation/tasks/${taskId}/${action}`)
-  } catch (error) {
-    fallbackAllowed(`moderation-${action}`, error)
-  }
-}
-
-export async function fetchRiskUsers(): Promise<RiskUser[]> {
-  try {
-    return await getJson<RiskUser[]>('/api/admin/risk/users?page=1&size=20')
-  } catch (error) {
-    fallbackAllowed('risk-users', error)
-    return [
-      { userId: 12, status: 'WATCH', riskScore: 58, reason: '短时间高频发布' },
-      { userId: 18, status: 'NO_POST', riskScore: 91, reason: '多次命中敏感标签' }
-    ]
-  }
-}
-
-export async function fetchRecommendExperiments(): Promise<RecommendExperiment[]> {
-  try {
-    return await getJson<RecommendExperiment[]>('/api/admin/recommend/experiments')
-  } catch (error) {
-    fallbackAllowed('recommend-experiments', error)
-    return [
-      { experimentId: 'exp-theme-feed-v1', name: '主题内容多路召回实验', scene: 'home', status: 'ACTIVE', trafficPercent: 100 },
-      { experimentId: 'exp-deduction-solve-v1', name: '推理馆解谜完成率实验', scene: 'deduction', status: 'ACTIVE', trafficPercent: 100 }
-    ]
-  }
-}
-
-export async function fetchNotifications(): Promise<NotificationItem[]> {
-  try {
-    return await getJson<NotificationItem[]>('/api/notifications')
-  } catch (error) {
-    fallbackAllowed('notifications', error)
-    return mockNotifications
-  }
-}
-
-export async function fetchOpsHealth(): Promise<OpsHealth> {
-  try {
-    return await getJson<OpsHealth>('/api/admin/ops/health')
-  } catch (error) {
-    fallbackAllowed('ops-health', error)
-    return { database: 'DEGRADED', outboxBacklog: 0, source: 'MOCK_FALLBACK', degraded: true, degradationReason: error instanceof Error ? error.message : '运维接口不可用' }
-  }
-}
-
-export async function fetchOutboxEvents(): Promise<OutboxEvent[]> {
-  try {
-    return await getJson<OutboxEvent[]>('/api/admin/ops/outbox?status=NEW&page=1&size=10')
-  } catch (error) {
-    fallbackAllowed('ops-outbox', error)
-    return [{ eventId: 'demo-outbox', topic: 'post.created', status: 'NEW', source: 'MOCK_FALLBACK' }]
-  }
-}
-
-export async function replayOutbox(topic?: string): Promise<void> {
-  try {
-    await postJson(`/api/admin/ops/outbox/replay?batchSize=100${topic ? `&topic=${encodeURIComponent(topic)}` : ''}`)
-  } catch (error) {
-    fallbackAllowed('ops-outbox-replay', error)
-  }
-}
-
-export async function fetchDegradationOverview(): Promise<DegradationOverview> {
-  try {
-    return await getJson<DegradationOverview>('/api/admin/ops/degradation')
-  } catch (error) {
-    fallbackAllowed('ops-degradation', error)
-    return { degraded: true, source: 'MOCK_FALLBACK', reason: error instanceof Error ? error.message : '运维降级接口不可用' }
-  }
-}
+export function answerCase(postId: number, answer: string) { return write<DeductionAnswerResult>(`/api/deduction/cases/${postId}/answers`, 'POST', { answer }) }
+export function fetchComments(postId: number) { return request<CommentItem[]>(`/api/comments?postId=${postId}&size=50`) }
+export function createComment(postId: number, content: string, parentId?: number) { return write<CommentItem>('/api/comments', 'POST', { postId, content, parentId }) }
+export function deleteComment(id: number) { return write<void>(`/api/comments/${id}`, 'DELETE') }
+export function fetchNotifications() { return request<NotificationItem[]>('/api/notifications') }
+export function markNotificationRead(id: number) { return write<void>(`/api/notifications/${id}/read`, 'POST') }
+export function fetchModerationTasks() { return request<ModerationTask[]>('/api/admin/moderation/tasks?status=PENDING&page=1&size=20') }
+export function moderateTask(id: number, action: string, reason: string) { return write<void>(`/api/admin/moderation/tasks/${id}/${action}`, 'POST', { reason }) }

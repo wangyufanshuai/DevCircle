@@ -30,7 +30,7 @@ import java.util.Properties;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest
 @Sql(scripts = {
         "classpath:db/migration/V1__content_schema.sql",
@@ -92,12 +92,12 @@ class ContentOutboxIntegrationTest {
 
         assertThat(published).isEqualTo(1);
         assertThat(outboxStatus(created.id())).isEqualTo("PUBLISHED");
-        assertThat(readSinglePostCreatedEvent().path("postId").asLong()).isEqualTo(created.id());
+        assertThat(readSinglePostCreatedEvent().path("payload").path("postId").asLong()).isEqualTo(created.id());
     }
 
     private JsonNode readSinglePostCreatedEvent() throws Exception {
         try (var consumer = new KafkaConsumer<String, String>(consumerProperties())) {
-            consumer.subscribe(List.of(EventTopics.POST_CREATED));
+            consumer.subscribe(List.of(EventTopics.POST_SUBMITTED));
             var deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
             while (System.nanoTime() < deadline) {
                 var records = consumer.poll(Duration.ofMillis(500));

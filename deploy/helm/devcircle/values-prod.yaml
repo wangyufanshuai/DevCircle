@@ -1,12 +1,24 @@
 image:
   registry: ghcr.io/wangyufanshuai/devcircle
-  tag: latest
-  pullPolicy: Always
+  # Required at deploy time: --set image.tag=$GITHUB_SHA
+  tag: sha-required
+  pullPolicy: IfNotPresent
 
 replicaCount: 2
 
 env:
   GATEWAY_DEMO_TOKEN_ENABLED: "false"
+  DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
+  SPRING_PROFILES_ACTIVE: aggregate
+  DC_IDENTITY_URI: http://dc-identity:8201
+  DC_CONTENT_AGGREGATE_URI: http://dc-content-aggregate:8202
+  DC_DISCOVERY_URI: http://dc-discovery:8203
+
+secretEnv: {}
+
+secrets:
+  create: false
+  existingSecret: devcircle-secrets
 
 resources:
   requests:

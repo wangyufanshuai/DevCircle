@@ -78,7 +78,8 @@ logging:
   pattern:
     level: "%5p traceId=%X{traceId:-} userId=%X{userId:-}"
 devcircle:
+  jwt:
+    secret: ${DEVCIRCLE_JWT_SECRET:local-development-secret-must-be-at-least-forty-eight-characters-long}
   gateway:
-    demo-token-enabled: ${GATEWAY_DEMO_TOKEN_ENABLED:true}
     banned-user-ids: ${GATEWAY_BANNED_USER_IDS:}
     no-post-user-ids: ${GATEWAY_NO_POST_USER_IDS:}

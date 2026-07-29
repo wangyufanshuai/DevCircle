@@ -14,5 +14,6 @@ web/devcircle-*.png
 .env
 .env.*
 !.env.example
+!.env.production.example
 .mvn/wrapper/apache-maven-*/
 .mvn/wrapper/apache-maven-*-bin.zip

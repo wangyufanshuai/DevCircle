@@ -6,12 +6,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-
 @Service
 public class InteractionService {
-    private final Set<String> processedKeys = ConcurrentHashMap.newKeySet();
     private final InteractionRepository interactionRepository;
     private final StringRedisTemplate redisTemplate;
 
@@ -30,22 +26,20 @@ public class InteractionService {
 
     private InteractionResult interact(Long userId, Long targetId, String type, String idempotencyKey) {
         String key = normalizeKey(type, targetId, idempotencyKey);
-        boolean firstSeen = processedKeys.add(key);
-        if (!firstSeen) {
-            return new InteractionResult(targetId, type, true, true, key);
-        }
-        boolean inserted = "LIKE".equals(type)
-                ? interactionRepository.insertLike(userId, targetId)
-                : interactionRepository.insertFavorite(userId, targetId);
-        writeRedisSignals(userId, targetId, type, inserted);
-        return new InteractionResult(targetId, type, true, !inserted, key);
+        InteractionRepository.InteractionWriteResult result = "LIKE".equals(type)
+                ? interactionRepository.insertLike(userId, targetId, key)
+                : interactionRepository.insertFavorite(userId, targetId, key);
+        writeRedisSignals(userId, targetId, type, result.inserted());
+        return new InteractionResult(targetId, type, true, result.duplicateRequest() || !result.inserted(), key);
     }
 
     private String normalizeKey(String type, Long targetId, String idempotencyKey) {
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
             return idempotencyKey;
         }
-        return "demo-" + type.toLowerCase() + "-" + targetId;
+        throw new io.github.devcircle.common.error.BusinessException(
+                io.github.devcircle.common.error.ErrorCode.VALIDATION_FAILED,
+                "写操作必须提供 Idempotency-Key");
     }
 
     private void writeRedisSignals(Long userId, Long postId, String type, boolean inserted) {

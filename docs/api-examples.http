@@ -1,38 +1,30 @@
 @baseUrl = http://localhost:8080
-@userToken = Bearer demo-access-token-demo
-@adminToken = Bearer demo-access-token-admin
+@userToken = Bearer replace-with-real-access-token
+@adminToken = Bearer replace-with-real-admin-access-token
 
 ### 密码登录
 POST {{baseUrl}}/api/auth/login
 Content-Type: application/json
 
 {
-  "username": "admin",
-  "password": "devcircle"
+  "email": "reader@example.com",
+  "password": "replace-with-password"
 }
 
 ### 刷新令牌
 POST {{baseUrl}}/api/auth/refresh
-Content-Type: application/json
-
-{
-  "refreshToken": "replace-with-refresh-token"
-}
+X-CSRF-Token: replace-with-csrf-cookie-value
 
 ### 退出登录
 POST {{baseUrl}}/api/auth/logout
-Content-Type: application/json
-
-{
-  "refreshToken": "replace-with-refresh-token"
-}
+X-CSRF-Token: replace-with-csrf-cookie-value
 
 ### 当前用户
 GET {{baseUrl}}/api/auth/me
 Authorization: {{adminToken}}
 
-### GitHub OAuth2 mock 回调
-GET {{baseUrl}}/api/auth/oauth2/callback/github?code=demo-code&state=devcircle
+### GitHub OAuth2
+GET {{baseUrl}}/api/auth/oauth2/github/start
 
 ### 混合推荐
 GET {{baseUrl}}/api/recommend/feed?scene=mixed&size=6

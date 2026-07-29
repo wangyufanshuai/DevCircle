@@ -1,40 +1,61 @@
 package io.github.devcircle.auth.api;
 
+import io.github.devcircle.auth.application.AuthService;
+import io.github.devcircle.auth.application.AuthTokenRepository;
 import io.github.devcircle.auth.application.JwtService;
+import io.github.devcircle.common.error.BusinessException;
 import org.junit.jupiter.api.Test;
+import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
+
+import java.time.Instant;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class AuthControllerTest {
-    private final JwtService jwtService = new JwtService("devcircle-local-demo-secret-devcircle-local-demo-secret");
-    private final AuthController controller = new AuthController(jwtService, "http://localhost:8080");
+    private static final String SECRET = "test-secret-that-is-long-enough-for-production-style-validation-123456";
 
     @Test
-    void passwordLoginIssuesJwtAndMeParsesRoles() {
-        var login = controller.login(new AuthController.LoginRequest("admin", "devcircle")).data();
+    void accessTokenCarriesOnlyAccessClaims() {
+        JwtService jwtService = new JwtService(SECRET);
+        String token = jwtService.issueAccess(42L, "林墨", List.of("USER"), Instant.now().plusSeconds(60));
 
-        assertThat(login.accessToken()).isNotBlank();
-        assertThat(login.roles()).contains("ADMIN", "USER");
+        var claims = jwtService.parseAccess(token);
 
-        var session = controller.me("Bearer " + login.accessToken()).data();
-        assertThat(session.username()).isEqualTo("admin");
-        assertThat(session.roles()).contains("ADMIN", "USER");
+        assertThat(claims.getSubject()).isEqualTo("42");
+        assertThat(claims.get("type", String.class)).isEqualTo("access");
     }
 
     @Test
-    void mockOAuthCallbackIssuesUserTokenAndRefreshWorks() {
-        var callback = controller.callback("github", "demo-code", "state").data();
-        var refreshed = controller.refresh(new AuthController.RefreshRequest(callback.refreshToken())).data();
+    void registrationPersistsAnArgon2PasswordAndRefreshSession() {
+        AuthTokenRepository repository = mock(AuthTokenRepository.class);
+        JwtService jwtService = new JwtService(SECRET);
+        var encoder = Argon2PasswordEncoder.defaultsForSpringSecurity_v5_8();
+        var account = new AuthTokenRepository.Account(7L, "reader@example.com", "星海读者", "unused", "ACTIVE", List.of("USER"));
+        when(repository.createAccount(anyString(), anyString(), anyString())).thenReturn(account);
+        AuthService service = new AuthService(repository, jwtService, encoder);
 
-        assertThat(callback.username()).isEqualTo("github-user");
-        assertThat(refreshed.accessToken()).isNotBlank();
+        AuthService.SessionTokens tokens = service.register("Reader@Example.com", "long-password-2026", "星海读者", "trace");
+
+        assertThat(tokens.accessToken()).isNotBlank();
+        assertThat(tokens.refreshToken()).hasSizeGreaterThan(32);
+        assertThat(tokens.csrfToken()).hasSizeGreaterThan(32);
+        verify(repository).createAccount(anyString(), anyString(), anyString());
+        verify(repository).saveRefreshToken(any(), anyString(), anyString(), anyString(), any());
     }
 
     @Test
-    void authorizeBuildsProviderUrl() {
-        var response = controller.authorize("gitee", "abc").data();
+    void weakPasswordIsRejectedBeforeDatabaseWrite() {
+        AuthTokenRepository repository = mock(AuthTokenRepository.class);
+        AuthService service = new AuthService(repository, new JwtService(SECRET), Argon2PasswordEncoder.defaultsForSpringSecurity_v5_8());
 
-        assertThat(response.provider()).isEqualTo("gitee");
-        assertThat(response.authorizationUrl()).contains("gitee.com/oauth/authorize", "state=abc");
+        assertThatThrownBy(() -> service.register("reader@example.com", "short", "星海读者", "trace"))
+                .isInstanceOf(BusinessException.class);
     }
 }

@@ -16,26 +16,34 @@ import java.util.List;
 public class JwtService {
     private final SecretKey key;
 
-    public JwtService(@Value("${devcircle.jwt.secret:devcircle-local-demo-secret-devcircle-local-demo-secret}") String secret) {
+    public JwtService(@Value("${devcircle.jwt.secret}") String secret) {
+        if (secret == null || secret.length() < 48 || secret.contains("change-me")) {
+            throw new IllegalStateException("DEVCIRCLE_JWT_SECRET must contain at least 48 non-default characters");
+        }
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
-    public String issue(Long userId, String username, List<String> roles, Instant expiresAt) {
+    public String issueAccess(Long userId, String username, List<String> roles, Instant expiresAt) {
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim("username", username)
                 .claim("roles", String.join(",", roles))
+                .claim("type", "access")
                 .issuedAt(Date.from(Instant.now()))
                 .expiration(Date.from(expiresAt))
                 .signWith(key)
                 .compact();
     }
 
-    public Claims parse(String token) {
-        return Jwts.parser()
+    public Claims parseAccess(String token) {
+        Claims claims = Jwts.parser()
                 .verifyWith(key)
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
+        if (!"access".equals(claims.get("type", String.class))) {
+            throw new IllegalArgumentException("Expected an access token");
+        }
+        return claims;
     }
 }

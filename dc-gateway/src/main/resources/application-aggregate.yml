@@ -1,0 +1,18 @@
+spring:
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: identity
+              uri: ${DC_IDENTITY_URI:http://localhost:8201}
+              predicates:
+                - Path=/api/auth/**,/api/users/**,/api/notifications/**,/ws/notifications/**,/api/posts/*/like,/api/posts/*/favorite
+            - id: content-aggregate
+              uri: ${DC_CONTENT_AGGREGATE_URI:http://localhost:8202}
+              predicates:
+                - Path=/api/posts/**,/api/deduction/**,/api/content/**,/api/comments/**,/api/files/**,/api/admin/**
+            - id: discovery
+              uri: ${DC_DISCOVERY_URI:http://localhost:8203}
+              predicates:
+                - Path=/api/search/**,/api/recommend/**

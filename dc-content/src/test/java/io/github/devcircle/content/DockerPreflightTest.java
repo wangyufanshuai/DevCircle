@@ -7,7 +7,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class DockerPreflightTest {
     @Container
     static final GenericContainer<?> alpine = new GenericContainer<>("alpine:3.22")

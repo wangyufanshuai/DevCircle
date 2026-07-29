@@ -25,7 +25,7 @@ class RecommendController {
     }
 
     @GetMapping("/feed")
-    ApiResponse<CursorPage<FeedItem>> feed(@RequestHeader(value = "X-User-Id", defaultValue = "2") Long userId,
+    ApiResponse<CursorPage<FeedItem>> feed(@RequestHeader(value = "X-User-Id", defaultValue = "0") Long userId,
                                            @RequestParam(required = false) String cursor,
                                            @RequestParam(defaultValue = "10") int size,
                                            @RequestParam(defaultValue = "home") String scene) {
@@ -33,16 +33,18 @@ class RecommendController {
     }
 
     @PostMapping("/exposures")
-    ApiResponse<ExposureResult> exposures(@RequestHeader(value = "X-User-Id", defaultValue = "2") Long userId,
+    ApiResponse<ExposureResult> exposures(@RequestHeader("X-User-Id") Long userId,
+                                          @RequestHeader("Idempotency-Key") String idempotencyKey,
                                           @RequestBody ExposureRequest request) {
         ExposureRequest normalized = new ExposureRequest(userId, request.postIds(), request.scene());
-        return ApiResponse.ok(new ExposureResult(feedService.recordExposure(normalized)));
+        return ApiResponse.ok(new ExposureResult(feedService.recordExposure(normalized, idempotencyKey)));
     }
 
     @PostMapping("/events")
-    ApiResponse<Map<String, Object>> events(@RequestHeader(value = "X-User-Id", defaultValue = "2") Long userId,
+    ApiResponse<Map<String, Object>> events(@RequestHeader("X-User-Id") Long userId,
+                                            @RequestHeader("Idempotency-Key") String idempotencyKey,
                                             @RequestBody RecommendEventRequest request) {
-        return ApiResponse.ok(feedService.recordRecommendEvent(userId, request.postId(), request.eventType(), request.scene(), request.experimentId(), request.bucket(), request.requestId()));
+        return ApiResponse.ok(feedService.recordRecommendEvent(userId, request.postId(), request.eventType(), request.scene(), request.experimentId(), request.bucket(), idempotencyKey));
     }
 
     record ExposureResult(int recorded) {

@@ -1,0 +1,37 @@
+server:
+  port: 8202
+  shutdown: graceful
+spring:
+  application:
+    name: dc-content-aggregate
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: comments
+              uri: ${DC_COMMENT_URI:http://localhost:8104}
+              predicates: [Path=/api/comments/**]
+            - id: files
+              uri: ${DC_FILE_URI:http://localhost:8109}
+              predicates: [Path=/api/files/**]
+            - id: moderation
+              uri: ${DC_ADMIN_URI:http://localhost:8110}
+              predicates: [Path=/api/admin/**]
+            - id: deduction
+              uri: ${DC_CONTENT_URI:http://localhost:8103}
+              predicates: [Path=/api/deduction/**,/api/content/**]
+            - id: posts
+              uri: ${DC_CONTENT_URI:http://localhost:8103}
+              predicates: [Path=/api/posts/**]
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true

@@ -3,13 +3,17 @@ package io.github.devcircle.recommend.application;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.common.event.EventEnvelope;
+import io.github.devcircle.common.error.BusinessException;
+import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.model.FeedItem;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @Repository
 class RecommendationImpressionRepository {
@@ -63,7 +67,25 @@ class RecommendationImpressionRepository {
         }
     }
 
+    @Transactional
+    int saveExposure(Long userId, List<Long> postIds, String scene, String idempotencyKey) {
+        if (!claim(userId, "EXPOSURE", idempotencyKey)) return 0;
+        int recorded = 0;
+        for (Long postId : postIds.stream().distinct().limit(100).toList()) {
+            jdbcClient.sql("""
+                            INSERT INTO recommendation_exposure(user_id, post_id, scene)
+                            VALUES (:userId, :postId, :scene)
+                            ON DUPLICATE KEY UPDATE exposed_at = CURRENT_TIMESTAMP
+                            """)
+                    .param("userId", userId).param("postId", postId).param("scene", scene).update();
+            recorded++;
+        }
+        return recorded;
+    }
+
+    @Transactional
     void saveRecommendEvent(Long userId, Long postId, String eventType, String scene, String experimentId, String bucket, String requestId) {
+        if (!claim(userId, "RECOMMEND_EVENT", requestId)) return;
         try {
             jdbcClient.sql("""
                             INSERT INTO recommend_event_log(user_id, post_id, event_type, scene, experiment_id, bucket, request_id)
@@ -86,22 +108,44 @@ class RecommendationImpressionRepository {
                     "bucket", bucket,
                     "requestId", requestId == null ? "" : requestId
             ));
-        } catch (DataAccessException ignored) {
+        } catch (RuntimeException ex) {
+            throw ex;
         }
     }
 
     private void writeOutbox(String topic, Map<String, Object> payload) {
         try {
+            EventEnvelope event = EventEnvelope.now(topic, "dc-discovery", String.valueOf(payload.get("postId")), payload);
             jdbcClient.sql("""
                             INSERT INTO outbox_event(event_id, topic, aggregate_type, aggregate_id, payload)
                             VALUES (:eventId, :topic, 'RECOMMEND_EVENT', :aggregateId, CAST(:payload AS JSON))
                             """)
-                    .param("eventId", UUID.randomUUID().toString())
-                    .param("topic", topic)
+                    .param("eventId", event.eventId().toString())
+                    .param("topic", event.type())
                     .param("aggregateId", String.valueOf(payload.get("postId")))
-                    .param("payload", objectMapper.writeValueAsString(payload))
+                    .param("payload", objectMapper.writeValueAsString(event))
                     .update();
-        } catch (DataAccessException | JsonProcessingException ignored) {
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Failed to serialize recommendation event", ex);
         }
+    }
+
+    private boolean claim(Long userId, String operation, String key) {
+        int inserted = jdbcClient.sql("""
+                        INSERT IGNORE INTO recommend_write_idempotency(idempotency_key, user_id, operation)
+                        VALUES (:key, :userId, :operation)
+                        """)
+                .param("key", key).param("userId", userId).param("operation", operation).update();
+        if (inserted == 1) return true;
+        Map<String, Object> existing = jdbcClient.sql("""
+                        SELECT user_id, operation FROM recommend_write_idempotency WHERE idempotency_key = :key
+                        """)
+                .param("key", key)
+                .query((rs, rowNum) -> Map.<String, Object>of("userId", rs.getLong("user_id"), "operation", rs.getString("operation")))
+                .single();
+        if (!existing.get("userId").equals(userId) || !existing.get("operation").equals(operation)) {
+            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已被其他推荐写操作使用");
+        }
+        return false;
     }
 }
