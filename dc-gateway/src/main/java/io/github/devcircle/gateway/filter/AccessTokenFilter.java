@@ -110,6 +110,7 @@ public class AccessTokenFilter implements GlobalFilter, Ordered {
         }
         return path.startsWith("/api/posts")
                 || path.startsWith("/api/search")
+                || (path.startsWith("/api/files/") && path.endsWith("/access"))
                 || path.equals("/api/recommend/feed")
                 || path.equals("/api/deduction/leaderboard");
     }

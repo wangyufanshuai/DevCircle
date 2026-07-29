@@ -82,6 +82,27 @@ public class MediaRepository {
         return assets.getFirst();
     }
 
+    public AssetIntent requirePublic(Long mediaId) {
+        return jdbcClient.sql("""
+                        SELECT DISTINCT m.id, m.uploader_id, m.object_key, m.url, m.content_type, m.expected_size,
+                               m.width, m.height, m.duration_seconds, m.status, m.upload_status, m.upload_expires_at
+                        FROM media_asset m
+                        JOIN post_media pm ON pm.media_id = m.id
+                        JOIN post p ON p.id = pm.post_id
+                        WHERE m.id = :mediaId AND m.status = 'APPROVED'
+                          AND m.upload_status = 'COMPLETED' AND p.status = 'PUBLISHED'
+                        """)
+                .param("mediaId", mediaId)
+                .query((rs, rowNum) -> new AssetIntent(
+                        rs.getLong("id"), rs.getLong("uploader_id"), rs.getString("object_key"), rs.getString("url"),
+                        rs.getString("content_type"), rs.getLong("expected_size"), (Integer) rs.getObject("width"),
+                        (Integer) rs.getObject("height"), (Integer) rs.getObject("duration_seconds"),
+                        rs.getString("status"), rs.getString("upload_status"),
+                        rs.getTimestamp("upload_expires_at") == null ? null : rs.getTimestamp("upload_expires_at").toInstant()))
+                .optional()
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "媒体不存在或尚未公开"));
+    }
+
     @Transactional
     public FileUploadResult complete(Long userId, Long mediaId, String idempotencyKey, long actualSize) {
         Long duplicate = claim(userId, "COMPLETE_UPLOAD:" + mediaId, idempotencyKey);

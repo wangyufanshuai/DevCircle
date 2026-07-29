@@ -209,6 +209,7 @@ services:
     depends_on:
       mysql: { condition: service_healthy }
       minio: { condition: service_healthy }
+      dc-content: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8109/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
   dc-admin:

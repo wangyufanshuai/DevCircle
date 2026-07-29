@@ -7,6 +7,7 @@ import io.github.devcircle.file.infrastructure.MediaRepository;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -22,6 +23,7 @@ import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -109,6 +111,17 @@ class FileController {
             throw ex;
         }
         return ApiResponse.ok(mediaRepository.complete(userId, id, idempotencyKey, head.contentLength()));
+    }
+
+    @GetMapping("/{id}/access")
+    ApiResponse<Map<String, Object>> access(@PathVariable Long id) {
+        MediaRepository.AssetIntent asset = mediaRepository.requirePublic(id);
+        Instant expiresAt = Instant.now().plus(Duration.ofMinutes(10));
+        var signed = presigner.presignGetObject(GetObjectPresignRequest.builder()
+                .signatureDuration(Duration.ofMinutes(10))
+                .getObjectRequest(GetObjectRequest.builder().bucket(bucket).key(asset.objectKey()).build())
+                .build());
+        return ApiResponse.ok(Map.of("mediaId", id, "url", signed.url().toString(), "expiresAt", expiresAt));
     }
 
     private void validateMetadata(String filename, String contentType, long size) {

@@ -6,7 +6,7 @@ import DOMPurify from 'dompurify'
 import { RouterLink, useRoute } from 'vue-router'
 import {
   answerCase, createComment, currentSession, deleteComment, fetchComments, fetchFollowState,
-  fetchInteractionState, fetchPost, fetchRelated, fetchUserProfile, followUser, interact, revealAnswer,
+  fetchInteractionState, fetchMediaAccess, fetchPost, fetchRelated, fetchUserProfile, followUser, interact, revealAnswer,
   saveReadingProgress, unfollowUser
 } from '../api/client'
 import type { CommentItem, CommentThread, Post, PostDetail } from '../api/types'
@@ -50,6 +50,11 @@ async function load() {
       fetchPost(id.value), fetchRelated(id.value), fetchComments(id.value)
     ])
     post.value = detail
+    if (detail.media.length) {
+      const access = await Promise.all(detail.media.map(media => fetchMediaAccess(media.mediaId)))
+      const urls = new Map(access.map(item => [item.mediaId, item.url]))
+      post.value.media = detail.media.map(media => ({ ...media, url: urls.get(media.mediaId) ?? '' }))
+    }
     const profile = await fetchUserProfile(detail.author.id).catch(() => null)
     if (profile) post.value.author = { ...post.value.author, username: profile.username, bio: profile.bio, followerCount: profile.followers }
     related.value = relatedPosts

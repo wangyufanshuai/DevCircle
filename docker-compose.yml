@@ -229,6 +229,7 @@ services:
     depends_on:
       mysql: { condition: service_healthy }
       minio: { condition: service_healthy }
+      dc-content: { condition: service_started }
 
   dc-admin:
     profiles: ["app", "demo"]
