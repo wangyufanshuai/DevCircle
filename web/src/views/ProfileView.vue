@@ -1,5 +1,58 @@
 <script setup lang="ts">
-import { computed } from 'vue'; import { BookOpen, FilePenLine, ShieldCheck } from 'lucide-vue-next'; import { RouterLink } from 'vue-router'; import { currentSession } from '../api/client'
+import { computed, onMounted, ref } from 'vue'
+import { Bell, BookOpen, Bookmark, FilePenLine, ShieldCheck, Trophy } from 'lucide-vue-next'
+import { RouterLink } from 'vue-router'
+import { currentSession, fetchDashboard } from '../api/client'
+import type { Dashboard } from '../api/types'
+import StatusPanel from '../components/StatusPanel.vue'
+
 const session = computed(() => currentSession())
+const dashboard = ref<Dashboard | null>(null)
+const loading = ref(true)
+const error = ref('')
+
+async function load() {
+  loading.value = true; error.value = ''
+  try { dashboard.value = await fetchDashboard() }
+  catch (reason) { error.value = reason instanceof Error ? reason.message : '个人档案暂时无法加载' }
+  finally { loading.value = false }
+}
+onMounted(load)
 </script>
-<template><div class="page-stack narrow-page"><section class="profile-hero"><div class="profile-avatar">{{ session?.displayName?.slice(0, 1) ?? '?' }}</div><div><span class="eyebrow">OBSERVER PROFILE</span><h1>{{ session?.displayName ?? '尚未登录' }}</h1><p>{{ session ? `观测者 #${session.userId}` : '登录后保存阅读进度、收藏和草稿。' }}</p></div></section><section class="profile-grid"><RouterLink to="/write"><FilePenLine :size="20" /><strong>我的创作</strong><span>草稿、投稿和审核进度</span></RouterLink><RouterLink to="/discover"><BookOpen :size="20" /><strong>阅读轨道</strong><span>继续探索三个主题频道</span></RouterLink><RouterLink v-if="session?.roles.includes('ADMIN')" to="/admin"><ShieldCheck :size="20" /><strong>运营后台</strong><span>审核、风险和事件重放</span></RouterLink><RouterLink v-if="!session" to="/auth"><ShieldCheck :size="20" /><strong>登录或注册</strong><span>建立你的观测者档案</span></RouterLink></section></div></template>
+
+<template>
+  <div class="page-stack profile-page">
+    <StatusPanel v-if="error && !dashboard" title="个人档案暂时无法加载" :detail="error" action-label="重试" @retry="load" />
+    <div v-else-if="loading" class="loading-line">正在整理观测记录…</div>
+    <template v-else-if="dashboard">
+      <section class="profile-hero">
+        <div class="profile-avatar">{{ dashboard.profile.username.slice(0, 1).toUpperCase() }}</div>
+        <div><span class="eyebrow">OBSERVER PROFILE</span><h1>{{ dashboard.profile.username }}</h1><p>{{ dashboard.profile.bio || `观测者 #${dashboard.profile.id}` }}</p></div>
+        <dl class="profile-counts"><div><dt>关注</dt><dd>{{ dashboard.profile.following }}</dd></div><div><dt>粉丝</dt><dd>{{ dashboard.profile.followers }}</dd></div><div><dt>收藏</dt><dd>{{ dashboard.favorites.length }}</dd></div></dl>
+      </section>
+
+      <section class="dashboard-stat-grid">
+        <RouterLink to="/write"><FilePenLine :size="19" /><span>投稿记录</span><strong>{{ dashboard.submissions.length }}</strong></RouterLink>
+        <RouterLink to="/notifications"><Bell :size="19" /><span>未读信号</span><strong>{{ dashboard.unreadNotifications }}</strong></RouterLink>
+        <div><Trophy :size="19" /><span>继续解谜</span><strong>{{ dashboard.readingProgress.filter(item => !item.completed).length }}</strong></div>
+        <div><Bookmark :size="19" /><span>收藏轨道</span><strong>{{ dashboard.favorites.length }}</strong></div>
+      </section>
+
+      <section>
+        <div class="section-heading"><div><span class="eyebrow">CONTINUE ORBIT</span><h2>继续解谜轨道</h2></div><RouterLink class="text-button" to="/discover">发现更多</RouterLink></div>
+        <div v-if="dashboard.readingProgress.length" class="progress-list">
+          <RouterLink v-for="item in dashboard.readingProgress" :key="item.postId" :to="`/posts/${item.postId}`" class="progress-row"><BookOpen :size="18" /><span><strong>{{ item.title }}</strong><small>{{ item.theme }} · {{ item.completed ? '已完成' : `阅读 ${item.progressPercent}%` }}</small></span><div class="progress-track"><i :style="{ width: `${item.progressPercent}%` }" /></div></RouterLink>
+        </div>
+        <p v-else class="empty-copy muted">还没有保存的阅读轨道。</p>
+      </section>
+
+      <section>
+        <div class="section-heading"><div><span class="eyebrow">SUBMISSIONS</span><h2>创作与审核</h2></div><RouterLink class="button button-quiet" to="/write">进入创作台</RouterLink></div>
+        <div v-if="dashboard.submissions.length" class="submission-list"><RouterLink v-for="item in dashboard.submissions" :key="item.postId" :to="`/write/${item.postId}`"><span><strong>{{ item.title }}</strong><small>{{ item.reviewReason || '等待下一步处理' }}</small></span><em>{{ item.status }}</em></RouterLink></div>
+        <p v-else class="empty-copy muted">还没有草稿或投稿。</p>
+      </section>
+
+      <RouterLink v-if="session?.roles.includes('ADMIN')" class="admin-dashboard-link" to="/admin"><ShieldCheck :size="19" /><span><strong>运营后台</strong><small>审核、风险和事件重放</small></span></RouterLink>
+    </template>
+  </div>
+</template>

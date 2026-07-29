@@ -25,6 +25,9 @@ export type MediaAsset = {
   height?: number
   durationSeconds?: number
   status: string
+  role?: 'COVER' | 'INLINE'
+  altText?: string
+  sortOrder?: number
 }
 
 export type Post = {
@@ -54,6 +57,24 @@ export type Post = {
   worldbuilding?: string[]
   cosmicFacts?: string[]
   relatedPostIds?: number[]
+}
+
+export type AuthorProfile = {
+  id: number
+  username: string
+  avatarUrl?: string | null
+  bio?: string | null
+  followerCount?: number | null
+  followedByViewer?: boolean | null
+}
+
+export type PostDetail = Omit<Post, 'author' | 'mediaAssets' | 'answerKeywords' | 'explanation'> & {
+  author: AuthorProfile
+  markdown: string
+  media: MediaAsset[]
+  viewerState: { liked: boolean; favorited: boolean; readingProgress: number }
+  deductionState: { attempted: boolean; solved: boolean; revealed: boolean; points: number; solutionUnlocked: boolean }
+  solution?: string | null
 }
 
 export type FeedItem = {
@@ -92,17 +113,28 @@ export type Draft = {
   version: number
   lastSavedAt?: string
   submittedAt?: string
+  reviewReason?: string | null
 }
+export type PostAudit = { id: number; postId: number; auditorId?: number | null; action: string; reason: string; createdAt: string }
 
-export type SaveDraftRequest = Omit<Draft, 'id' | 'authorId' | 'status' | 'version' | 'lastSavedAt' | 'submittedAt'> & { version?: number }
+export type SaveDraftRequest = Omit<Draft, 'id' | 'authorId' | 'status' | 'version' | 'lastSavedAt' | 'submittedAt' | 'reviewReason'> & { version?: number }
 export type UserSession = { userId: number; displayName: string; roles: string[] }
 export type LoginResponse = { accessToken: string; expiresAt: string; user: UserSession }
-export type NotificationItem = { id: number; type: string; title: string; content: string; read: boolean; createdAt: string }
+export type NotificationItem = { id: number; type: string; title: string; content: string; read: boolean; actorId?: number | null; targetType?: string | null; targetId?: number | null; targetRoute?: string | null; createdAt: string }
 export type CommentItem = { id: number; postId: number; authorId: number; author: string; parentId?: number; rootId?: number; content: string; status: string; likes: number; createdAt: string; replies?: CommentItem[] }
+export type CommentThread = { root: CommentItem; replies: CommentItem[] }
 export type ModerationTask = { taskId: number; postId: number; title: string; authorId?: number; queue: string; machineResult?: string; riskLevel: string; riskScore: number; reason: string; status: string; reviewLevel?: string; slaDeadline?: string }
 export type UploadIntent = { mediaId: number; objectKey: string; uploadUrl: string; requiredHeaders: Record<string, string>; expiresAt: string }
 export type InteractionResult = { targetId: number; type: string; active: boolean; duplicated: boolean; idempotencyKey: string }
-export type DeductionAnswerResult = { postId: number; userId: number; correct: boolean; duplicated: boolean; points: number; explanation: string }
+export type DeductionAnswerResult = { postId: number; userId: number; correct: boolean; duplicated: boolean; revealed: boolean; solutionUnlocked: boolean; points: number; explanation: string; solution?: string | null }
+export type ReadingProgress = { postId: number; progressPercent: number; anchor?: string | null; completed: boolean; lastReadAt?: string | null }
+export type Dashboard = {
+  profile: { id: number; username: string; bio?: string | null; followers: number; following: number; status: string }
+  readingProgress: Array<{ postId: number; title: string; theme: Theme; progressPercent: number; completed: boolean; lastReadAt: string }>
+  submissions: Array<{ postId: number; title: string; status: PostStatus; updatedAt: string; reviewReason?: string | null }>
+  favorites: number[]
+  unreadNotifications: number
+}
 
 // Compatibility types for legacy presentation components retained during the router migration.
 export type AuditItem = { postId: number; title: string; status: string; author: string }

@@ -2,81 +2,45 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
-import { Check, Eye, FileUp, Save, Send } from 'lucide-vue-next'
+import { ArrowDown, ArrowUp, Check, Eye, FileUp, Save, Send, Trash2 } from 'lucide-vue-next'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
-import { createDraft, fetchDraft, listDrafts, submitDraft, updateDraft, uploadMedia } from '../api/client'
-import type { Draft, PostStatus, SaveDraftRequest } from '../api/types'
-const route = useRoute(); const router = useRouter(); const draftId = computed(() => route.params.draftId ? Number(route.params.draftId) : undefined); const draftList = ref<Draft[]>([]); const saving = ref(false); const submitting = ref(false); const dirty = ref(false); const feedback = ref(''); const error = ref(''); const currentStatus = ref<PostStatus>('DRAFT'); const fileInput = ref<HTMLInputElement | null>(null)
+import { createAppeal, createDraft, fetchDraft, fetchDraftAudits, listDrafts, submitDraft, updateDraft, uploadMedia } from '../api/client'
+import type { Draft, PostAudit, PostStatus, SaveDraftRequest } from '../api/types'
+
+const route = useRoute(); const router = useRouter(); const draftId = computed(() => route.params.draftId ? Number(route.params.draftId) : undefined)
+const draftList = ref<Draft[]>([]); const audits = ref<PostAudit[]>([]); const saving = ref(false); const submitting = ref(false); const uploading = ref(false); const dirty = ref(false); const feedback = ref(''); const error = ref(''); const currentStatus = ref<PostStatus>('DRAFT'); const reviewReason = ref(''); const appealReason = ref('')
 const form = reactive<SaveDraftRequest>({ title: '', content: '', tags: [], type: 'TEXT', mediaIds: [], theme: 'DEDUCTION', contentKind: 'CASE_FILE', difficulty: 'MEDIUM', solvable: true, clues: '', suspects: '', timeline: '', question: '', answerKeywords: '', solution: '' })
-const preview = computed(() => DOMPurify.sanitize(marked.parse(form.content || '*开始写下你的观测记录…*') as string)); const wordCount = computed(() => form.content.trim().length); let saveTimer: number | undefined; let hydrating = false; let editRevision = 0; let skipNextRouteLoad = false
-function fill(value: Draft) { hydrating = true; Object.assign(form, { ...value, tags: [...value.tags], mediaIds: [...value.mediaIds] }); currentStatus.value = value.status; dirty.value = false; hydrating = false }
-async function load() { try { draftList.value = await listDrafts(); if (draftId.value) fill(await fetchDraft(draftId.value)); } catch (reason) { error.value = reason instanceof Error ? reason.message : '草稿暂时不可用' } }
+const tagText = computed({ get: () => form.tags.join(', '), set: value => { form.tags = value.split(',').map(tag => tag.trim()).filter(Boolean).slice(0, 12) } })
+const preview = computed(() => DOMPurify.sanitize(marked.parse(form.content || '*开始写下你的观测记录…*') as string)); const wordCount = computed(() => form.content.trim().length)
+let saveTimer: number | undefined; let hydrating = false; let editRevision = 0; let skipNextRouteLoad = false
+
+function fill(value: Draft) { hydrating = true; Object.assign(form, { title: value.title, content: value.content, tags: [...value.tags], type: value.type, mediaIds: [...value.mediaIds], theme: value.theme, contentKind: value.contentKind, difficulty: value.difficulty, solvable: value.solvable, clues: value.clues, suspects: value.suspects, timeline: value.timeline, question: value.question, answerKeywords: value.answerKeywords, solution: value.solution, version: value.version }); currentStatus.value = value.status; reviewReason.value = value.reviewReason ?? ''; dirty.value = false; hydrating = false }
+async function load() { try { draftList.value = await listDrafts(); if (draftId.value) { fill(await fetchDraft(draftId.value)); audits.value = await fetchDraftAudits(draftId.value) } } catch (reason) { error.value = reason instanceof Error ? reason.message : '草稿暂时不可用' } }
 function armSaveTimer() { window.clearTimeout(saveTimer); saveTimer = window.setTimeout(() => void save(), 5000) }
-function scheduleSave() { dirty.value = true; editRevision += 1; armSaveTimer() }
+function scheduleSave() { if (hydrating) return; dirty.value = true; editRevision += 1; armSaveTimer() }
 async function save() { if (saving.value || (!form.title.trim() && !form.content.trim())) return; const revision = editRevision; saving.value = true; error.value = ''; try { const result = draftId.value ? await updateDraft(draftId.value, form) : await createDraft(form); if (revision === editRevision) fill(result); else { hydrating = true; form.version = result.version; hydrating = false } feedback.value = `已保存 ${new Date().toLocaleTimeString()}`; if (!draftId.value) { skipNextRouteLoad = true; await router.replace(`/write/${result.id}`) } } catch (reason) { error.value = reason instanceof Error ? reason.message : '保存失败，请重试' } finally { saving.value = false; if (dirty.value && revision !== editRevision) armSaveTimer() } }
-async function submit() { await save(); if (!draftId.value) return; submitting.value = true; try { const result = await submitDraft(draftId.value, form.version ?? 0); fill(result); feedback.value = '已提交审核，审核结果会在通知中告知。' } catch (reason) { error.value = reason instanceof Error ? reason.message : '提交失败' } finally { submitting.value = false } }
-async function upload(event: Event) { const file = (event.target as HTMLInputElement).files?.[0]; if (!file) return; try { const mediaId = await uploadMedia(file); form.mediaIds = [...(form.mediaIds ?? []), mediaId]; scheduleSave(); feedback.value = '媒体已上传并等待审核' } catch (reason) { error.value = reason instanceof Error ? reason.message : '媒体上传失败' } }
+async function submit() { await save(); if (!draftId.value) return; submitting.value = true; try { const result = await submitDraft(draftId.value, form.version ?? 0); fill(result); audits.value = await fetchDraftAudits(draftId.value); feedback.value = '已提交审核，审核结果会在通知中告知。' } catch (reason) { error.value = reason instanceof Error ? reason.message : '提交失败' } finally { submitting.value = false } }
+async function upload(event: Event) { const file = (event.target as HTMLInputElement).files?.[0]; if (!file) return; uploading.value = true; error.value = ''; try { const mediaId = await uploadMedia(file); form.mediaIds = [...(form.mediaIds ?? []), mediaId]; scheduleSave(); feedback.value = '媒体已上传，提交审核后才会公开' } catch (reason) { error.value = reason instanceof Error ? reason.message : '媒体上传失败，请重试' } finally { uploading.value = false; (event.target as HTMLInputElement).value = '' } }
+function removeMedia(index: number) { form.mediaIds = form.mediaIds.filter((_, current) => current !== index); scheduleSave() }
+function moveMedia(index: number, direction: -1 | 1) { const next = index + direction; if (next < 0 || next >= form.mediaIds.length) return; const ids = [...form.mediaIds]; [ids[index], ids[next]] = [ids[next], ids[index]]; form.mediaIds = ids; scheduleSave() }
+async function appeal() { if (!draftId.value || !appealReason.value.trim()) return; try { await createAppeal(draftId.value, appealReason.value.trim()); appealReason.value = ''; feedback.value = '申诉已提交，运营团队会重新查看。' } catch (reason) { error.value = reason instanceof Error ? reason.message : '申诉提交失败' } }
 function beforeLeave(event: BeforeUnloadEvent) { if (dirty.value) { event.preventDefault(); event.returnValue = '' } }
-watch(form, () => { if (!hydrating) scheduleSave() }, { deep: true, flush: 'sync' }); watch(draftId, () => { if (skipNextRouteLoad) { skipNextRouteLoad = false; return } void load() }); onMounted(load); onMounted(() => window.addEventListener('beforeunload', beforeLeave)); onBeforeUnmount(() => { window.clearTimeout(saveTimer); window.removeEventListener('beforeunload', beforeLeave) })
-onBeforeRouteLeave(() => !dirty.value || window.confirm('草稿还有未保存的更改，确定离开吗？'))
+watch(form, scheduleSave, { deep: true, flush: 'sync' }); watch(draftId, () => { if (skipNextRouteLoad) { skipNextRouteLoad = false; return } void load() }); onMounted(load); onMounted(() => window.addEventListener('beforeunload', beforeLeave)); onBeforeUnmount(() => { window.clearTimeout(saveTimer); window.removeEventListener('beforeunload', beforeLeave) }); onBeforeRouteLeave(() => !dirty.value || window.confirm('草稿还有未保存的更改，确定离开吗？'))
 </script>
+
 <template>
-  <div class="page-stack write-page">
-    <section class="page-intro">
-      <span class="eyebrow">CREATOR'S DESK</span>
-      <h1>把你的观测记录放上来。</h1>
-      <p>先保存草稿，再决定何时让审核员看到它。</p>
-    </section>
-    <div class="write-layout">
-      <form class="editor-panel" @submit.prevent="submit">
-        <div class="editor-toolbar">
-          <span>{{ saving ? '保存中…' : feedback || '自动保存已开启' }}</span>
-          <span>{{ wordCount }} 字</span>
-        </div>
-        <label for="draft-title">标题</label>
-        <input id="draft-title" v-model="form.title" required maxlength="160" placeholder="给这宗案件一个可被记住的名字" />
-        <div class="field-grid">
-          <label>主题<select v-model="form.theme"><option value="DEDUCTION">推理馆</option><option value="SCI_FI">科幻馆</option><option value="COSMOS">宇宙档案</option></select></label>
-          <label>内容类型<select v-model="form.contentKind"><option value="CASE_FILE">案件档案</option><option value="PUZZLE">解谜题</option><option value="FICTION">短篇小说</option><option value="WORLDBUILDING">世界观</option><option value="COSMIC_ARTICLE">宇宙文章</option></select></label>
-          <label>难度<select v-model="form.difficulty"><option value="EASY">简单</option><option value="MEDIUM">中等</option><option value="HARD">困难</option></select></label>
-        </div>
-        <label for="draft-content">正文 Markdown</label>
-        <textarea id="draft-content" v-model="form.content" required rows="16" placeholder="从现场开始。支持 Markdown…"></textarea>
-        <div class="field-grid">
-          <label>线索<textarea v-model="form.clues" rows="4" placeholder="每行一条"></textarea></label>
-          <label>嫌疑人<textarea v-model="form.suspects" rows="4"></textarea></label>
-          <label>时间线<textarea v-model="form.timeline" rows="4"></textarea></label>
-        </div>
-        <label for="draft-question">问题</label>
-        <input id="draft-question" v-model="form.question" placeholder="希望读者回答什么？" />
-        <label for="draft-keywords">答案关键词</label>
-        <input id="draft-keywords" v-model="form.answerKeywords" placeholder="用逗号分隔多个可接受答案" />
-        <label for="draft-solution">解析</label>
-        <textarea id="draft-solution" v-model="form.solution" rows="4"></textarea>
-        <label for="cover-upload" class="upload-field"><FileUp :size="16" /> 上传封面或媒体<input id="cover-upload" ref="fileInput" type="file" accept="image/png,image/jpeg,image/webp,video/mp4" @change="upload" /></label>
-        <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-        <div class="editor-actions">
-          <button class="button button-quiet" type="button" @click="save"><Save :size="15" /> 保存草稿</button>
-          <button class="button button-primary" type="submit" :disabled="submitting"><Send :size="15" /> {{ submitting ? '提交中…' : '提交审核' }}</button>
-        </div>
-      </form>
-      <aside class="preview-panel">
-        <div class="editor-toolbar"><span><Eye :size="15" /> 实时预览</span><span v-if="form.version !== undefined">v{{ form.version }}</span></div>
-        <article class="markdown-preview" v-html="preview"></article>
-        <div class="audit-timeline" aria-label="审核进度">
-          <span class="complete"><Check :size="14" /> 草稿</span>
-          <span :class="{ complete: currentStatus !== 'DRAFT' }"><Check :size="14" /> 已投稿</span>
-          <span v-if="currentStatus === 'PENDING'" class="current">等待审核</span>
-          <span v-else-if="currentStatus === 'PUBLISHED'" class="complete"><Check :size="14" /> 已发布</span>
-          <span v-else-if="currentStatus === 'REJECTED'" class="current">已驳回</span>
-          <span v-else-if="currentStatus === 'CHANGES_REQUIRED'" class="current">需要修改</span>
-        </div>
-        <div class="draft-rail">
-          <h2>我的草稿</h2>
-          <RouterLink v-for="draft in draftList" :key="draft.id" :to="`/write/${draft.id}`" :class="{ current: draft.id === draftId }">{{ draft.title || '未命名草稿' }}<small>{{ draft.status }}</small></RouterLink>
-          <p v-if="!draftList.length" class="muted">保存第一份草稿后，它会出现在这里。</p>
-        </div>
-      </aside>
-    </div>
+  <div class="page-stack write-page"><section class="page-intro"><span class="eyebrow">CREATOR'S DESK</span><h1>把你的观测记录放上来。</h1><p>先保存草稿，再决定何时让审核员看到它。</p></section>
+    <div class="write-layout"><form class="editor-panel" @submit.prevent="submit"><div class="editor-toolbar"><span>{{ saving ? '保存中…' : feedback || '自动保存已开启（5 秒防抖）' }}</span><span>{{ wordCount }} 字 · v{{ form.version ?? 0 }}</span></div>
+      <label for="draft-title">标题</label><input id="draft-title" v-model="form.title" required maxlength="160" placeholder="给这宗案件一个可被记住的名字" />
+      <div class="field-grid"><label>主题<select v-model="form.theme"><option value="DEDUCTION">推理馆</option><option value="SCI_FI">科幻馆</option><option value="COSMOS">宇宙档案</option></select></label><label>内容类型<select v-model="form.contentKind"><option value="CASE_FILE">案件档案</option><option value="PUZZLE">解谜题</option><option value="FICTION">短篇小说</option><option value="WORLDBUILDING">世界观</option><option value="COSMIC_ARTICLE">宇宙文章</option></select></label><label>难度<select v-model="form.difficulty"><option value="EASY">简单</option><option value="MEDIUM">中等</option><option value="HARD">困难</option></select></label></div>
+      <label for="draft-tags">标签</label><input id="draft-tags" v-model="tagText" placeholder="时间线, 证词, 观测记录" />
+      <label for="draft-content">正文 Markdown</label><textarea id="draft-content" v-model="form.content" required rows="16" placeholder="从现场开始。支持 Markdown…" />
+      <div class="field-grid"><label>线索<textarea v-model="form.clues" rows="4" placeholder="每行一条" /></label><label>嫌疑人<textarea v-model="form.suspects" rows="4" /></label><label>时间线<textarea v-model="form.timeline" rows="4" /></label></div>
+      <label for="draft-question">问题</label><input id="draft-question" v-model="form.question" placeholder="希望读者回答什么？" /><label for="draft-keywords">答案关键词</label><input id="draft-keywords" v-model="form.answerKeywords" placeholder="用逗号分隔多个可接受答案" /><label for="draft-solution">解析</label><textarea id="draft-solution" v-model="form.solution" rows="4" />
+      <label for="cover-upload" class="upload-field"><FileUp :size="16" /> {{ uploading ? '上传中…' : '上传封面或媒体' }}<input id="cover-upload" type="file" accept="image/png,image/jpeg,image/webp,video/mp4" @change="upload" /></label>
+      <div v-if="form.mediaIds.length" class="media-queue"><div v-for="(mediaId, index) in form.mediaIds" :key="mediaId" class="media-queue-row"><span>媒体 #{{ mediaId }}</span><small>等待审核</small><button type="button" aria-label="上移媒体" @click="moveMedia(index, -1)"><ArrowUp :size="14" /></button><button type="button" aria-label="下移媒体" @click="moveMedia(index, 1)"><ArrowDown :size="14" /></button><button type="button" aria-label="删除媒体" @click="removeMedia(index)"><Trash2 :size="14" /></button></div></div>
+      <p v-if="error" class="form-error" role="alert">{{ error }}</p><div class="editor-actions"><button class="button button-quiet" type="button" @click="save"><Save :size="15" /> 保存草稿</button><button class="button button-primary" type="submit" :disabled="submitting || uploading"><Send :size="15" /> {{ submitting ? '提交中…' : '提交审核' }}</button></div>
+    </form>
+    <aside class="preview-panel"><div class="editor-toolbar"><span><Eye :size="15" /> 实时预览</span></div><article class="markdown-preview" v-html="preview" /><div class="audit-timeline" aria-label="审核进度"><span class="complete"><Check :size="14" /> 草稿</span><span :class="{ complete: currentStatus !== 'DRAFT' }"><Check :size="14" /> 已投稿</span><span v-if="currentStatus === 'PENDING'" class="current">等待审核</span><span v-else-if="currentStatus === 'PUBLISHED'" class="complete"><Check :size="14" /> 已发布</span><span v-else-if="currentStatus === 'REJECTED'" class="current">已驳回</span><span v-else-if="currentStatus === 'CHANGES_REQUIRED'" class="current">需要修改</span></div><p v-if="reviewReason" class="form-error">审核意见：{{ reviewReason }}</p><div v-if="currentStatus === 'REJECTED' || currentStatus === 'CHANGES_REQUIRED'" class="appeal-box"><label for="appeal-reason">申诉或修改说明</label><textarea id="appeal-reason" v-model="appealReason" rows="3" placeholder="说明你希望运营团队重新查看的原因" /><button class="button button-quiet" type="button" @click="appeal">提交申诉</button></div><div v-if="audits.length" class="audit-records"><h2>审核记录</h2><div v-for="audit in audits" :key="audit.id"><strong>{{ audit.action }}</strong><small>{{ audit.createdAt }}</small><p>{{ audit.reason }}</p></div></div><div class="draft-rail"><h2>我的草稿</h2><RouterLink v-for="draft in draftList" :key="draft.id" :to="`/write/${draft.id}`" :class="{ current: draft.id === draftId }">{{ draft.title || '未命名草稿' }}<small>{{ draft.status }}</small></RouterLink><p v-if="!draftList.length" class="muted">保存第一份草稿后，它会出现在这里。</p></div></aside></div>
   </div>
 </template>

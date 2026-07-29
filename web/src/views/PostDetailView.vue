@@ -1,15 +1,268 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { ArrowLeft, Bookmark, CheckCircle2, Heart, MessageCircle, Send } from 'lucide-vue-next'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { ArrowLeft, Bookmark, CheckCircle2, Eye, Heart, MessageCircle, Reply, Send, UserPlus } from 'lucide-vue-next'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { RouterLink, useRoute } from 'vue-router'
-import { answerCase, createComment, fetchComments, fetchPost, fetchRelated, interact } from '../api/client'
-import type { CommentItem, Post } from '../api/types'
-import PostCard from '../components/PostCard.vue'; import StatusPanel from '../components/StatusPanel.vue'
-const route = useRoute(); const post = ref<Post | null>(null); const related = ref<Post[]>([]); const comments = ref<CommentItem[]>([]); const answer = ref(''); const comment = ref(''); const loading = ref(false); const error = ref(''); const answerResult = ref(''); const themeName: Record<string, string> = { DEDUCTION: '推理馆', SCI_FI: '科幻馆', COSMOS: '宇宙档案' }; const id = computed(() => Number(route.params.id))
-async function load() { loading.value = true; error.value = ''; try { post.value = await fetchPost(id.value); related.value = await fetchRelated(id.value); comments.value = await fetchComments(id.value) } catch (reason) { error.value = reason instanceof Error ? reason.message : '案件详情暂时不可用' } finally { loading.value = false } }
-async function submitAnswer() { if (!answer.value.trim()) return; try { const result = await answerCase(id.value, answer.value); answerResult.value = result.correct ? `推理成立，获得 ${result.points} 分。` : '线索还没有闭合，再检查一次时间线。' } catch (reason) { answerResult.value = reason instanceof Error ? reason.message : '提交答案失败' } }
-async function submitComment() { if (!comment.value.trim()) return; try { comments.value.unshift(await createComment(id.value, comment.value)); comment.value = '' } catch (reason) { error.value = reason instanceof Error ? reason.message : '评论暂时不可用' } }
-async function action(type: 'like' | 'favorite') { if (post.value) { try { await interact(post.value.id, type) } catch (reason) { error.value = reason instanceof Error ? reason.message : '互动暂时不可用' } } }
-watch(id, load); onMounted(load)
+import {
+  answerCase, createComment, currentSession, deleteComment, fetchComments, fetchFollowState,
+  fetchInteractionState, fetchPost, fetchRelated, fetchUserProfile, followUser, interact, revealAnswer,
+  saveReadingProgress, unfollowUser
+} from '../api/client'
+import type { CommentItem, CommentThread, Post, PostDetail } from '../api/types'
+import PostCard from '../components/PostCard.vue'
+import StatusPanel from '../components/StatusPanel.vue'
+
+const route = useRoute()
+const post = ref<PostDetail | null>(null)
+const related = ref<Post[]>([])
+const threads = ref<CommentThread[]>([])
+const answer = ref('')
+const comment = ref('')
+const replyTarget = ref<number | null>(null)
+const replyText = ref('')
+const loading = ref(false)
+const error = ref('')
+const feedback = ref('')
+const commentError = ref('')
+const following = ref(false)
+const savingProgress = ref(false)
+let progressTimer: ReturnType<typeof setTimeout> | undefined
+const id = computed(() => Number(route.params.id))
+const session = computed(() => currentSession())
+const themeName: Record<string, string> = { DEDUCTION: '推理馆', SCI_FI: '科幻馆', COSMOS: '宇宙档案' }
+
+const renderedMarkdown = computed(() => {
+  if (!post.value?.markdown) return ''
+  const html = marked.parse(post.value.markdown, { async: false }) as string
+  return DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ['style', 'script', 'iframe', 'object', 'embed'],
+    FORBID_ATTR: ['style', 'onerror', 'onclick']
+  })
+})
+
+async function load() {
+  loading.value = true
+  error.value = ''
+  try {
+    const [detail, relatedPosts, commentThreads] = await Promise.all([
+      fetchPost(id.value), fetchRelated(id.value), fetchComments(id.value)
+    ])
+    post.value = detail
+    const profile = await fetchUserProfile(detail.author.id).catch(() => null)
+    if (profile) post.value.author = { ...post.value.author, username: profile.username, bio: profile.bio, followerCount: profile.followers }
+    related.value = relatedPosts
+    threads.value = commentThreads
+    following.value = detail.author.followedByViewer === true
+    if (currentSession()) {
+      const [interactionState, followState] = await Promise.all([
+        fetchInteractionState(detail.id), fetchFollowState(detail.author.id)
+      ])
+      post.value.viewerState.liked = interactionState.liked
+      post.value.viewerState.favorited = interactionState.favorited
+      following.value = followState.following
+    }
+    await nextTick()
+    restoreAnchor(detail.viewerState.readingProgress)
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '案件暂时无法打开'
+  } finally {
+    loading.value = false
+  }
+}
+
+function restoreAnchor(progress: number) {
+  if (progress <= 0) return
+  window.scrollTo({ top: (document.documentElement.scrollHeight - window.innerHeight) * progress / 100, behavior: 'auto' })
+}
+
+function scheduleProgressSave() {
+  if (!session.value || !post.value || savingProgress.value) return
+  if (progressTimer) clearTimeout(progressTimer)
+  progressTimer = setTimeout(() => void persistProgress(), 650)
+}
+
+async function persistProgress() {
+  if (!session.value || !post.value) return
+  const max = Math.max(1, document.documentElement.scrollHeight - window.innerHeight)
+  const percent = Math.min(100, Math.round((window.scrollY / max) * 100))
+  const completed = percent >= 96
+  savingProgress.value = true
+  try {
+    const saved = await saveReadingProgress(post.value.id, percent, `scroll:${Math.round(window.scrollY)}`, completed)
+    post.value.viewerState.readingProgress = saved.progressPercent
+  } catch {
+    // Progress is secondary; a failed save must not interrupt reading.
+  } finally {
+    savingProgress.value = false
+  }
+}
+
+async function toggleInteraction(type: 'like' | 'favorite') {
+  if (!post.value) return
+  const key = type === 'like' ? 'liked' : 'favorited'
+  const active = !post.value.viewerState[key]
+  try {
+    await interact(post.value.id, type, active)
+    post.value.viewerState[key] = active
+    if (type === 'like') post.value.likes += active ? 1 : -1
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '互动暂时不可用'
+  }
+}
+
+async function toggleFollow() {
+  if (!post.value) return
+  try {
+    if (following.value) await unfollowUser(post.value.author.id)
+    else await followUser(post.value.author.id)
+    following.value = !following.value
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : '关注暂时不可用'
+  }
+}
+
+async function submitAnswer() {
+  if (!post.value || !answer.value.trim()) return
+  try {
+    const result = await answerCase(post.value.id, answer.value.trim())
+    post.value.deductionState = {
+      attempted: true, solved: result.correct, revealed: result.revealed,
+      points: result.points, solutionUnlocked: result.solutionUnlocked
+    }
+    post.value.solution = result.solution
+    feedback.value = result.correct ? `推理成立，获得 ${result.points} 分。` : result.explanation
+  } catch (reason) {
+    feedback.value = reason instanceof Error ? reason.message : '提交推理失败，请稍后重试'
+  }
+}
+
+async function reveal() {
+  if (!post.value || !window.confirm('查看答案后，本题将不再获得积分。确定继续吗？')) return
+  try {
+    const result = await revealAnswer(post.value.id)
+    post.value.deductionState = { attempted: true, solved: result.correct, revealed: true, points: 0, solutionUnlocked: true }
+    post.value.solution = result.solution
+    feedback.value = '答案已揭示，本题不再计分。'
+  } catch (reason) {
+    feedback.value = reason instanceof Error ? reason.message : '答案暂时无法揭示'
+  }
+}
+
+function prependComment(item: CommentItem, parentId?: number) {
+  if (!parentId) {
+    threads.value.unshift({ root: item, replies: [] })
+    return
+  }
+  const thread = threads.value.find(candidate => candidate.root.id === parentId || candidate.root.id === item.rootId)
+  thread?.replies.push(item)
+}
+
+async function submitComment(parentId?: number) {
+  const content = (parentId ? replyText.value : comment.value).trim()
+  if (!content) return
+  commentError.value = ''
+  try {
+    const created = await createComment(id.value, content, parentId)
+    prependComment(created, parentId)
+    if (parentId) { replyText.value = ''; replyTarget.value = null } else comment.value = ''
+  } catch (reason) {
+    commentError.value = reason instanceof Error ? reason.message : '评论暂时不可用'
+  }
+}
+
+async function removeComment(item: CommentItem) {
+  try {
+    await deleteComment(item.id)
+    item.status = 'DELETED'
+    item.content = '评论已删除'
+  } catch (reason) {
+    commentError.value = reason instanceof Error ? reason.message : '删除评论失败'
+  }
+}
+
+function own(item: CommentItem) { return session.value?.userId === item.authorId }
+
+watch(id, load)
+onMounted(() => {
+  void load()
+  window.addEventListener('scroll', scheduleProgressSave, { passive: true })
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', scheduleProgressSave)
+  if (progressTimer) clearTimeout(progressTimer)
+  void persistProgress()
+})
 </script>
-<template><div class="page-stack"><RouterLink class="back-link" to="/discover"><ArrowLeft :size="16" /> 返回发现</RouterLink><StatusPanel v-if="error && !post" title="案件暂时无法打开" :detail="error" action-label="重试" @retry="load" /><div v-else-if="loading" class="loading-line">正在打开档案…</div><article v-else-if="post" class="detail-layout"><header class="detail-header"><div><span class="eyebrow">{{ themeName[post.theme] }} / {{ post.contentKind }}</span><h1>{{ post.title }}</h1><p class="detail-lede">{{ post.excerpt }}</p><div class="post-meta"><span>{{ post.author }}</span><span>{{ post.difficulty }}</span><span>{{ post.views }} 次观测</span></div></div><div class="detail-actions"><button class="button button-quiet" type="button" @click="action('like')"><Heart :size="16" /> 喜欢 {{ post.likes }}</button><button class="button button-quiet" type="button" @click="action('favorite')"><Bookmark :size="16" /> 收藏</button></div></header><section class="detail-body"><div class="reading-column"><div class="reading-copy"><p>{{ post.excerpt }}</p><h2 v-if="post.question">案件问题</h2><p v-if="post.question">{{ post.question }}</p><div v-if="post.clues?.length" class="clue-list"><h2>已知线索</h2><ul><li v-for="clue in post.clues" :key="clue">{{ clue }}</li></ul></div></div><section v-if="post.solvable" class="solve-box"><span class="eyebrow">DEDUCTION CHECK</span><h2>你的推理结论是什么？</h2><label for="answer">答案关键词</label><textarea id="answer" v-model="answer" rows="3" placeholder="写下你的推理，不需要一次完美。"></textarea><button class="button button-primary" type="button" @click="submitAnswer">提交推理 <Send :size="15" /></button><p v-if="answerResult" class="inline-feedback"><CheckCircle2 :size="16" /> {{ answerResult }}</p></section><section class="comments-section"><div class="section-heading"><div><span class="eyebrow">COMMUNITY NOTES</span><h2>读者讨论</h2></div><span class="muted">{{ comments.length }} 条</span></div><form class="comment-form" @submit.prevent="submitComment"><label class="sr-only" for="comment">写评论</label><textarea id="comment" v-model="comment" rows="2" placeholder="留下你的观察…"></textarea><button class="button button-primary" type="submit">发表评论</button></form><div v-if="comments.length" class="comment-list"><article v-for="item in comments" :key="item.id" class="comment-item"><div class="comment-avatar">{{ item.author.slice(0, 1) }}</div><div><strong>{{ item.author }}</strong><p>{{ item.content }}</p><small>{{ item.createdAt }}</small></div></article></div><p v-else class="muted">还没有讨论，成为第一个留下线索的人。</p></section></div><aside class="detail-aside"><div class="aside-card"><span class="eyebrow">CASE STATUS</span><strong>{{ post.status }}</strong><p>线索 {{ post.clues?.length ?? 0 }} 条 · 已有 {{ post.solvedCount }} 人参与</p></div><div v-if="related.length" class="related-list"><div class="section-heading"><h2>相邻轨道</h2></div><PostCard v-for="item in related" :key="item.id" :post="item" /></div></aside></section></article></div></template>
+
+<template>
+  <div class="page-stack detail-page">
+    <RouterLink class="back-link" to="/discover"><ArrowLeft :size="16" /> 返回发现</RouterLink>
+    <StatusPanel v-if="error && !post" title="案件暂时无法打开" :detail="error" action-label="重试" @retry="load" />
+    <div v-else-if="loading" class="loading-line">正在打开档案…</div>
+    <article v-else-if="post" class="detail-layout">
+      <header class="detail-header">
+        <div class="detail-heading-copy">
+          <span class="eyebrow">{{ themeName[post.theme] }} / {{ post.contentKind }}</span>
+          <h1>{{ post.title }}</h1>
+          <p class="detail-lede">{{ post.excerpt }}</p>
+          <div class="post-meta"><span>{{ post.author.username }}</span><span>{{ post.difficulty }}</span><span><Eye :size="14" /> {{ post.views }} 次观测</span></div>
+        </div>
+        <div class="detail-actions" aria-label="内容互动">
+          <button class="button button-quiet" :aria-pressed="post.viewerState.liked" type="button" @click="toggleInteraction('like')"><Heart :size="16" /> {{ post.viewerState.liked ? '已喜欢' : '喜欢' }} {{ post.likes }}</button>
+          <button class="button button-quiet" :aria-pressed="post.viewerState.favorited" type="button" @click="toggleInteraction('favorite')"><Bookmark :size="16" /> {{ post.viewerState.favorited ? '已收藏' : '收藏' }}</button>
+        </div>
+      </header>
+
+      <section class="author-strip">
+        <div class="profile-avatar">{{ post.author.username.slice(0, 1).toUpperCase() }}</div>
+        <div><strong>{{ post.author.username }}</strong><p>{{ post.author.bio || '正在记录宇宙中的异常信号。' }}</p></div>
+        <button class="button button-quiet" type="button" @click="toggleFollow"><UserPlus :size="16" /> {{ following ? '已关注' : '关注作者' }}</button>
+      </section>
+
+      <section class="detail-body">
+        <div class="reading-column">
+          <div v-if="post.media.length" class="detail-media-grid">
+            <img v-for="media in post.media" :key="media.mediaId" :src="media.url" :alt="media.altText || post.title" loading="lazy" />
+          </div>
+          <div class="reading-copy markdown-body" v-html="renderedMarkdown" />
+          <section v-if="post.question" class="case-question"><span class="eyebrow">CASE QUESTION</span><h2>案件问题</h2><p>{{ post.question }}</p></section>
+          <section v-if="post.clues?.length" class="clue-list"><h2>已知线索</h2><ul><li v-for="clue in post.clues" :key="clue">{{ clue }}</li></ul></section>
+
+          <section v-if="post.solvable" class="solve-box">
+            <span class="eyebrow">DEDUCTION CHECK</span><h2>你的推理结论是什么？</h2>
+            <template v-if="post.deductionState.solutionUnlocked">
+              <p class="solution-unlocked"><CheckCircle2 :size="17" /> {{ post.deductionState.revealed ? '答案已揭示，本题不再计分。' : '推理成立，答案已解锁。' }}</p>
+              <p class="solution-copy">{{ post.solution }}</p>
+            </template>
+            <template v-else>
+              <label for="answer">推理结论</label>
+              <textarea id="answer" v-model="answer" rows="3" placeholder="写下你的推理，不需要一次完美。" />
+              <div class="solve-actions"><button class="button button-primary" type="button" @click="submitAnswer">提交推理 <Send :size="15" /></button><button class="button button-quiet" type="button" @click="reveal">查看答案</button></div>
+            </template>
+            <p v-if="feedback" class="inline-feedback" role="status"><MessageCircle :size="16" /> {{ feedback }}</p>
+          </section>
+
+          <section class="comments-section">
+            <div class="section-heading"><div><span class="eyebrow">COMMUNITY NOTES</span><h2>读者讨论</h2></div><span class="muted"><MessageCircle :size="14" /> {{ threads.length }} 条串联</span></div>
+            <form class="comment-form" @submit.prevent="submitComment()"><label class="sr-only" for="comment">写评论</label><textarea id="comment" v-model="comment" rows="2" placeholder="留下你的观察…" /><button class="button button-primary" type="submit">发表评论</button></form>
+            <p v-if="commentError" class="form-error" role="alert">{{ commentError }}</p>
+            <div v-if="threads.length" class="comment-list">
+              <article v-for="thread in threads" :key="thread.root.id" class="comment-thread">
+                <div class="comment-item"><div class="comment-avatar">{{ thread.root.author.slice(0, 1) }}</div><div class="comment-main"><strong>{{ thread.root.author }}</strong><p>{{ thread.root.content }}</p><small>{{ thread.root.createdAt }}</small><div class="comment-actions"><button class="text-button" type="button" @click="replyTarget = replyTarget === thread.root.id ? null : thread.root.id"><Reply :size="14" /> 回复</button><button v-if="own(thread.root)" class="text-button" type="button" @click="removeComment(thread.root)">删除</button></div></div></div>
+                <div v-if="replyTarget === thread.root.id" class="reply-form"><label class="sr-only" :for="`reply-${thread.root.id}`">回复评论</label><textarea :id="`reply-${thread.root.id}`" v-model="replyText" rows="2" placeholder="回复这条观察…" /><button class="button button-quiet" type="button" @click="submitComment(thread.root.id)">发送回复</button></div>
+                <div v-for="reply in thread.replies" :key="reply.id" class="comment-item comment-reply"><div class="comment-avatar">{{ reply.author.slice(0, 1) }}</div><div class="comment-main"><strong>{{ reply.author }}</strong><p>{{ reply.content }}</p><small>{{ reply.createdAt }}</small><button v-if="own(reply)" class="text-button" type="button" @click="removeComment(reply)">删除</button></div></div>
+              </article>
+            </div>
+            <p v-else class="muted empty-copy">还没有讨论，成为第一个留下线索的人。</p>
+          </section>
+        </div>
+        <aside class="detail-aside">
+          <div class="aside-card"><span class="eyebrow">CASE STATUS</span><strong>{{ post.status }}</strong><p>线索 {{ post.clues?.length ?? 0 }} 条 · 已有 {{ post.solvedCount }} 人参与</p><div v-if="post.viewerState.readingProgress" class="progress-meter"><span :style="{ width: `${post.viewerState.readingProgress}%` }" /><small>阅读进度 {{ post.viewerState.readingProgress }}%</small></div></div>
+          <div v-if="related.length" class="related-list"><div class="section-heading"><h2>相邻轨道</h2></div><PostCard v-for="item in related" :key="item.id" :post="item" /></div>
+        </aside>
+      </section>
+    </article>
+  </div>
+</template>

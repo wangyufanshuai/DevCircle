@@ -10,7 +10,7 @@ const themeName: Record<string, string> = { DEDUCTION: '推理馆', SCI_FI: '科
 
 <template>
   <article class="post-card">
-    <div class="post-card-image" :class="`theme-${post.theme.toLowerCase()}`" aria-hidden="true"><span>{{ themeName[post.theme] }}</span></div>
+    <div class="post-card-image" :class="[`theme-${post.theme.toLowerCase()}`, `cover-${post.id % 4 + 1}`]" aria-hidden="true"><span>{{ themeName[post.theme] }}</span></div>
     <div class="post-card-body">
       <div class="eyebrow-row"><span class="eyebrow">{{ themeName[post.theme] }}</span><span>{{ post.difficulty }}</span></div>
       <h3><RouterLink :to="`/posts/${post.id}`">{{ post.title }}</RouterLink></h3>

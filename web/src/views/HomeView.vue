@@ -4,12 +4,13 @@ import { ArrowRight, Play, Sparkles } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 import PostCard from '../components/PostCard.vue'
 import StatusPanel from '../components/StatusPanel.vue'
-import { fetchFeed, interact, recordExposures } from '../api/client'
-import type { FeedItem } from '../api/types'
+import { currentSession, fetchDashboard, fetchFeed, interact, recordExposures } from '../api/client'
+import type { Dashboard, FeedItem } from '../api/types'
 
 const feed = ref<FeedItem[]>([])
 const loading = ref(true)
 const error = ref('')
+const dashboard = ref<Dashboard | null>(null)
 const hero = computed(() => feed.value[0]?.post)
 const channels = [
   { key: 'DEDUCTION', title: '推理馆', subtitle: '案件、线索与可验证的推理' },
@@ -22,6 +23,7 @@ async function load() {
     const result = await fetchFeed('home')
     feed.value = result.records
     if (result.records.length) void recordExposures(result.records.map(item => item.post.id), 'home').catch(reason => console.warn('exposure logging failed', reason))
+    if (currentSession()) dashboard.value = await fetchDashboard().catch(() => null)
   } catch (reason) { error.value = reason instanceof Error ? reason.message : '内容暂时不可用' } finally { loading.value = false }
 }
 async function onInteract(item: FeedItem, type: 'like' | 'favorite') {
@@ -44,6 +46,11 @@ onMounted(load)
 
     <section class="channel-switcher" aria-label="主题频道">
       <RouterLink v-for="channel in channels" :key="channel.key" :to="`/channels/${channel.key}`" class="channel-tab"><span class="channel-dot" :class="`dot-${channel.key.toLowerCase()}`"></span><span><strong>{{ channel.title }}</strong><small>{{ channel.subtitle }}</small></span><ArrowRight :size="16" /></RouterLink>
+    </section>
+
+    <section v-if="dashboard?.readingProgress.length" class="continue-orbit">
+      <div class="section-heading"><div><span class="eyebrow">CONTINUE ORBIT</span><h2>继续上次的观测</h2><p>阅读进度已经保存，可以从离开的地方继续。</p></div><RouterLink class="text-button" to="/me">查看全部 <ArrowRight :size="16" /></RouterLink></div>
+      <div class="orbit-row"><RouterLink v-for="item in dashboard.readingProgress.slice(0, 4)" :key="item.postId" :to="`/posts/${item.postId}`"><span>{{ item.theme }}</span><strong>{{ item.title }}</strong><small>{{ item.completed ? '已完成' : `阅读 ${item.progressPercent}%` }}</small><i><b :style="{ width: `${item.progressPercent}%` }" /></i></RouterLink></div>
     </section>
 
     <section class="section-heading"><div><span class="eyebrow">EDITOR'S DESK</span><h2>今日精选</h2><p>少一点噪声，多一点值得读完的内容。</p></div><RouterLink class="text-button" to="/discover">查看全部 <ArrowRight :size="16" /></RouterLink></section>
