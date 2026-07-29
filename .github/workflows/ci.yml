@@ -65,7 +65,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: azure/setup-helm@v4
       - run: helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-dev.yaml
-      - run: helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-prod.yaml
+      - run: helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-prod.yaml --set image.tag=0123456789abcdef0123456789abcdef01234567
       - run: docker compose --profile infra config
       - run: docker compose --profile demo config
       - run: docker compose --env-file .env.production.example -f docker-compose.prod.yml config --quiet

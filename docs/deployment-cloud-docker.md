@@ -7,7 +7,7 @@
 - 2 核 8 GB 内存以上，推荐 4 核 16 GB。
 - Docker 29+ 和 Docker Compose v2。
 - 已开放 80/443、8080、5501、19090、13000、16686 等需要访问的端口。
-- 真实生产请关闭 `GATEWAY_DEMO_TOKEN_ENABLED`，并通过环境变量注入强随机 JWT secret、数据库密码和 MinIO 密钥。
+- 所有环境都使用真实认证；生产必须通过环境变量注入强随机 JWT secret、数据库密码和 MinIO 密钥。
 
 ## 启动步骤
 

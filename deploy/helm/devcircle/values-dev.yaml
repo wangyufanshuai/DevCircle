@@ -6,7 +6,6 @@ image:
 replicaCount: 1
 
 env:
-  GATEWAY_DEMO_TOKEN_ENABLED: "false"
 
 resources:
   requests:

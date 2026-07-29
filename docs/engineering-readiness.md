@@ -18,7 +18,6 @@ Copy-Item .env.example .env
 - `ELASTICSEARCH_URIS`: Elasticsearch 地址。
 - `S3_*`: MinIO / S3 兼容存储配置。
 - `DEVCIRCLE_JWT_SECRET`: JWT 签名密钥。
-- `GATEWAY_DEMO_TOKEN_ENABLED`: 是否启用 demo token。
 - `VITE_API_BASE_URL`: 前端请求 Gateway 的地址。
 - `VITE_ENABLE_DEMO_FALLBACK`: 前端是否允许演示降级。
 

@@ -64,7 +64,7 @@ flowchart LR
 - refresh token 哈希后写库，退出时撤销。
 - Gateway 解析 JWT 并透传 `X-User-Id`、`X-Roles`、`X-Trace-Id`。
 - 管理接口要求 `ADMIN` 角色。
-- 本地 demo 可用 demo token，生产通过 `GATEWAY_DEMO_TOKEN_ENABLED=false` 关闭。
+- 本地与生产统一使用邮箱密码或 GitHub OAuth，不提供固定 Token 登录通道。
 - 上传校验文件大小、MIME、扩展名和魔数，拒绝脚本类伪装上传。
 
 ## 推荐系统

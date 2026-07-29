@@ -1,7 +1,8 @@
 image:
   registry: ghcr.io/wangyufanshuai/devcircle
-  tag: latest
+  tag: dev
   pullPolicy: IfNotPresent
+  requireSha: false
 
 replicaCount: 1
 
@@ -30,7 +31,6 @@ env:
   ELASTICSEARCH_URIS: http://elasticsearch:9200
   S3_ENDPOINT: http://minio:9000
   S3_BUCKET: devcircle
-  GATEWAY_DEMO_TOKEN_ENABLED: "false"
   DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
   DC_AUTH_URI: http://dc-auth:8101
   DC_USER_URI: http://dc-user:8102
@@ -43,15 +43,17 @@ env:
   DC_FILE_URI: http://dc-file:8109
   DC_ADMIN_URI: http://dc-admin:8110
 
-secretEnv:
-  MYSQL_PASSWORD: change-me
-  S3_ACCESS_KEY: minioadmin
-  S3_SECRET_KEY: minioadmin
-  DEVCIRCLE_JWT_SECRET: change-me-change-me-change-me-change-me
+secretEnv: {}
+secretEnvKeys:
+  - MYSQL_PASSWORD
+  - REDIS_PASSWORD
+  - S3_ACCESS_KEY
+  - S3_SECRET_KEY
+  - DEVCIRCLE_JWT_SECRET
 
 secrets:
-  create: true
-  existingSecret: ""
+  create: false
+  existingSecret: devcircle-secrets
 
 resources:
   requests:

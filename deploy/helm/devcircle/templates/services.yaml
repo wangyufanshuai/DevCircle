@@ -1,3 +1,6 @@
+{{- if and .Values.image.requireSha (not (regexMatch "^[0-9a-f]{40}$" .Values.image.tag)) }}
+{{- fail "production image.tag must be a full 40-character git SHA" }}
+{{- end }}
 {{- range $name, $svc := .Values.services }}
 ---
 apiVersion: apps/v1
@@ -27,11 +30,11 @@ spec:
             - name: {{ $key }}
               value: "{{ $value }}"
             {{- end }}
-            {{- range $key, $value := $.Values.secretEnv }}
+            {{- range $key := $.Values.secretEnvKeys }}
             - name: {{ $key }}
               valueFrom:
                 secretKeyRef:
-                  name: {{ default "devcircle-secrets" $.Values.secrets.existingSecret }}
+                  name: {{ $.Values.secrets.existingSecret }}
                   key: {{ $key }}
             {{- end }}
           readinessProbe:
