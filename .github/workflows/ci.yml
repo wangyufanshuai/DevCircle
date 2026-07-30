@@ -64,6 +64,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: azure/setup-helm@v4
+      - run: bash scripts/ops/test-validate-production-env.sh
       - run: helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-dev.yaml
       - run: helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-prod.yaml --set image.tag=0123456789abcdef0123456789abcdef01234567
       - run: docker compose --profile infra config

@@ -3,6 +3,7 @@ package io.github.devcircle.gateway.filter;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
@@ -17,6 +18,7 @@ import reactor.core.publisher.Mono;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -26,15 +28,35 @@ public class AccessTokenFilter implements GlobalFilter, Ordered {
     private final Set<String> bannedUserIds;
     private final Set<String> noPostUserIds;
 
+    public AccessTokenFilter(String secret, String bannedUserIds, String noPostUserIds) {
+        this(secret, bannedUserIds, noPostUserIds, false);
+    }
+
+    @Autowired
     public AccessTokenFilter(@Value("${devcircle.jwt.secret}") String secret,
                              @Value("${devcircle.gateway.banned-user-ids:}") String bannedUserIds,
-                             @Value("${devcircle.gateway.no-post-user-ids:}") String noPostUserIds) {
-        if (secret == null || secret.length() < 48 || secret.contains("change-me")) {
-            throw new IllegalStateException("DEVCIRCLE_JWT_SECRET must contain at least 48 non-default characters");
-        }
+                             @Value("${devcircle.gateway.no-post-user-ids:}") String noPostUserIds,
+                             @Value("${devcircle.production:false}") boolean production) {
+        validateSecret(secret, production);
         this.jwtKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
         this.bannedUserIds = configuredIds(bannedUserIds);
         this.noPostUserIds = configuredIds(noPostUserIds);
+    }
+
+    private static void validateSecret(String secret, boolean production) {
+        String normalized = secret == null ? "" : secret.toLowerCase(Locale.ROOT);
+        if (secret == null || secret.length() < 48 || normalized.contains("change-me")) {
+            throw new IllegalStateException("DEVCIRCLE_JWT_SECRET must contain at least 48 non-default characters");
+        }
+        if (production && (secret.length() < 64
+                || normalized.contains("replace-with")
+                || normalized.contains("local-development")
+                || normalized.contains("example")
+                || normalized.contains("default")
+                || secret.codePoints().distinct().count() < 16)) {
+            throw new IllegalStateException(
+                    "DEVCIRCLE_JWT_SECRET must contain at least 64 high-diversity non-placeholder characters in production");
+        }
     }
 
     @Override

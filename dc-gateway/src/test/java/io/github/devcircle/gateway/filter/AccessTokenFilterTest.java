@@ -16,10 +16,30 @@ import java.util.Date;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AccessTokenFilterTest {
     private static final String SECRET = "test-secret-that-is-long-enough-for-production-style-validation-123456";
     private final AccessTokenFilter filter = new AccessTokenFilter(SECRET, "", "");
+
+    @Test
+    void productionRejectsPlaceholderAndLowDiversitySecrets() {
+        assertThatThrownBy(() -> new AccessTokenFilter(
+                "replace-with-at-least-64-random-characters-replace-with-placeholder", "", "", true))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("production");
+        assertThatThrownBy(() -> new AccessTokenFilter("a".repeat(72), "", "", true))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("production");
+    }
+
+    @Test
+    void productionAcceptsLongHighDiversitySecret() {
+        assertThatCode(() -> new AccessTokenFilter(
+                "Aa1!Bb2@Cc3#Dd4$Ee5%Ff6^Gg7&Hh8*Ii9(Jj0)Kk1_Ll2+Mm3-Nn4=Oo5?Pp6Qq7~", "", "", true))
+                .doesNotThrowAnyException();
+    }
 
     @Test
     void anonymousReadersCanBrowsePublishedContent() {

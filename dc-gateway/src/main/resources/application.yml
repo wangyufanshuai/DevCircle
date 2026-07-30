@@ -86,6 +86,7 @@ logging:
   pattern:
     level: "%5p traceId=%X{traceId:-} userId=%X{userId:-}"
 devcircle:
+  production: ${DEVCIRCLE_PRODUCTION_MODE:false}
   jwt:
     secret: ${DEVCIRCLE_JWT_SECRET:local-development-secret-must-be-at-least-forty-eight-characters-long}
   gateway:

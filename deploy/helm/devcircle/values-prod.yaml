@@ -8,6 +8,7 @@ image:
 replicaCount: 2
 
 env:
+  DEVCIRCLE_PRODUCTION_MODE: "true"
   DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
   SPRING_PROFILES_ACTIVE: aggregate
   DC_IDENTITY_URI: http://dc-identity:8201

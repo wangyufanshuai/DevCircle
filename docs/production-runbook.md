@@ -11,6 +11,7 @@
 
 ```bash
 chmod +x scripts/ops/*.sh
+scripts/ops/validate-production-env.sh .env.production
 docker compose --env-file .env.production -f docker-compose.prod.yml config --quiet
 docker compose --env-file .env.production -f docker-compose.prod.yml pull
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d mysql redis kafka elasticsearch minio
