@@ -17,7 +17,7 @@ public class ThemeContentSeeder implements ApplicationRunner {
     private final boolean enabled;
 
     public ThemeContentSeeder(PostRepository postRepository,
-                              @Value("${devcircle.seed.theme-content.enabled:true}") boolean enabled) {
+                              @Value("${devcircle.seed.theme-content.enabled:false}") boolean enabled) {
         this.postRepository = postRepository;
         this.enabled = enabled;
     }
