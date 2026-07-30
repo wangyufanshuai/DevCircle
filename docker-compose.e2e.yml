@@ -83,6 +83,8 @@ services:
       MYSQL_USER: devcircle
       MYSQL_PASSWORD: e2e-database-password
       DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
+      DEVCIRCLE_KAFKA_TOPICS_ENABLED: "false"
+      SPRING_KAFKA_LISTENER_AUTO_STARTUP: "false"
     mem_limit: 384m
     depends_on:
       mysql: { condition: service_healthy }

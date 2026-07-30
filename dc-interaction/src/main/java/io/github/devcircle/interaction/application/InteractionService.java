@@ -10,16 +10,19 @@ import org.springframework.stereotype.Service;
 @Service
 public class InteractionService {
     private final InteractionRepository interactionRepository;
+    private final PostPublicationGateway postPublicationGateway;
 
     @Autowired
-    public InteractionService(InteractionRepository interactionRepository) {
+    public InteractionService(InteractionRepository interactionRepository,
+                              PostPublicationGateway postPublicationGateway) {
         this.interactionRepository = interactionRepository;
+        this.postPublicationGateway = postPublicationGateway;
     }
 
     /** Compatibility constructor retained for isolated unit tests and older embedders. */
     public InteractionService(InteractionRepository interactionRepository,
                               org.springframework.data.redis.core.StringRedisTemplate ignoredRedisTemplate) {
-        this(interactionRepository);
+        this(interactionRepository, postId -> new PostPublicationGateway.PublishedPost(postId, 0));
     }
 
     public InteractionResult like(Long userId, Long postId, String idempotencyKey) {
@@ -40,13 +43,20 @@ public class InteractionService {
 
     private InteractionResult setActive(Long userId, Long postId, String type, boolean active, String idempotencyKey) {
         requireKey(idempotencyKey);
+        if (userId == null || userId <= 0) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录");
+        }
+        if (postId == null || postId <= 0) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "内容 ID 无效");
+        }
+        PostPublicationGateway.PublishedPost publishedPost = postPublicationGateway.requirePublished(postId);
         InteractionRepository.InteractionWriteResult result;
         if ("LIKE".equals(type)) {
-            result = active ? interactionRepository.insertLike(userId, postId, idempotencyKey)
-                    : interactionRepository.deleteLike(userId, postId, idempotencyKey);
+            result = active ? interactionRepository.insertLike(userId, postId, publishedPost.likeCount(), idempotencyKey)
+                    : interactionRepository.deleteLike(userId, postId, publishedPost.likeCount(), idempotencyKey);
         } else {
-            result = active ? interactionRepository.insertFavorite(userId, postId, idempotencyKey)
-                    : interactionRepository.deleteFavorite(userId, postId, idempotencyKey);
+            result = active ? interactionRepository.insertFavorite(userId, postId, publishedPost.likeCount(), idempotencyKey)
+                    : interactionRepository.deleteFavorite(userId, postId, publishedPost.likeCount(), idempotencyKey);
         }
         return new InteractionResult(postId, type, active, result.duplicateRequest() || !result.inserted(), idempotencyKey);
     }

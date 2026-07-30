@@ -13,6 +13,7 @@ x-service-env: &service-env
   S3_PUBLIC_BASE_URL: http://localhost:29000/devcircle
   S3_ACCESS_KEY: minioadmin
   S3_SECRET_KEY: minioadmin
+  DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
   OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
   OTEL_SERVICE_NAME: devcircle
   MANAGEMENT_TRACING_SAMPLING_PROBABILITY: 1.0

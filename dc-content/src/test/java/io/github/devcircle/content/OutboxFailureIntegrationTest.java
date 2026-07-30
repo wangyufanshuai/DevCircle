@@ -24,6 +24,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(properties = {
         "spring.kafka.bootstrap-servers=127.0.0.1:1",
+        "spring.kafka.listener.auto-startup=false",
+        "devcircle.kafka.topics.enabled=false",
         "spring.kafka.producer.properties.max.block.ms=1000",
         "spring.kafka.producer.properties.request.timeout.ms=1000",
         "spring.kafka.producer.properties.delivery.timeout.ms=2000"

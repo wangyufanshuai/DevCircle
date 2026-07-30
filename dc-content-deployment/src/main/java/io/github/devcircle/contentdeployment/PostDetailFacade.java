@@ -95,6 +95,9 @@ class PostDetailFacade {
         viewerState.put("liked", interaction.path("liked").asBoolean(false));
         viewerState.put("favorited", interaction.path("favorited").asBoolean(false));
         detail.set("viewerState", viewerState);
+        if (interaction.path("likeCount").isNumber()) {
+            detail.put("likes", interaction.path("likeCount").asLong());
+        }
 
         Map<Long, String> accessByMediaId = new LinkedHashMap<>();
         if (mediaAccess.isArray()) {

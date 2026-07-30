@@ -21,7 +21,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers(disabledWithoutDocker = true)
-@SpringBootTest(properties = "spring.kafka.bootstrap-servers=127.0.0.1:1")
+@SpringBootTest(properties = {
+        "spring.kafka.bootstrap-servers=127.0.0.1:1",
+        "spring.kafka.listener.auto-startup=false",
+        "devcircle.kafka.topics.enabled=false"
+})
 class DraftPersistenceIntegrationTest {
     @Container
     static final MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.4")

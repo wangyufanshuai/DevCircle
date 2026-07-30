@@ -8,6 +8,11 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
+import io.github.devcircle.interaction.application.PostPublicationGateway;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -19,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(properties = {
         "spring.kafka.bootstrap-servers=localhost:65535"
 })
+@Import(InteractionPipelineIntegrationTest.PublicationTestConfig.class)
 class InteractionPipelineIntegrationTest {
     @Container
     static final MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.4")
@@ -47,6 +53,15 @@ class InteractionPipelineIntegrationTest {
 
     @Autowired
     StringRedisTemplate redisTemplate;
+
+    @TestConfiguration
+    static class PublicationTestConfig {
+        @Bean
+        @Primary
+        PostPublicationGateway postPublicationGateway() {
+            return postId -> new PostPublicationGateway.PublishedPost(postId, postId == 9004L ? 17 : 0);
+        }
+    }
 
     @Test
     void duplicateLikeIsIdempotentAndRedisHeatChangesOnce() {
@@ -83,5 +98,27 @@ class InteractionPipelineIntegrationTest {
 
         assertThat(favoriteRows).isEqualTo(1);
         assertThat(favoriteCount).isEqualTo(1);
+    }
+
+    @Test
+    void stateReturnsDurableSelectionAndCountersAfterToggle() {
+        interactionService.like(9L, 9003L, "like-9003");
+        interactionService.favorite(9L, 9003L, "favorite-9003");
+
+        var state = jdbcClient.sql("SELECT like_count, favorite_count FROM post_counter WHERE post_id = 9003")
+                .query((rs, rowNum) -> java.util.List.of(rs.getLong("like_count"), rs.getLong("favorite_count")))
+                .single();
+
+        assertThat(state).containsExactly(1L, 1L);
+    }
+
+    @Test
+    void firstRealLikePreservesThePublishedContentBaseline() {
+        interactionService.like(10L, 9004L, "like-9004");
+
+        Long likeCount = jdbcClient.sql("SELECT like_count FROM post_counter WHERE post_id = 9004")
+                .query(Long.class).single();
+
+        assertThat(likeCount).isEqualTo(18);
     }
 }

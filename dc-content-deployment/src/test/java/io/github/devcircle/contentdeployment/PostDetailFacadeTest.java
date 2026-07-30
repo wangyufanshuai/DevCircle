@@ -31,7 +31,7 @@ class PostDetailFacadeTest {
             String path = request.url().getRawPath();
             if (host.equals("content.test")) return ok("""
                     {"id":1001,"author":{"id":7,"username":"user-7"},
-                     "answerKeywords":["林墨"],"solution":"secret solution",
+                     "answerKeywords":["林墨"],"solution":"secret solution","likes":17,
                      "deductionState":{"solutionUnlocked":false},
                      "media":[{"mediaId":8,"url":"","contentType":"image/webp","status":"APPROVED"}],
                      "viewerState":{"liked":false,"favorited":false,"readingProgress":42}}
@@ -43,7 +43,7 @@ class PostDetailFacadeTest {
                     {"id":7,"username":"林墨","avatarUrl":"/avatars/7.webp","bio":"记录异常信号",\
                      "followers":18,"following":4,"status":"ACTIVE"}
                     """);
-            if (host.equals("interaction.test")) return ok("{\"liked\":true,\"favorited\":true}");
+            if (host.equals("interaction.test")) return ok("{\"liked\":true,\"favorited\":true,\"likeCount\":23,\"favoriteCount\":9}");
             if (host.equals("file.test")) return ok("""
                     [{"mediaId":8,"url":"https://signed.example/evidence.webp","expiresAt":"2099-01-01T00:00:00Z"}]
                     """);
@@ -59,6 +59,7 @@ class PostDetailFacadeTest {
         assertThat(detail.at("/author/followedByViewer").asBoolean()).isTrue();
         assertThat(detail.at("/viewerState/liked").asBoolean()).isTrue();
         assertThat(detail.at("/viewerState/favorited").asBoolean()).isTrue();
+        assertThat(detail.at("/likes").asLong()).isEqualTo(23);
         assertThat(detail.at("/viewerState/readingProgress").asInt()).isEqualTo(42);
         assertThat(detail.has("answerKeywords")).isFalse();
         assertThat(detail.get("solution").isNull()).isTrue();
@@ -88,6 +89,29 @@ class PostDetailFacadeTest {
         assertThat(detail.at("/author/followedByViewer").asBoolean()).isFalse();
         assertThat(detail.at("/viewerState/liked").asBoolean()).isFalse();
         assertThat(hosts).containsExactlyInAnyOrder("content.test", "user.test");
+    }
+
+    @Test
+    void keepsContentBaselineWhenInteractionCounterIsNotInitialized() {
+        PostDetailFacade facade = facade(request -> {
+            String host = request.url().getHost();
+            String path = request.url().getRawPath();
+            if (host.equals("content.test")) return ok("""
+                    {"id":1001,"likes":17,"author":{"id":7},"media":[],
+                     "viewerState":{"liked":false,"favorited":false,"readingProgress":0}}
+                    """);
+            if (host.equals("user.test") && path.endsWith("/follow-state")) return ok("{\"following\":false}");
+            if (host.equals("user.test")) return ok("""
+                    {"id":7,"username":"author-7","avatarUrl":null,"bio":null,"followers":0,"following":0}
+                    """);
+            if (host.equals("interaction.test")) return ok("{\"liked\":false,\"favorited\":false,\"likeCount\":null}");
+            return failure(HttpStatus.INTERNAL_SERVER_ERROR, "SYSTEM_ERROR");
+        });
+
+        var detail = facade.load(1001L, 2L).block();
+
+        assertThat(detail).isNotNull();
+        assertThat(detail.at("/likes").asLong()).isEqualTo(17);
     }
 
     @Test

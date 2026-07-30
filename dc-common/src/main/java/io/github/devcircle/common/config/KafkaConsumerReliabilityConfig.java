@@ -23,7 +23,7 @@ public class KafkaConsumerReliabilityConfig {
     @Bean
     @ConditionalOnMissingBean(CommonErrorHandler.class)
     DefaultErrorHandler kafkaConsumerErrorHandler(
-            KafkaTemplate<Object, Object> kafkaTemplate,
+            KafkaTemplate<?, ?> kafkaTemplate,
             @Value("${devcircle.kafka.retry.initial-interval-ms:1000}") long initialInterval,
             @Value("${devcircle.kafka.retry.multiplier:2.0}") double multiplier,
             @Value("${devcircle.kafka.retry.max-interval-ms:10000}") long maxInterval,

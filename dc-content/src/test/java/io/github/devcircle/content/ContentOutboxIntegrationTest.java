@@ -3,6 +3,7 @@ package io.github.devcircle.content;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.common.event.EventEnvelope;
 import io.github.devcircle.content.api.CreatePostRequest;
 import io.github.devcircle.content.infrastructure.JdbcOutboxPublisher;
 import io.github.devcircle.content.infrastructure.PostRepository;
@@ -15,6 +16,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.MySQLContainer;
@@ -26,6 +28,7 @@ import org.testcontainers.utility.DockerImageName;
 import java.time.Duration;
 import java.util.List;
 import java.util.Properties;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -61,6 +64,9 @@ class ContentOutboxIntegrationTest {
     @Autowired
     ObjectMapper objectMapper;
 
+    @Autowired
+    KafkaTemplate<String, String> kafkaTemplate;
+
     @TestConfiguration
     static class TestBeans {
         @Bean
@@ -87,6 +93,29 @@ class ContentOutboxIntegrationTest {
         assertThat(published).isEqualTo(1);
         assertThat(outboxStatus(created.id())).isEqualTo("PUBLISHED");
         assertThat(readSinglePostCreatedEvent().path("payload").path("postId").asLong()).isEqualTo(created.id());
+    }
+
+    @Test
+    void repeatedInteractionEventUpdatesContentCounterExactlyOnce() throws Exception {
+        jdbcClient.sql("""
+                        INSERT INTO post(id, author_id, title, status, like_count)
+                        VALUES (91001, 7, 'Kafka projection case', 'PUBLISHED', 17)
+                        """).update();
+        EventEnvelope event = EventEnvelope.now(EventTopics.INTERACTION_CHANGED, "dc-interaction", "91001",
+                Map.of("actorId", 42L, "postId", 91001L, "interactionType", "LIKE"));
+        String payload = objectMapper.writeValueAsString(event);
+
+        kafkaTemplate.send(EventTopics.INTERACTION_CHANGED, "91001", payload).get();
+        kafkaTemplate.send(EventTopics.INTERACTION_CHANGED, "91001", payload).get();
+
+        long deadline = System.nanoTime() + Duration.ofSeconds(15).toNanos();
+        while (System.nanoTime() < deadline && postLikeCount(91001L) != 18) {
+            Thread.sleep(100);
+        }
+
+        assertThat(postLikeCount(91001L)).isEqualTo(18);
+        assertThat(count("SELECT COUNT(*) FROM interaction_projection_dedup WHERE event_id = '"
+                + event.eventId() + "'")).isEqualTo(1);
     }
 
     private JsonNode readSinglePostCreatedEvent() throws Exception {
@@ -122,5 +151,11 @@ class ContentOutboxIntegrationTest {
 
     private Long count(String sql) {
         return jdbcClient.sql(sql).query(Long.class).single();
+    }
+
+    private long postLikeCount(Long postId) {
+        Long value = jdbcClient.sql("SELECT like_count FROM post WHERE id = :postId")
+                .param("postId", postId).query(Long.class).single();
+        return value == null ? 0 : value;
     }
 }
