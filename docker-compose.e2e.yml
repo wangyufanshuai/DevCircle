@@ -9,6 +9,7 @@ x-app-defaults: &app-defaults
     DEVCIRCLE_JWT_SECRET: Aa1!Bb2@Cc3#Dd4~Ee5%Ff6^Gg7&Hh8*Ii9(Jj0)Kk1_Ll2+Mm3-Nn4=Oo5?Pp6Qq7~
     REDIS_HOST: redis
     REDIS_PORT: 6379
+    KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     SPRINGDOC_API_DOCS_ENABLED: "false"
     SPRINGDOC_SWAGGER_UI_ENABLED: "false"
     JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=70 -XX:MaxMetaspaceSize=192m
@@ -48,6 +49,29 @@ services:
       timeout: 3s
       retries: 12
 
+  kafka:
+    image: apache/kafka:4.1.1
+    profiles: ["community"]
+    restart: "no"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    networks: [e2e]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
   dc-auth:
     <<: *app-defaults
     build:
@@ -64,6 +88,7 @@ services:
     mem_limit: 384m
     depends_on:
       mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy, required: false }
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8101/actuator/health/readiness"]
       interval: 5s
@@ -72,7 +97,7 @@ services:
 
   dc-content:
     <<: *app-defaults
-    profiles: ["content", "review"]
+    profiles: ["content", "review", "community"]
     build:
       <<: *service-build
       args: { JAR_FILE: dc-content/target/dc-content-0.1.0-SNAPSHOT.jar }
@@ -90,6 +115,74 @@ services:
       mysql: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8103/actuator/health/readiness"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  dc-user:
+    <<: *app-defaults
+    profiles: ["community"]
+    build:
+      <<: *service-build
+      args: { JAR_FILE: dc-user/target/dc-user-0.1.0-SNAPSHOT.jar }
+    environment:
+      <<: *app-env
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: devcircle
+      MYSQL_PASSWORD: e2e-database-password
+    mem_limit: 384m
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      dc-auth: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8102/actuator/health/readiness"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  dc-notification:
+    <<: *app-defaults
+    profiles: ["community"]
+    build:
+      <<: *service-build
+      args: { JAR_FILE: dc-notification/target/dc-notification-0.1.0-SNAPSHOT.jar }
+    environment:
+      <<: *app-env
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: devcircle
+      MYSQL_PASSWORD: e2e-database-password
+    mem_limit: 384m
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8108/actuator/health/readiness"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  dc-recommend:
+    <<: *app-defaults
+    profiles: ["community"]
+    build:
+      <<: *service-build
+      args: { JAR_FILE: dc-recommend/target/dc-recommend-0.1.0-SNAPSHOT.jar }
+    environment:
+      <<: *app-env
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: devcircle
+      MYSQL_PASSWORD: e2e-database-password
+      DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
+    mem_limit: 384m
+    depends_on:
+      dc-content: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8107/actuator/health/readiness"]
       interval: 5s
       timeout: 5s
       retries: 24
@@ -123,7 +216,10 @@ services:
     environment:
       <<: *app-env
       DC_AUTH_URI: http://dc-auth:8101
+      DC_USER_URI: http://dc-user:8102
       DC_CONTENT_URI: http://dc-content:8103
+      DC_RECOMMEND_URI: http://dc-recommend:8107
+      DC_NOTIFICATION_URI: http://dc-notification:8108
       DC_ADMIN_URI: http://dc-admin:8110
     ports: ["28080:8080"]
     mem_limit: 384m
@@ -131,6 +227,9 @@ services:
       dc-auth: { condition: service_healthy }
       dc-admin: { condition: service_healthy, required: false }
       dc-content: { condition: service_healthy, required: false }
+      dc-user: { condition: service_healthy, required: false }
+      dc-recommend: { condition: service_healthy, required: false }
+      dc-notification: { condition: service_healthy, required: false }
       redis: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"]

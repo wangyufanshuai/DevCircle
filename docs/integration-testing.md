@@ -25,7 +25,15 @@ bash scripts/e2e/run-real-auth.sh
 
 真实链路会打包可执行的 Auth/Gateway Spring Boot JAR，启动 MySQL、Redis、Auth 和 Gateway，随后验证注册、Refresh Token 轮换、退出撤销、重复注册持久化冲突与再次登录。脚本退出时自动删除隔离容器和数据卷；失败时先输出服务日志。
 
-核心容器测试不静默跳过。Docker 不可用时测试应失败，避免把“没有跑容器”误认为“容器链路通过”。
+关注、通知和推荐事件链路使用独立的 community profile：
+
+```bash
+bash scripts/e2e/run-real-community.sh
+```
+
+该脚本启动 Kafka、Auth、User、Content、Notification、Recommend 和 Gateway，验证两名新用户的资料同步、关注幂等、通知去重、取消关注静默以及推荐投影回退为未关注状态。
+
+本地 `mvnw test` 在 Docker 不可用时会把 Testcontainers 项目标记为 skipped，输出只能作为“单元测试通过、容器链路未验证”。CI 在 Maven 后额外运行 `scripts/ops/assert-no-skipped-tests.sh`，任何 skipped 都会阻断构建，避免把“没有跑容器”误认为“容器链路通过”。
 
 Windows Docker Desktop 29 如遇 named pipe 探测失败，可启用本地只绑定回环地址的 Docker socket 代理：
 

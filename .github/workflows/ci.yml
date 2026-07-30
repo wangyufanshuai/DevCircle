@@ -21,6 +21,7 @@ jobs:
           java-version: "21"
           cache: maven
       - run: ./mvnw -B verify -Pcoverage
+      - run: bash scripts/ops/assert-no-skipped-tests.sh
       - uses: actions/upload-artifact@v5
         if: always()
         with:
@@ -134,6 +135,32 @@ jobs:
         if: failure()
         with:
           name: real-review-e2e-artifacts
+          path: web/test-results/**
+          if-no-files-found: ignore
+
+  real-community-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - run: bash scripts/e2e/run-real-community.sh
+      - uses: actions/upload-artifact@v5
+        if: failure()
+        with:
+          name: real-community-e2e-artifacts
           path: web/test-results/**
           if-no-files-found: ignore
 
