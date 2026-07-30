@@ -735,7 +735,7 @@ public class PostRepository {
                         LEFT JOIN post_tag pt ON pt.post_id = p.id
                         LEFT JOIN tag t ON t.id = pt.tag_id
                         LEFT JOIN post_media pm ON pm.post_id = p.id
-                        """ + whereClause + """
+                        """ + whereClause + "\n" + """
                         GROUP BY p.id, p.author_id, p.title, p.type, p.theme, p.content_kind, p.difficulty,
                                  p.solvable, p.status, p.version, p.last_saved_at, p.submitted_at, p.review_reason,
                                  pc.markdown, pc.clues, pc.suspects, pc.timeline, pc.question,
