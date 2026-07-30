@@ -16,7 +16,8 @@ class ThemeSearchFallbackTest {
     void fallbackSearchFiltersByThemeKindAndDifficulty() {
         ElasticsearchOperations operations = mock(ElasticsearchOperations.class);
         when(operations.search(any(Query.class), any(Class.class))).thenThrow(new IllegalStateException("offline"));
-        SearchService service = new SearchService(operations, new ObjectMapper(), "http://localhost:8103");
+        SearchService service = new SearchService(operations, new ObjectMapper(), "http://localhost:8103",
+                mock(SearchEventCoordinator.class));
         service.enableReadFallbackForTests();
 
         var result = service.search("钟楼", null, "relevance", "DEDUCTION", "CASE_FILE", "EASY");
@@ -33,7 +34,8 @@ class ThemeSearchFallbackTest {
     void fallbackCursorMovesForwardWithoutRepeatingResults() {
         ElasticsearchOperations operations = mock(ElasticsearchOperations.class);
         when(operations.search(any(Query.class), any(Class.class))).thenThrow(new IllegalStateException("offline"));
-        SearchService service = new SearchService(operations, new ObjectMapper(), "http://localhost:8103");
+        SearchService service = new SearchService(operations, new ObjectMapper(), "http://localhost:8103",
+                mock(SearchEventCoordinator.class));
         service.enableReadFallbackForTests();
 
         var first = service.searchCursor("", null, "relevance", null, null, null, "", 2);
@@ -48,7 +50,8 @@ class ThemeSearchFallbackTest {
     @Test
     void invalidCursorFailsInsteadOfReturningTheFirstPage() {
         ElasticsearchOperations operations = mock(ElasticsearchOperations.class);
-        SearchService service = new SearchService(operations, new ObjectMapper(), "http://localhost:8103");
+        SearchService service = new SearchService(operations, new ObjectMapper(), "http://localhost:8103",
+                mock(SearchEventCoordinator.class));
 
         assertThatThrownBy(() -> service.searchCursor("线索", null, "relevance", null, null, null, "not-a-cursor", 20))
                 .hasMessageContaining("搜索游标无效");

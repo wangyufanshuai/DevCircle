@@ -32,16 +32,19 @@ public class SearchService {
     private final ElasticsearchOperations elasticsearchOperations;
     private final ObjectMapper objectMapper;
     private final RestClient contentClient;
+    private final SearchEventCoordinator eventCoordinator;
 
     @Value("${devcircle.search.read-fallback-enabled:false}")
     private boolean readFallbackEnabled;
 
     public SearchService(ElasticsearchOperations elasticsearchOperations,
                          ObjectMapper objectMapper,
-                         @Value("${devcircle.content.base-url:http://localhost:8103}") String contentBaseUrl) {
+                         @Value("${devcircle.content.base-url:http://localhost:8103}") String contentBaseUrl,
+                         SearchEventCoordinator eventCoordinator) {
         this.elasticsearchOperations = elasticsearchOperations;
         this.objectMapper = objectMapper;
         this.contentClient = RestClient.builder().baseUrl(contentBaseUrl).build();
+        this.eventCoordinator = eventCoordinator;
     }
 
     public PageResponse<PostSummary> search(String keyword, String tag, String sort) {
@@ -115,51 +118,91 @@ public class SearchService {
         }
     }
 
-    @KafkaListener(topics = {EventTopics.POST_CREATED, EventTopics.POST_UPDATED, EventTopics.AUDIT_COMPLETED}, groupId = "dc-search")
+    @KafkaListener(topics = {EventTopics.POST_CREATED, EventTopics.POST_UPDATED, EventTopics.AUDIT_COMPLETED,
+            EventTopics.CONTENT_REJECTED}, groupId = "dc-search")
     public void indexPostEvent(String message) throws Exception {
         upsertPostFromEvent(message);
     }
 
     public void upsertPostFromEvent(String message) throws Exception {
         JsonNode envelope = objectMapper.readTree(message);
+        String eventId = requiredText(envelope, "eventId");
+        String topic = requiredText(envelope, "type");
         JsonNode payload = envelope.path("payload");
+        if (!payload.isObject()) {
+            throw new IllegalArgumentException("Post event payload must be an object");
+        }
         long postId = payload.path("postId").asLong(0);
         if (postId <= 0) {
             throw new IllegalArgumentException("Post event is missing postId");
         }
-        Instant occurredAt = Instant.parse(envelope.path("occurredAt").asText());
-        PostSearchDocument existing = elasticsearchOperations.get(String.valueOf(postId), PostSearchDocument.class);
-        if (existing != null && existing.getEventOccurredAt() != null && existing.getEventOccurredAt().isAfter(occurredAt)) {
+        Instant occurredAt = Instant.parse(requiredText(envelope, "occurredAt"));
+        if (!eventCoordinator.claim(eventId, topic, postId, occurredAt)) {
             return;
         }
-        PostSummary post;
-        if ("PUBLISHED".equals(payload.path("status").asText()) && payload.hasNonNull("title")) {
-            List<String> tags = objectMapper.convertValue(payload.path("tags"),
-                    objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
-            post = new PostSummary(postId, payload.path("type").asText("TEXT"), payload.path("theme").asText("DEDUCTION"),
-                    payload.path("contentKind").asText("CASE_FILE"), payload.path("difficulty").asText("MEDIUM"),
-                    payload.path("solvable").asBoolean(false), 0, payload.path("title").asText(),
-                    payload.path("excerpt").asText(payload.path("title").asText()), payload.path("author").asText("event"),
-                    tags, List.of(), 0, 0, 0, "PUBLISHED", occurredAt);
-        } else {
-            post = loadPost(postId);
+        try {
+            String eventStatus = payload.path("status").asText("");
+            if (EventTopics.CONTENT_REJECTED.equals(topic)
+                    || (!eventStatus.isBlank() && !"PUBLISHED".equals(eventStatus))) {
+                elasticsearchOperations.delete(String.valueOf(postId), PostSearchDocument.class);
+                eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE");
+                return;
+            }
+            PostSummary post;
+            if ("PUBLISHED".equals(eventStatus) && payload.hasNonNull("title")) {
+                List<String> tags = objectMapper.convertValue(payload.path("tags"),
+                        objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+                post = new PostSummary(postId, payload.path("type").asText("TEXT"), payload.path("theme").asText("DEDUCTION"),
+                        payload.path("contentKind").asText("CASE_FILE"), payload.path("difficulty").asText("MEDIUM"),
+                        payload.path("solvable").asBoolean(false), 0, payload.path("title").asText(),
+                        payload.path("excerpt").asText(payload.path("title").asText()), payload.path("author").asText("event"),
+                        tags, List.of(), 0, 0, 0, "PUBLISHED", occurredAt);
+            } else {
+                post = loadPost(postId);
+            }
+            if (!"PUBLISHED".equals(post.status())) {
+                elasticsearchOperations.delete(String.valueOf(postId), PostSearchDocument.class);
+                eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE");
+                return;
+            }
+            elasticsearchOperations.save(document(post, occurredAt));
+            elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
+            eventCoordinator.complete(eventId, postId, occurredAt, "UPSERT");
+        } catch (Exception ex) {
+            try {
+                eventCoordinator.fail(eventId, postId, ex);
+            } catch (RuntimeException stateFailure) {
+                ex.addSuppressed(stateFailure);
+            }
+            throw ex;
         }
-        if (!"PUBLISHED".equals(post.status())) {
-            elasticsearchOperations.delete(String.valueOf(postId), PostSearchDocument.class);
-            return;
-        }
-        elasticsearchOperations.save(document(post, occurredAt));
-        elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
     }
 
     @KafkaListener(topics = EventTopics.POST_DELETED, groupId = "dc-search")
     public void deletePostEvent(String message) throws Exception {
-        JsonNode root = objectMapper.readTree(message).path("payload");
-        long postId = root.path("postId").asLong(0);
+        JsonNode envelope = objectMapper.readTree(message);
+        String eventId = requiredText(envelope, "eventId");
+        String topic = requiredText(envelope, "type");
+        Instant occurredAt = Instant.parse(requiredText(envelope, "occurredAt"));
+        JsonNode payload = envelope.path("payload");
+        long postId = payload.path("postId").asLong(0);
         if (postId <= 0) {
             throw new IllegalArgumentException("Post delete event is missing postId");
         }
-        elasticsearchOperations.delete(String.valueOf(postId), PostSearchDocument.class);
+        if (!eventCoordinator.claim(eventId, topic, postId, occurredAt)) {
+            return;
+        }
+        try {
+            elasticsearchOperations.delete(String.valueOf(postId), PostSearchDocument.class);
+            eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE");
+        } catch (RuntimeException ex) {
+            try {
+                eventCoordinator.fail(eventId, postId, ex);
+            } catch (RuntimeException stateFailure) {
+                ex.addSuppressed(stateFailure);
+            }
+            throw ex;
+        }
     }
 
     private List<PostSummary> loadPostsFromContent() {
@@ -185,16 +228,47 @@ public class SearchService {
         return posts;
     }
 
-    private PostSummary loadPost(Long postId) {
-        ApiResponse<PostSummary> response = contentClient.get()
+    private PostSummary loadPost(Long postId) throws Exception {
+        String body = contentClient.get()
                 .uri("/api/posts/{id}", postId)
                 .retrieve()
-                .body(new ParameterizedTypeReference<>() {
-                });
-        if (response == null || response.data() == null) {
+                .body(String.class);
+        JsonNode response = objectMapper.readTree(body);
+        JsonNode data = response.path("data");
+        if (!"OK".equals(response.path("code").asText()) || !data.isObject()) {
             throw new IllegalStateException("Content service returned no post for " + postId);
         }
-        return response.data();
+        JsonNode authorNode = data.path("author");
+        String author = authorNode.isObject()
+                ? authorNode.path("username").asText("")
+                : authorNode.asText("");
+        List<String> tags = objectMapper.convertValue(data.path("tags"),
+                objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+        return new PostSummary(postId,
+                data.path("type").asText("TEXT"),
+                requiredText(data, "theme"),
+                requiredText(data, "contentKind"),
+                requiredText(data, "difficulty"),
+                data.path("solvable").asBoolean(false),
+                data.path("solvedCount").asLong(0),
+                requiredText(data, "title"),
+                data.path("excerpt").asText(""),
+                author,
+                tags,
+                List.of(),
+                data.path("likes").asLong(0),
+                data.path("comments").asLong(0),
+                data.path("views").asLong(0),
+                requiredText(data, "status"),
+                Instant.parse(requiredText(data, "createdAt")));
+    }
+
+    private String requiredText(JsonNode node, String field) {
+        String value = node.path(field).asText("");
+        if (value.isBlank()) {
+            throw new IllegalArgumentException("Search event is missing " + field);
+        }
+        return value;
     }
 
     private PostSummary toSummary(PostSearchDocument document) {
