@@ -142,6 +142,14 @@ export function fetchUserProfile(userId: number) { return request<{ id: number; 
 export function searchPosts(keyword: string, theme?: Theme) {
   return request<PageResponse<Post>>(`/api/search/posts?keyword=${encodeURIComponent(keyword)}${theme ? `&theme=${theme}` : ''}`)
 }
+export async function searchPostsCursor(keyword: string, cursor = '', filters: { theme?: Theme; contentKind?: string; difficulty?: string } = {}) {
+  const query = new URLSearchParams({ keyword, cursor, size: '20' })
+  if (filters.theme) query.set('theme', filters.theme)
+  if (filters.contentKind) query.set('contentKind', filters.contentKind)
+  if (filters.difficulty) query.set('difficulty', filters.difficulty)
+  const body = await requestEnvelope<Post[]>(`/api/search/posts?${query}`)
+  return { records: body.data, nextCursor: String(body.meta?.nextCursor ?? ''), hasMore: body.meta?.hasMore === true }
+}
 
 export function listDrafts() { return request<Draft[]>('/api/posts/drafts?size=50') }
 export function fetchDraft(id: number) { return request<Draft>(`/api/posts/drafts/${id}`) }

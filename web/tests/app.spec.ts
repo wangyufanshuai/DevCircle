@@ -135,6 +135,29 @@ test('notification inbox paginates, uses server unread count and handles missing
   await expect(page.getByRole('button', { name: /轨道维护/ })).toBeVisible()
 })
 
+test('keyword discovery keeps every filter in the URL and paginates search results', async ({ page }) => {
+  const requests: URL[] = []
+  await page.route('**/api/search/posts?*', route => {
+    const url = new URL(route.request().url()); requests.push(url)
+    const cursor = url.searchParams.get('cursor')
+    const records = cursor ? [{ ...post, id: 1010, title: '钟楼余波' }] : [{ ...post, id: 1008, title: '钟楼证词' }, { ...post, id: 1009, title: '钟楼暗门' }]
+    return route.fulfill({ json: { code: 'OK', message: 'success', data: records, meta: { nextCursor: cursor ? '' : 'djE6MQ', hasMore: !cursor } } })
+  })
+  await page.goto('/discover')
+  await page.getByLabel('搜索内容').fill('钟楼')
+  await page.getByLabel('按主题筛选').selectOption('DEDUCTION')
+  await page.getByLabel('按内容类型筛选').selectOption('CASE_FILE')
+  await page.getByLabel('按难度筛选').selectOption('HARD')
+  await page.locator('#main-content').getByRole('button', { name: '搜索', exact: true }).click()
+  await expect(page.locator('.post-card')).toHaveCount(2)
+  const current = new URL(page.url())
+  expect(Object.fromEntries(current.searchParams)).toMatchObject({ q: '钟楼', theme: 'DEDUCTION', contentKind: 'CASE_FILE', difficulty: 'HARD' })
+  await page.getByRole('button', { name: '加载更多' }).click()
+  await expect(page.locator('.post-card')).toHaveCount(3)
+  expect(requests.at(-1)?.searchParams.get('cursor')).toBe('djE6MQ')
+  expect(requests.at(-1)?.searchParams.get('contentKind')).toBe('CASE_FILE')
+})
+
 test('responsive shell has no horizontal overflow and uses the correct navigation', async ({ page }, testInfo) => {
   await page.goto('/')
   if (testInfo.project.name === 'mobile') await expect(page.locator('.mobile-nav')).toBeVisible()

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.api.ApiResponse;
 import io.github.devcircle.common.api.PageResponse;
+import io.github.devcircle.common.error.BusinessException;
+import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.common.model.PostSummary;
 import io.github.devcircle.common.seed.ThemeContentLibrary;
@@ -11,6 +13,7 @@ import io.github.devcircle.search.infrastructure.PostSearchDocument;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.elasticsearch.client.elc.NativeQuery;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.SearchHit;
@@ -18,9 +21,11 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
-import java.util.List;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.List;
 
 @Service
 public class SearchService {
@@ -44,6 +49,14 @@ public class SearchService {
     }
 
     public PageResponse<PostSummary> search(String keyword, String tag, String sort, String theme, String contentKind, String difficulty) {
+        SearchSlice result = searchCursor(keyword, tag, sort, theme, contentKind, difficulty, null, 20);
+        return PageResponse.of(result.records(), result.records().size(), 1, 20);
+    }
+
+    public SearchSlice searchCursor(String keyword, String tag, String sort, String theme, String contentKind,
+                                    String difficulty, String cursor, int requestedSize) {
+        int page = decodeCursor(cursor);
+        int size = Math.max(1, Math.min(requestedSize, 50));
         try {
             var query = NativeQuery.builder()
                     .withQuery(q -> q.bool(b -> {
@@ -53,28 +66,36 @@ public class SearchService {
                         if (tag != null && !tag.isBlank()) {
                             b.filter(f -> f.term(t -> t.field("tags").value(tag)));
                         }
+                        b.filter(f -> f.term(t -> t.field("status").value("PUBLISHED")));
+                        if (theme != null && !theme.isBlank()) b.filter(f -> f.term(t -> t.field("theme").value(theme.toUpperCase())));
+                        if (contentKind != null && !contentKind.isBlank()) b.filter(f -> f.term(t -> t.field("contentKind").value(contentKind.toUpperCase())));
+                        if (difficulty != null && !difficulty.isBlank()) b.filter(f -> f.term(t -> t.field("difficulty").value(difficulty.toUpperCase())));
                         if ((keyword == null || keyword.isBlank()) && (tag == null || tag.isBlank())) {
                             b.must(m -> m.matchAll(ma -> ma));
                         }
                         return b;
                     }))
-                    .withPageable(PageRequest.of(0, 20))
+                    .withPageable("latest".equalsIgnoreCase(sort)
+                            ? PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by(Sort.Direction.DESC, "id")))
+                            : PageRequest.of(page, size))
                     .build();
-            List<PostSummary> records = elasticsearchOperations.search(query, PostSearchDocument.class).stream()
+            var hits = elasticsearchOperations.search(query, PostSearchDocument.class);
+            List<PostSummary> records = hits.stream()
                     .map(SearchHit::getContent)
                     .map(this::toSummary)
-                    .filter(post -> "PUBLISHED".equals(post.status()))
-                    .filter(post -> theme == null || theme.isBlank() || post.theme().equalsIgnoreCase(theme))
-                    .filter(post -> contentKind == null || contentKind.isBlank() || post.contentKind().equalsIgnoreCase(contentKind))
-                    .filter(post -> difficulty == null || difficulty.isBlank() || post.difficulty().equalsIgnoreCase(difficulty))
                     .toList();
-            return PageResponse.of(records, records.size(), 1, 20);
+            boolean hasMore = (long) (page + 1) * size < hits.getTotalHits();
+            return new SearchSlice(records, hasMore ? encodeCursor(page + 1) : "", hasMore);
         } catch (RuntimeException ex) {
+            if (ex instanceof BusinessException) throw ex;
             if (!readFallbackEnabled) {
                 throw ex;
             }
-            List<PostSummary> records = ThemeContentLibrary.search(keyword, theme, contentKind, difficulty).stream().limit(20).toList();
-            return PageResponse.of(records, records.size(), 1, 20);
+            List<PostSummary> matches = ThemeContentLibrary.search(keyword, theme, contentKind, difficulty);
+            int from = Math.min(page * size, matches.size());
+            int to = Math.min(from + size, matches.size());
+            boolean hasMore = to < matches.size();
+            return new SearchSlice(List.copyOf(matches.subList(from, to)), hasMore ? encodeCursor(page + 1) : "", hasMore);
         }
     }
 
@@ -85,7 +106,7 @@ public class SearchService {
         }
         try {
             elasticsearchOperations.save(posts.stream()
-                    .map(post -> new PostSearchDocument(post.id(), post.title(), post.excerpt(), post.author(), post.tags(), post.status(), post.createdAt()))
+                    .map(post -> document(post, post.createdAt()))
                     .toList());
             elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
             return posts.size();
@@ -127,8 +148,7 @@ public class SearchService {
             elasticsearchOperations.delete(String.valueOf(postId), PostSearchDocument.class);
             return;
         }
-        elasticsearchOperations.save(new PostSearchDocument(post.id(), post.title(), post.excerpt(), post.author(),
-                post.tags(), post.status(), post.createdAt(), occurredAt));
+        elasticsearchOperations.save(document(post, occurredAt));
         elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
     }
 
@@ -145,9 +165,10 @@ public class SearchService {
     private List<PostSummary> loadPostsFromContent() {
         List<PostSummary> posts = new ArrayList<>();
         for (int page = 1; page <= 100; page++) {
+            int currentPage = page;
             ApiResponse<PageResponse<PostSummary>> response = contentClient.get()
                     .uri(uriBuilder -> uriBuilder.path("/api/posts")
-                            .queryParam("page", 1)
+                            .queryParam("page", currentPage)
                             .queryParam("size", 20)
                             .build())
                     .retrieve()
@@ -177,8 +198,36 @@ public class SearchService {
     }
 
     private PostSummary toSummary(PostSearchDocument document) {
-        return new PostSummary(document.getId(), "TEXT", inferTheme(document.getTags()), inferContentKind(document.getTags()), "MEDIUM", false, 0,
+        String theme = document.getTheme() == null ? inferTheme(document.getTags()) : document.getTheme();
+        String contentKind = document.getContentKind() == null ? inferContentKind(document.getTags()) : document.getContentKind();
+        String difficulty = document.getDifficulty() == null ? "MEDIUM" : document.getDifficulty();
+        return new PostSummary(document.getId(), "TEXT", theme, contentKind, difficulty, false, 0,
                 document.getTitle(), document.getExcerpt(), document.getAuthor(), document.getTags(), List.of(), 0, 0, 0, document.getStatus(), document.getCreatedAt());
+    }
+
+    private PostSearchDocument document(PostSummary post, Instant occurredAt) {
+        return new PostSearchDocument(post.id(), post.title(), post.excerpt(), post.author(), post.tags(), post.status(),
+                post.theme(), post.contentKind(), post.difficulty(), post.createdAt(), occurredAt);
+    }
+
+    private int decodeCursor(String cursor) {
+        if (cursor == null || cursor.isBlank()) return 0;
+        try {
+            String decoded = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
+            if (!decoded.startsWith("v1:")) throw new IllegalArgumentException();
+            int page = Integer.parseInt(decoded.substring(3));
+            if (page < 0 || page > 10_000) throw new IllegalArgumentException();
+            return page;
+        } catch (IllegalArgumentException ex) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "搜索游标无效");
+        }
+    }
+
+    private String encodeCursor(int page) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(("v1:" + page).getBytes(StandardCharsets.UTF_8));
+    }
+
+    public record SearchSlice(List<PostSummary> records, String nextCursor, boolean hasMore) {
     }
 
     void enableReadFallbackForTests() {

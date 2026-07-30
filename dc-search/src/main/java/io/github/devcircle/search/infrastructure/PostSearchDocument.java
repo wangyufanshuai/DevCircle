@@ -22,6 +22,12 @@ public class PostSearchDocument {
     private List<String> tags;
     @Field(type = FieldType.Keyword)
     private String status;
+    @Field(type = FieldType.Keyword)
+    private String theme;
+    @Field(type = FieldType.Keyword)
+    private String contentKind;
+    @Field(type = FieldType.Keyword)
+    private String difficulty;
     @Field(type = FieldType.Date)
     private Instant createdAt;
     @Field(type = FieldType.Date)
@@ -31,16 +37,25 @@ public class PostSearchDocument {
     }
 
     public PostSearchDocument(Long id, String title, String excerpt, String author, List<String> tags, String status, Instant createdAt) {
-        this(id, title, excerpt, author, tags, status, createdAt, createdAt);
+        this(id, title, excerpt, author, tags, status, null, null, null, createdAt, createdAt);
     }
 
     public PostSearchDocument(Long id, String title, String excerpt, String author, List<String> tags, String status, Instant createdAt, Instant eventOccurredAt) {
+        this(id, title, excerpt, author, tags, status, null, null, null, createdAt, eventOccurredAt);
+    }
+
+    public PostSearchDocument(Long id, String title, String excerpt, String author, List<String> tags, String status,
+                              String theme, String contentKind, String difficulty,
+                              Instant createdAt, Instant eventOccurredAt) {
         this.id = id;
         this.title = title;
         this.excerpt = excerpt;
         this.author = author;
         this.tags = tags;
         this.status = status;
+        this.theme = theme;
+        this.contentKind = contentKind;
+        this.difficulty = difficulty;
         this.createdAt = createdAt;
         this.eventOccurredAt = eventOccurredAt;
     }
@@ -68,6 +83,12 @@ public class PostSearchDocument {
     public String getStatus() {
         return status;
     }
+
+    public String getTheme() { return theme; }
+
+    public String getContentKind() { return contentKind; }
+
+    public String getDifficulty() { return difficulty; }
 
     public Instant getCreatedAt() {
         return createdAt;

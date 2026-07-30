@@ -132,7 +132,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .page-intro h1 { margin: 12px 0; font-size: clamp(38px, 5vw, 64px); line-height: 1.12; letter-spacing: -.03em; text-wrap: balance; }
 .page-intro p { color: var(--muted); font-size: 15px; line-height: 1.8; }
 .discover-tools { display: grid; grid-template-columns: auto minmax(0, 1fr) 160px auto; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--surface); }
-.discover-tools-wide { grid-template-columns: auto minmax(0, 1fr) 150px 130px auto; }
+.discover-tools-wide { grid-template-columns: auto minmax(0, 1fr) 140px 140px 120px auto; }
 .load-more { width: fit-content; min-width: 180px; margin: 0 auto; }
 .load-more svg { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
