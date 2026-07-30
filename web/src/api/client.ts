@@ -53,7 +53,7 @@ async function refresh(): Promise<LoginResponse | null> {
     const csrf = cookie('dc_csrf')
     if (!csrf) { clearSession(); return null }
     const response = await fetch(`${API_BASE}/api/auth/refresh`, {
-      method: 'POST', credentials: 'include', headers: { 'X-CSRF-Token': csrf }
+      method: 'POST', credentials: 'include', headers: { 'X-CSRF-Token': csrf, 'Idempotency-Key': idempotencyKey() }
     })
     if (!response.ok) { clearSession(); return null }
     const data = await parse<LoginResponse>(response)

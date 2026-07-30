@@ -2,6 +2,7 @@ package io.github.devcircle.auth.application;
 
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -22,24 +23,59 @@ public class AuthService {
     private final AuthTokenRepository repository;
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
+    private final AuthIdempotencyService idempotency;
 
-    public AuthService(AuthTokenRepository repository, JwtService jwtService, PasswordEncoder passwordEncoder) {
+    @Autowired
+    public AuthService(AuthTokenRepository repository, JwtService jwtService, PasswordEncoder passwordEncoder,
+                       AuthIdempotencyService idempotency) {
         this.repository = repository;
         this.jwtService = jwtService;
         this.passwordEncoder = passwordEncoder;
+        this.idempotency = idempotency;
+    }
+
+    /** Compatibility constructor for isolated unit tests that do not load the auth database. */
+    public AuthService(AuthTokenRepository repository, JwtService jwtService, PasswordEncoder passwordEncoder) {
+        this(repository, jwtService, passwordEncoder, null);
     }
 
     public SessionTokens register(String email, String password, String displayName, String traceId) {
+        return register(email, password, displayName, null, traceId);
+    }
+
+    public SessionTokens register(String email, String password, String displayName,
+                                  String idempotencyKey, String traceId) {
         String normalizedEmail = normalizeEmail(email);
         validatePassword(password);
         String normalizedName = normalizeDisplayName(displayName);
+        if (idempotency == null) {
+            return registerInternal(normalizedEmail, password, normalizedName, traceId);
+        }
+        return idempotency.executeSession(idempotencyKey, "REGISTER",
+                normalizedEmail + "\u0000" + password + "\u0000" + normalizedName,
+                () -> registerInternal(normalizedEmail, password, normalizedName, traceId));
+    }
+
+    private SessionTokens registerInternal(String normalizedEmail, String password, String normalizedName, String traceId) {
         AuthTokenRepository.Account account = repository.createAccount(normalizedEmail, normalizedName, passwordEncoder.encode(password));
         repository.audit(account.id(), "REGISTER", "USER", String.valueOf(account.id()), traceId, Map.of());
         return newSession(account, UUID.randomUUID().toString());
     }
 
     public SessionTokens login(String email, String password, String traceId) {
+        return login(email, password, null, traceId);
+    }
+
+    public SessionTokens login(String email, String password, String idempotencyKey, String traceId) {
         String normalizedEmail = normalizeEmail(email);
+        if (idempotency == null) {
+            return loginInternal(normalizedEmail, password, traceId);
+        }
+        return idempotency.executeSession(idempotencyKey, "LOGIN", normalizedEmail + "\u0000" + password,
+                () -> loginInternal(normalizedEmail, password, traceId));
+    }
+
+    private SessionTokens loginInternal(String normalizedEmail, String password, String traceId) {
         AuthTokenRepository.Account account = repository.findAccountByEmail(normalizedEmail)
                 .orElseThrow(() -> new BusinessException(ErrorCode.AUTHENTICATION_FAILED, "邮箱或密码不正确"));
         if (!"ACTIVE".equals(account.status()) || !passwordEncoder.matches(password, account.passwordHash())) {
@@ -50,7 +86,20 @@ public class AuthService {
     }
 
     public SessionTokens refresh(String refreshToken, String csrfToken, String traceId) {
+        return refresh(refreshToken, csrfToken, null, traceId);
+    }
+
+    public SessionTokens refresh(String refreshToken, String csrfToken, String idempotencyKey, String traceId) {
         requireCookieTokens(refreshToken, csrfToken);
+        if (idempotency == null) {
+            return refreshInternal(refreshToken, csrfToken, traceId);
+        }
+        return idempotency.executeSession(idempotencyKey, "REFRESH",
+                refreshToken + "\u0000" + csrfToken,
+                () -> refreshInternal(refreshToken, csrfToken, traceId));
+    }
+
+    private SessionTokens refreshInternal(String refreshToken, String csrfToken, String traceId) {
         String replacement = randomToken();
         String replacementCsrf = randomToken();
         Instant refreshExpiresAt = Instant.now().plus(REFRESH_DAYS, ChronoUnit.DAYS);
@@ -69,10 +118,23 @@ public class AuthService {
     }
 
     public void logout(String refreshToken, String csrfToken, String traceId) {
+        logout(refreshToken, csrfToken, null, traceId);
+    }
+
+    public void logout(String refreshToken, String csrfToken, String idempotencyKey, String traceId) {
         if (refreshToken == null || refreshToken.isBlank()) {
             return;
         }
         requireCookieTokens(refreshToken, csrfToken);
+        if (idempotency == null) {
+            logoutInternal(refreshToken, csrfToken, traceId);
+            return;
+        }
+        idempotency.executeVoid(idempotencyKey, "LOGOUT", refreshToken + "\u0000" + csrfToken,
+                () -> logoutInternal(refreshToken, csrfToken, traceId));
+    }
+
+    private void logoutInternal(String refreshToken, String csrfToken, String traceId) {
         repository.revokeRefreshToken(refreshToken, csrfToken);
         repository.audit(null, "LOGOUT", "SESSION", null, traceId, Map.of());
     }

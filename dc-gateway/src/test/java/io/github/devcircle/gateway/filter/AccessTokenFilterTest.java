@@ -72,6 +72,16 @@ class AccessTokenFilterTest {
     }
 
     @Test
+    void authenticationWriteWithoutIdempotencyKeyIsRejectedBeforeRouting() {
+        var exchange = MockServerWebExchange.from(MockServerHttpRequest.post("/api/auth/login").build());
+
+        filter.filter(exchange, ignored -> Mono.empty()).block();
+
+        assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(exchange.getResponse().getBodyAsString().block()).contains("Idempotency-Key");
+    }
+
+    @Test
     void nonAdminCannotReachAdminRoutes() {
         String token = Jwts.builder().subject("7").claim("roles", "USER").claim("type", "access")
                 .expiration(Date.from(Instant.now().plusSeconds(60)))

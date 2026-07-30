@@ -50,19 +50,21 @@ class AuthController {
 
     @PostMapping("/register")
     ApiResponse<LoginResponse> register(@Valid @RequestBody RegisterRequest request,
+                                        @RequestHeader("Idempotency-Key") String idempotencyKey,
                                         HttpServletRequest servletRequest,
                                         HttpServletResponse servletResponse) {
         AuthService.SessionTokens tokens = authService.register(
-                request.email(), request.password(), request.displayName(), traceId(servletRequest));
+                request.email(), request.password(), request.displayName(), idempotencyKey, traceId(servletRequest));
         writeSessionCookies(servletResponse, tokens);
         return ApiResponse.ok(LoginResponse.from(tokens));
     }
 
     @PostMapping("/login")
     ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request,
+                                     @RequestHeader("Idempotency-Key") String idempotencyKey,
                                      HttpServletRequest servletRequest,
                                      HttpServletResponse servletResponse) {
-        AuthService.SessionTokens tokens = authService.login(request.email(), request.password(), traceId(servletRequest));
+        AuthService.SessionTokens tokens = authService.login(request.email(), request.password(), idempotencyKey, traceId(servletRequest));
         writeSessionCookies(servletResponse, tokens);
         return ApiResponse.ok(LoginResponse.from(tokens));
     }
@@ -71,10 +73,11 @@ class AuthController {
     ApiResponse<LoginResponse> refresh(@CookieValue(value = REFRESH_COOKIE, required = false) String refreshToken,
                                        @CookieValue(value = CSRF_COOKIE, required = false) String csrfCookie,
                                        @RequestHeader(value = "X-CSRF-Token", required = false) String csrfHeader,
+                                       @RequestHeader("Idempotency-Key") String idempotencyKey,
                                        HttpServletRequest servletRequest,
                                        HttpServletResponse servletResponse) {
         requireMatchingCsrf(csrfCookie, csrfHeader);
-        AuthService.SessionTokens tokens = authService.refresh(refreshToken, csrfHeader, traceId(servletRequest));
+        AuthService.SessionTokens tokens = authService.refresh(refreshToken, csrfHeader, idempotencyKey, traceId(servletRequest));
         writeSessionCookies(servletResponse, tokens);
         return ApiResponse.ok(LoginResponse.from(tokens));
     }
@@ -83,10 +86,11 @@ class AuthController {
     ApiResponse<Void> logout(@CookieValue(value = REFRESH_COOKIE, required = false) String refreshToken,
                              @CookieValue(value = CSRF_COOKIE, required = false) String csrfCookie,
                              @RequestHeader(value = "X-CSRF-Token", required = false) String csrfHeader,
+                             @RequestHeader("Idempotency-Key") String idempotencyKey,
                              HttpServletRequest servletRequest,
                              HttpServletResponse servletResponse) {
         requireMatchingCsrf(csrfCookie, csrfHeader);
-        authService.logout(refreshToken, csrfHeader, traceId(servletRequest));
+        authService.logout(refreshToken, csrfHeader, idempotencyKey, traceId(servletRequest));
         clearSessionCookies(servletResponse);
         return ApiResponse.ok();
     }

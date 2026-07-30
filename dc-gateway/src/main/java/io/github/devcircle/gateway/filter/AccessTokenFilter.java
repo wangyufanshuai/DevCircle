@@ -40,7 +40,14 @@ public class AccessTokenFilter implements GlobalFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getPath().value();
-        if (path.startsWith("/api/auth/") || path.startsWith("/actuator/")) {
+        if (path.startsWith("/actuator/")) {
+            return chain.filter(stripForwardedIdentity(exchange));
+        }
+        if (path.startsWith("/api/auth/")) {
+            if (isWriteRequest(exchange) && !hasIdempotencyKey(exchange)) {
+                return GatewayResponses.error(exchange, HttpStatus.BAD_REQUEST, "VALIDATION_FAILED",
+                        "认证写操作必须提供 Idempotency-Key");
+            }
             return chain.filter(stripForwardedIdentity(exchange));
         }
 
