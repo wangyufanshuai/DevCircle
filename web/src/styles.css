@@ -235,6 +235,8 @@ select { color-scheme: dark; }
 .media-queue-row button { width: 30px; height: 30px; display: grid; place-items: center; border: 0; color: var(--muted); background: transparent; cursor: pointer; }
 .media-queue-row button:hover { color: var(--gold-bright); }
 .editor-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.conflict-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 0; color: #ffc5bb; border-top: 1px solid rgba(255,143,122,.25); }
+.conflict-actions span { font-size: 12px; }
 .preview-panel { position: sticky; top: 95px; max-height: calc(100vh - 120px); overflow: auto; }
 .audit-timeline { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; padding: 14px 0; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
 .audit-timeline span { display: inline-flex; align-items: center; gap: 5px; padding: 6px 9px; border-radius: 999px; color: var(--muted); background: var(--surface-2); font-size: 12px; }
@@ -409,6 +411,7 @@ select { color-scheme: dark; }
   .field-grid { grid-template-columns: 1fr; }
   .editor-panel, .preview-panel { padding: 18px; }
   .editor-actions { flex-wrap: wrap; }
+  .conflict-actions { align-items: flex-start; flex-direction: column; }
   .profile-hero { align-items: flex-start; }
   .profile-avatar { width: 64px; height: 64px; font-size: 24px; }
   .profile-hero h1 { font-size: 34px; }

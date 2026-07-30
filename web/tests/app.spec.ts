@@ -211,6 +211,33 @@ test('moderator must provide a reason before hiding a comment', async ({ page })
   expect(submittedReason).toBe('包含未经授权的个人信息')
 })
 
+test('version conflict keeps local draft and blocks stale submission', async ({ page }) => {
+  await authenticate(page)
+  const draft = { id: 11, authorId: 2, title: '本地草稿', content: '本地正文', tags: ['推理'], type: 'TEXT', mediaIds: [], theme: 'DEDUCTION', contentKind: 'CASE_FILE', difficulty: 'MEDIUM', solvable: true, clues: '', suspects: '', timeline: '', question: '', answerKeywords: '', solution: '', status: 'DRAFT', version: 3, lastSavedAt: '2026-07-30T01:00:00Z', reviewReason: null }
+  const serverDraft = { ...draft, title: '服务端最新草稿', content: '来自另一台设备的正文', version: 4 }
+  let draftReads = 0; let submitCalls = 0
+  await page.route('**/api/posts/drafts?size=50', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [draft] } }))
+  await page.route('**/api/posts/drafts/11/audits', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [] } }))
+  await page.route('**/api/posts/drafts/11/submit?*', route => { submitCalls += 1; return route.fulfill({ json: { code: 'OK', message: 'success', data: serverDraft } }) })
+  await page.route('**/api/posts/drafts/11', route => {
+    if (route.request().method() === 'PUT') return route.fulfill({ status: 409, json: { code: 'VERSION_CONFLICT', message: '草稿已在其他位置更新', data: null, traceId: 'conflict-test' } })
+    draftReads += 1
+    return route.fulfill({ json: { code: 'OK', message: 'success', data: draftReads === 1 ? draft : serverDraft } })
+  })
+  await page.goto('/write/11')
+  await expect(page.getByLabel('正文 Markdown')).toHaveValue('本地正文')
+  await page.getByLabel('正文 Markdown').fill('尚未保存的本地修改')
+  await page.getByRole('button', { name: '提交审核' }).click()
+  await expect(page.getByRole('alert')).toContainText('当前编辑内容仍保留')
+  await expect(page.getByLabel('正文 Markdown')).toHaveValue('尚未保存的本地修改')
+  await expect(page.getByRole('button', { name: '提交审核' })).toBeDisabled()
+  expect(submitCalls).toBe(0)
+  page.once('dialog', dialog => dialog.accept())
+  await page.getByRole('button', { name: '加载服务端版本' }).click()
+  await expect(page.getByLabel('正文 Markdown')).toHaveValue('来自另一台设备的正文')
+  await expect(page.getByRole('button', { name: '提交审核' })).toBeEnabled()
+})
+
 test('responsive shell has no horizontal overflow and uses the correct navigation', async ({ page }, testInfo) => {
   await page.goto('/')
   if (testInfo.project.name === 'mobile') await expect(page.locator('.mobile-nav')).toBeVisible()
