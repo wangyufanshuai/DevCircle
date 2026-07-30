@@ -30,10 +30,13 @@ class NotificationController {
                                              @RequestParam(required = false) String type,
                                              @RequestParam(required = false) Long cursor,
                                              @RequestParam(defaultValue = "20") int size) {
-        List<NotificationView> items = notificationRepository.list(userId, type, cursor, size);
-        Long next = items.isEmpty() ? null : items.getLast().id();
+        int pageSize = Math.max(1, Math.min(size, 50));
+        List<NotificationView> fetched = notificationRepository.list(userId, type, cursor, pageSize + 1);
+        boolean hasMore = fetched.size() > pageSize;
+        List<NotificationView> items = hasMore ? List.copyOf(fetched.subList(0, pageSize)) : fetched;
+        Long next = hasMore && !items.isEmpty() ? items.getLast().id() : null;
         return ApiResponse.ok(items, Map.of("nextCursor", next == null ? "" : next.toString(),
-                "hasMore", items.size() == Math.max(1, Math.min(size, 50))));
+                "hasMore", hasMore));
     }
 
     @GetMapping("/unread-count")

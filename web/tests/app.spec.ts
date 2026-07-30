@@ -100,6 +100,41 @@ test('failed logout keeps the session visible and explains the failure', async (
   await expect(page.getByRole('heading', { name: '观测者' })).toBeVisible()
 })
 
+test('notification inbox paginates, uses server unread count and handles missing targets', async ({ page }) => {
+  await authenticate(page)
+  let serverUnread = 3
+  await page.route('**/api/notifications/unread-count', route => route.fulfill({ json: { code: 'OK', message: 'success', data: serverUnread } }))
+  await page.route('**/api/notifications/*/read', route => { serverUnread = Math.max(0, serverUnread - 1); return route.fulfill({ json: { code: 'OK', message: 'success', data: { read: true } } }) })
+  await page.route('**/api/notifications/read-all', route => { serverUnread = 0; return route.fulfill({ json: { code: 'OK', message: 'success', data: { updated: 2 } } }) })
+  await page.route('**/api/notifications?*', route => {
+    const url = new URL(route.request().url())
+    const cursor = url.searchParams.get('cursor')
+    const filter = url.searchParams.get('type')
+    const records = filter === 'SYSTEM'
+      ? [{ id: 1, type: 'SYSTEM', title: '轨道维护', content: '维护完成', read: true, targetRoute: '/posts/1001', createdAt: '2026-07-30T00:00:00Z' }]
+      : cursor
+      ? [{ id: 1, type: 'SYSTEM', title: '轨道维护', content: '维护完成', read: false, targetRoute: '/posts/1001', createdAt: '2026-07-30T00:00:00Z' }]
+      : [
+          { id: 3, type: 'AUDIT', title: '审核通过', content: '作品已经公开', read: false, targetRoute: '/posts/1001', createdAt: '2026-07-30T02:00:00Z' },
+          { id: 2, type: 'INTERACTION', title: '失效目标', content: '原内容已经撤回', read: false, targetRoute: null, createdAt: '2026-07-30T01:00:00Z' }
+        ]
+    return route.fulfill({ json: { code: 'OK', message: 'success', data: records, meta: { nextCursor: !filter && !cursor ? '2' : '', hasMore: !filter && !cursor } } })
+  })
+  await page.goto('/notifications')
+  await expect(page.getByText('3 条未读')).toBeVisible()
+  await page.getByRole('button', { name: '加载更多通知' }).click()
+  await expect(page.locator('.notification-row')).toHaveCount(3)
+  await page.getByRole('button', { name: /失效目标/ }).click()
+  await expect(page.getByRole('status')).toContainText('内容已不可用')
+  await expect(page.getByText('2 条未读')).toBeVisible()
+  await page.getByRole('button', { name: '全部已读' }).click()
+  await expect(page.getByText('0 条未读')).toBeVisible()
+  await page.getByLabel('通知类型').selectOption('SYSTEM')
+  await expect(page).toHaveURL(/\/notifications\?type=SYSTEM$/)
+  await expect(page.locator('.notification-row')).toHaveCount(1)
+  await expect(page.getByRole('button', { name: /轨道维护/ })).toBeVisible()
+})
+
 test('responsive shell has no horizontal overflow and uses the correct navigation', async ({ page }, testInfo) => {
   await page.goto('/')
   if (testInfo.project.name === 'mobile') await expect(page.locator('.mobile-nav')).toBeVisible()

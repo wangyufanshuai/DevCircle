@@ -30,7 +30,7 @@ public class NotificationRepository {
                 .param("receiverId", receiverId)
                 .param("type", type == null || type.isBlank() ? null : type.toUpperCase())
                 .param("beforeId", beforeId)
-                .param("size", Math.max(1, Math.min(size, 50)))
+                .param("size", Math.max(1, Math.min(size, 51)))
                 .query((rs, rowNum) -> new NotificationView(
                         rs.getLong("id"),
                         rs.getString("type"),

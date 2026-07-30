@@ -174,7 +174,14 @@ export function saveReadingProgress(postId: number, progressPercent: number, anc
 export function fetchComments(postId: number) { return request<CommentThread[]>(`/api/posts/${postId}/comments?size=20`) }
 export function createComment(postId: number, content: string, parentId?: number) { return write<CommentItem>('/api/comments', 'POST', { postId, content, parentId }) }
 export function deleteComment(id: number) { return write<void>(`/api/comments/${id}`, 'DELETE') }
-export function fetchNotifications(type = '') { return request<NotificationItem[]>(`/api/notifications?size=50${type ? `&type=${encodeURIComponent(type)}` : ''}`) }
+export async function fetchNotifications(cursor = '', type = '') {
+  const query = new URLSearchParams({ size: '20' })
+  if (cursor) query.set('cursor', cursor)
+  if (type) query.set('type', type)
+  const body = await requestEnvelope<NotificationItem[]>(`/api/notifications?${query}`)
+  return { records: body.data, nextCursor: String(body.meta?.nextCursor ?? ''), hasMore: body.meta?.hasMore === true }
+}
+export function fetchUnreadNotificationCount() { return request<number>('/api/notifications/unread-count') }
 export function markNotificationRead(id: number) { return write<void>(`/api/notifications/${id}/read`, 'POST') }
 export function markAllNotificationsRead() { return write<{ updated: number }>('/api/notifications/read-all', 'POST') }
 export function fetchModerationTasks() { return request<ModerationTask[]>('/api/admin/moderation/tasks?status=PENDING&page=1&size=20') }
