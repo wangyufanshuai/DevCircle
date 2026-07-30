@@ -103,6 +103,30 @@ public class MediaRepository {
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "媒体不存在或尚未公开"));
     }
 
+    public List<AssetIntent> requirePublicBatch(List<Long> mediaIds) {
+        if (mediaIds == null || mediaIds.isEmpty()) return List.of();
+        List<Long> safeIds = mediaIds.stream().filter(id -> id != null && id > 0).distinct().limit(50).toList();
+        if (safeIds.isEmpty()) return List.of();
+        return jdbcClient.sql("""
+                        SELECT DISTINCT m.id, m.uploader_id, m.object_key, m.url, m.content_type, m.expected_size,
+                               m.width, m.height, m.duration_seconds, m.status, m.upload_status, m.upload_expires_at
+                        FROM media_asset m
+                        JOIN post_media pm ON pm.media_id = m.id
+                        JOIN post p ON p.id = pm.post_id
+                        WHERE m.id IN (:mediaIds) AND m.status = 'APPROVED'
+                          AND m.upload_status = 'COMPLETED' AND p.status = 'PUBLISHED'
+                        ORDER BY m.id
+                        """)
+                .param("mediaIds", safeIds)
+                .query((rs, rowNum) -> new AssetIntent(
+                        rs.getLong("id"), rs.getLong("uploader_id"), rs.getString("object_key"), rs.getString("url"),
+                        rs.getString("content_type"), rs.getLong("expected_size"), (Integer) rs.getObject("width"),
+                        (Integer) rs.getObject("height"), (Integer) rs.getObject("duration_seconds"),
+                        rs.getString("status"), rs.getString("upload_status"),
+                        rs.getTimestamp("upload_expires_at") == null ? null : rs.getTimestamp("upload_expires_at").toInstant()))
+                .list();
+    }
+
     @Transactional
     public FileUploadResult complete(Long userId, Long mediaId, String idempotencyKey, long actualSize) {
         Long duplicate = claim(userId, "COMPLETE_UPLOAD:" + mediaId, idempotencyKey);

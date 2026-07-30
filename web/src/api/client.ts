@@ -131,7 +131,7 @@ export async function fetchPostsCursor(cursor = '', filters: { theme?: Theme; co
   return { records: body.data, nextCursor: String(body.meta?.nextCursor ?? ''), hasMore: body.meta?.hasMore === true }
 }
 export function fetchPost(id: number) { return request<PostDetail>(`/api/posts/${id}`) }
-export function fetchMediaAccess(mediaId: number) { return request<{ mediaId: number; url: string; expiresAt: string }>(`/api/files/${mediaId}/access`) }
+export function fetchMediaAccessBatch(mediaIds: number[]) { const ids = [...new Set(mediaIds)].filter(id => id > 0).slice(0, 50); return ids.length ? request<Array<{ mediaId: number; url: string; expiresAt: string }>>(`/api/files/access?ids=${ids.join(',')}`) : Promise.resolve([]) }
 export function fetchRelated(id: number) { return request<Post[]>(`/api/posts/${id}/related?size=6`) }
 export function fetchDashboard() { return request<Dashboard>('/api/me/dashboard') }
 export function followUser(userId: number) { return write<{ following: boolean }>(`/api/users/${userId}/follow`, 'POST') }

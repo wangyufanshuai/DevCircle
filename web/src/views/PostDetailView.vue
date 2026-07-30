@@ -4,7 +4,7 @@ import { ArrowLeft, Bookmark, CheckCircle2, Eye, Heart, LoaderCircle, MessageCir
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   answerCase, createComment, currentSession, deleteComment, fetchComments, fetchFollowState,
-  fetchInteractionState, fetchMediaAccess, fetchPost, fetchRelated, fetchUserProfiles, followUser, interact, revealAnswer,
+  fetchInteractionState, fetchMediaAccessBatch, fetchPost, fetchRelated, fetchUserProfiles, followUser, interact, revealAnswer,
   hideComment, saveReadingProgress, sessionState, unfollowUser
 } from '../api/client'
 import type { CommentItem, CommentThread, Post, PostDetail, UserProfile } from '../api/types'
@@ -56,7 +56,7 @@ async function load() {
     ])
     post.value = detail
     if (detail.media.length) {
-      const access = await Promise.all(detail.media.map(media => fetchMediaAccess(media.mediaId)))
+      const access = await fetchMediaAccessBatch(detail.media.map(media => media.mediaId))
       const urls = new Map(access.map(item => [item.mediaId, item.url]))
       post.value.media = detail.media.map(media => ({ ...media, url: urls.get(media.mediaId) ?? '' }))
     }

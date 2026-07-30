@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.BucketAlreadyExistsException;
@@ -28,6 +29,7 @@ import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignReques
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Locale;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -122,6 +124,19 @@ class FileController {
                 .getObjectRequest(GetObjectRequest.builder().bucket(bucket).key(asset.objectKey()).build())
                 .build());
         return ApiResponse.ok(Map.of("mediaId", id, "url", signed.url().toString(), "expiresAt", expiresAt));
+    }
+
+    @GetMapping("/access")
+    ApiResponse<List<Map<String, Object>>> accessBatch(@RequestParam List<Long> ids) {
+        List<Map<String, Object>> result = mediaRepository.requirePublicBatch(ids).stream().map(asset -> {
+            Instant expiresAt = Instant.now().plus(Duration.ofMinutes(10));
+            var signed = presigner.presignGetObject(GetObjectPresignRequest.builder()
+                    .signatureDuration(Duration.ofMinutes(10))
+                    .getObjectRequest(GetObjectRequest.builder().bucket(bucket).key(asset.objectKey()).build())
+                    .build());
+            return Map.<String, Object>of("mediaId", asset.id(), "url", signed.url().toString(), "expiresAt", expiresAt);
+        }).toList();
+        return ApiResponse.ok(result);
     }
 
     private void validateMetadata(String filename, String contentType, long size) {
