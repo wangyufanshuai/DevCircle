@@ -72,6 +72,22 @@ public class UserGraphRepository {
                 .optional();
     }
 
+    public List<UserProfile> profiles(List<Long> userIds) {
+        if (userIds == null || userIds.isEmpty()) return List.of();
+        List<Long> safeIds = userIds.stream().filter(id -> id != null && id > 0).distinct().limit(50).toList();
+        if (safeIds.isEmpty()) return List.of();
+        return jdbcClient.sql("""
+                        SELECT user_id, username, bio, follower_count, following_count
+                        FROM user_profile
+                        WHERE user_id IN (:userIds)
+                        ORDER BY user_id
+                        """)
+                .param("userIds", safeIds)
+                .query((rs, rowNum) -> new UserProfile(rs.getLong("user_id"), rs.getString("username"),
+                        rs.getString("bio"), rs.getLong("follower_count"), rs.getLong("following_count")))
+                .list();
+    }
+
     public void unfollow(Long userId, Long targetUserId) {
         int rows = jdbcClient.sql("DELETE FROM user_follow WHERE follower_id = :userId AND followee_id = :targetUserId")
                 .param("userId", userId)

@@ -68,6 +68,8 @@ export type AuthorProfile = {
   followedByViewer?: boolean | null
 }
 
+export type UserProfile = { id: number; username: string; bio?: string | null; followers: number; following: number; status: string }
+
 export type PostDetail = Omit<Post, 'author' | 'mediaAssets' | 'answerKeywords' | 'explanation'> & {
   author: AuthorProfile
   markdown: string

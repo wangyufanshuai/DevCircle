@@ -48,6 +48,10 @@ public class UserGraphService {
         return repository.profile(userId);
     }
 
+    public List<UserGraphRepository.UserProfile> profiles(List<Long> userIds) {
+        return repository.profiles(userIds);
+    }
+
     public List<Long> followees(Long userId) {
         return repository.followees(userId);
     }

@@ -4,10 +4,10 @@ import { ArrowLeft, Bookmark, CheckCircle2, Eye, Heart, LoaderCircle, MessageCir
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   answerCase, createComment, currentSession, deleteComment, fetchComments, fetchFollowState,
-  fetchInteractionState, fetchMediaAccess, fetchPost, fetchRelated, fetchUserProfile, followUser, interact, revealAnswer,
+  fetchInteractionState, fetchMediaAccess, fetchPost, fetchRelated, fetchUserProfiles, followUser, interact, revealAnswer,
   hideComment, saveReadingProgress, sessionState, unfollowUser
 } from '../api/client'
-import type { CommentItem, CommentThread, Post, PostDetail } from '../api/types'
+import type { CommentItem, CommentThread, Post, PostDetail, UserProfile } from '../api/types'
 import PostCard from '../components/PostCard.vue'
 import StatusPanel from '../components/StatusPanel.vue'
 import { markdownMediaIds, renderSafeMarkdown } from '../utils/markdown'
@@ -27,7 +27,7 @@ const loadingMoreComments = ref(false)
 const moderationTarget = ref<number | null>(null)
 const moderationReason = ref('')
 const moderating = ref(false)
-const commentAuthorNames = new Map<number, string>()
+const userProfiles = new Map<number, UserProfile>()
 const loading = ref(false)
 const error = ref('')
 const feedback = ref('')
@@ -49,6 +49,7 @@ const standaloneMedia = computed(() => { if (!post.value) return []; const place
 async function load() {
   loading.value = true
   error.value = ''
+  userProfiles.clear()
   try {
     const [detail, relatedPosts, commentPage] = await Promise.all([
       fetchPost(id.value), fetchRelated(id.value), fetchComments(id.value)
@@ -59,9 +60,10 @@ async function load() {
       const urls = new Map(access.map(item => [item.mediaId, item.url]))
       post.value.media = detail.media.map(media => ({ ...media, url: urls.get(media.mediaId) ?? '' }))
     }
-    const profile = await fetchUserProfile(detail.author.id).catch(() => null)
+    const initialComments = commentPage.records.flatMap(thread => [thread.root, ...thread.replies])
+    await loadUserProfiles([detail.author.id, ...initialComments.map(item => item.authorId)])
+    const profile = userProfiles.get(detail.author.id)
     if (profile) post.value.author = { ...post.value.author, username: profile.username, bio: profile.bio, followerCount: profile.followers }
-    commentAuthorNames.set(detail.author.id, post.value.author.username)
     related.value = relatedPosts
     threads.value = await enrichCommentAuthors(commentPage.records)
     commentCursor.value = commentPage.nextCursor
@@ -86,11 +88,16 @@ async function load() {
 
 async function enrichCommentAuthors(records: CommentThread[]) {
   const comments = records.flatMap(thread => [thread.root, ...thread.replies])
-  const authorIds = [...new Set(comments.map(item => item.authorId))].filter(authorId => !commentAuthorNames.has(authorId))
-  const profiles = await Promise.all(authorIds.map(async authorId => [authorId, await fetchUserProfile(authorId).catch(() => null)] as const))
-  profiles.forEach(([authorId, profile]) => { if (profile) commentAuthorNames.set(authorId, profile.username) })
-  comments.forEach(item => { item.author = commentAuthorNames.get(item.authorId) ?? item.author })
+  await loadUserProfiles(comments.map(item => item.authorId))
+  comments.forEach(item => { item.author = userProfiles.get(item.authorId)?.username ?? item.author })
   return records
+}
+
+async function loadUserProfiles(ids: number[]) {
+  const missing = [...new Set(ids)].filter(authorId => authorId > 0 && !userProfiles.has(authorId))
+  if (!missing.length) return
+  const profiles = await fetchUserProfiles(missing).catch(() => [])
+  profiles.forEach(profile => userProfiles.set(profile.id, profile))
 }
 
 async function loadMoreComments() {
@@ -197,7 +204,7 @@ async function reveal() {
 }
 
 function prependComment(item: CommentItem, parentId?: number) {
-  if (session.value) { item.author = session.value.displayName; commentAuthorNames.set(item.authorId, item.author) }
+  if (session.value) { item.author = session.value.displayName; userProfiles.set(item.authorId, { id: item.authorId, username: item.author, followers: 0, following: 0, status: 'ACTIVE' }) }
   if (!parentId) {
     threads.value.unshift({ root: item, replies: [] })
     return

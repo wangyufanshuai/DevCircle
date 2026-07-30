@@ -19,6 +19,7 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/posts?*', route => route.fulfill({ json: { code: 'OK', message: 'success', data: feed.map(item => item.post), meta: { nextCursor: '', hasMore: false } } }))
   await page.route('**/api/posts/1001', route => route.fulfill({ json: { code: 'OK', message: 'success', data: post } }))
   await page.route('**/api/users/7', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { id: 7, username: '林墨', bio: '记录异常信号', followers: 18, following: 4, status: 'ACTIVE' } } }))
+  await page.route('**/api/users/batch?*', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [{ id: 7, username: '林墨', bio: '记录异常信号', followers: 18, following: 4, status: 'ACTIVE' }] } }))
   await page.route('**/api/posts/*/related**', route => route.fulfill({ json: { code: 'OK', message: 'success', data: feed.slice(1, 3).map(item => item.post) } }))
   await page.route('**/api/posts/*/comments**', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [], meta: { nextCursor: '', hasMore: false } } }))
   await page.route('**/api/recommend/exposures', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { recorded: 8 } } }))
@@ -92,6 +93,28 @@ test('detail resolves attached inline media without duplicating it in the galler
   await expect(page.locator('.inline-media img')).toHaveAttribute('alt', '证物桌上停摆的怀表')
   await expect(page.locator('.detail-media-grid')).toHaveCount(0)
   await expect(page.locator('.inline-media-unavailable')).toContainText('外部图片已阻止')
+})
+
+test('detail batches author profiles instead of issuing per-comment requests', async ({ page }) => {
+  const root = { id: 50, postId: 1001, authorId: 8, author: '用户 8', content: '第一份证词', status: 'VISIBLE', likes: 0, createdAt: '2026-07-30T01:00:00Z' }
+  const reply = { id: 51, postId: 1001, authorId: 9, author: '用户 9', parentId: 50, rootId: 50, content: '补充证词', status: 'VISIBLE', likes: 0, createdAt: '2026-07-30T01:10:00Z' }
+  let batchCalls = 0; const individualProfileRequests: string[] = []
+  page.on('request', request => { if (/\/api\/users\/\d+$/.test(new URL(request.url()).pathname)) individualProfileRequests.push(request.url()) })
+  await page.route('**/api/posts/1001/comments?*', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [{ root, replies: [reply] }], meta: { nextCursor: '', hasMore: false } } }))
+  await page.route('**/api/users/batch?*', route => {
+    batchCalls += 1
+    expect(new URL(route.request().url()).searchParams.get('ids')?.split(',').sort()).toEqual(['7', '8', '9'])
+    return route.fulfill({ json: { code: 'OK', message: 'success', data: [
+      { id: 7, username: '林墨', bio: '记录异常信号', followers: 18, following: 4, status: 'ACTIVE' },
+      { id: 8, username: '沈岚', bio: '核对时间线', followers: 6, following: 3, status: 'ACTIVE' },
+      { id: 9, username: '北辰', bio: '整理证物', followers: 5, following: 2, status: 'ACTIVE' }
+    ] } })
+  })
+  await page.goto('/posts/1001')
+  await expect(page.locator('.comment-thread')).toContainText('沈岚')
+  await expect(page.locator('.comment-thread')).toContainText('北辰')
+  expect(batchCalls).toBe(1)
+  expect(individualProfileRequests).toEqual([])
 })
 
 test('admin route keeps review reason visible', async ({ page }) => {

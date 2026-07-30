@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -27,9 +28,13 @@ class UserController {
     @GetMapping("/{id}")
     ApiResponse<UserProfile> profile(@PathVariable Long id) {
         return userGraphService.profile(id)
-                .map(profile -> ApiResponse.ok(new UserProfile(profile.userId(), profile.username(), profile.bio(),
-                        profile.followerCount(), profile.followingCount(), "ACTIVE")))
+                .map(profile -> ApiResponse.ok(toView(profile)))
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "用户不存在"));
+    }
+
+    @GetMapping("/batch")
+    ApiResponse<List<UserProfile>> profiles(@RequestParam List<Long> ids) {
+        return ApiResponse.ok(userGraphService.profiles(ids).stream().map(this::toView).toList());
     }
 
     @PostMapping("/{id}/follow")
@@ -67,5 +72,10 @@ class UserController {
     }
 
     record UserProfile(Long id, String username, String bio, long followers, long following, String status) {
+    }
+
+    private UserProfile toView(io.github.devcircle.user.infrastructure.UserGraphRepository.UserProfile profile) {
+        return new UserProfile(profile.userId(), profile.username(), profile.bio(),
+                profile.followerCount(), profile.followingCount(), "ACTIVE");
     }
 }
