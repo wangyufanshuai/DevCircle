@@ -192,6 +192,20 @@ test('protected route signs in, returns to destination and updates the shell', a
   await expect(page.getByRole('heading', { name: '把你的观测记录放上来。' })).toBeVisible()
 })
 
+test('oauth account conflict returns a safe and actionable login message', async ({ page }) => {
+  let refreshRequests = 0
+  page.on('request', request => {
+    if (new URL(request.url()).pathname === '/api/auth/refresh') refreshRequests += 1
+  })
+
+  await page.goto('/auth/callback?error=OAUTH_ACCOUNT_CONFLICT')
+
+  await expect(page.getByRole('heading', { name: '登录没有完成' })).toBeVisible()
+  await expect(page.getByText('这个邮箱已经注册。请使用邮箱密码登录；系统不会自动合并账号。')).toBeVisible()
+  await expect(page.getByRole('link', { name: '返回登录' })).toHaveAttribute('href', '/auth')
+  expect(refreshRequests).toBe(0)
+})
+
 test('non-admin session cannot open the operations console', async ({ page }) => {
   await authenticate(page)
   await page.goto('/admin')

@@ -113,8 +113,12 @@ public class AuthTokenRepository {
         if (bound.isPresent()) {
             return bound.get();
         }
-        Account account = findAccountByEmail(email)
-                .orElseGet(() -> createAccount(email, displayName, unusablePasswordHash));
+        Optional<Account> existingAccount = findAccountByEmail(email);
+        if (existingAccount.isPresent()) {
+            throw new BusinessException(ErrorCode.OAUTH_ACCOUNT_CONFLICT,
+                    "该邮箱已注册，请使用邮箱密码登录；系统不会自动合并账号");
+        }
+        Account account = createAccount(email, displayName, unusablePasswordHash);
         try {
             jdbcClient.sql("""
                             INSERT INTO user_oauth_binding(user_id, provider, provider_user_id)

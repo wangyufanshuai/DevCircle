@@ -3,6 +3,7 @@ package io.github.devcircle.auth.api;
 import io.github.devcircle.auth.application.AuthService;
 import io.github.devcircle.auth.application.GitHubOAuthService;
 import io.github.devcircle.common.api.ApiResponse;
+import io.github.devcircle.common.error.BusinessException;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -115,13 +117,20 @@ class AuthController {
                            HttpServletRequest request,
                            HttpServletResponse response) throws java.io.IOException {
         requireMatchingCsrf(stateCookie, state);
-        var account = gitHubOAuthService.callback(code, state);
-        AuthService.SessionTokens tokens = authService.oauthLogin(account, traceId(request));
-        writeSessionCookies(response, tokens);
-        response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from("dc_oauth_state", "")
-                .httpOnly(true).secure(secureCookies).sameSite("Lax")
-                .path("/api/auth/oauth2/github").maxAge(0).build().toString());
-        response.sendRedirect(frontendCallbackUri);
+        try {
+            var account = gitHubOAuthService.callback(code, state);
+            AuthService.SessionTokens tokens = authService.oauthLogin(account, traceId(request));
+            writeSessionCookies(response, tokens);
+            clearOAuthStateCookie(response);
+            response.sendRedirect(frontendCallbackUri);
+        } catch (BusinessException ex) {
+            clearOAuthStateCookie(response);
+            String failureUri = UriComponentsBuilder.fromUriString(frontendCallbackUri)
+                    .replaceQueryParam("error", ex.code().name())
+                    .build()
+                    .toUriString();
+            response.sendRedirect(failureUri);
+        }
     }
 
     private void requireMatchingCsrf(String cookie, String header) {
@@ -142,6 +151,17 @@ class AuthController {
     private void clearSessionCookies(HttpServletResponse response) {
         response.addHeader(HttpHeaders.SET_COOKIE, cookie(REFRESH_COOKIE, "", true, 0, "/api/auth").toString());
         response.addHeader(HttpHeaders.SET_COOKIE, cookie(CSRF_COOKIE, "", false, 0, "/").toString());
+    }
+
+    private void clearOAuthStateCookie(HttpServletResponse response) {
+        response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from("dc_oauth_state", "")
+                .httpOnly(true)
+                .secure(secureCookies)
+                .sameSite("Lax")
+                .path("/api/auth/oauth2/github")
+                .maxAge(0)
+                .build()
+                .toString());
     }
 
     private ResponseCookie cookie(String name, String value, boolean httpOnly, long maxAge, String path) {

@@ -2,10 +2,14 @@ package io.github.devcircle.auth.api;
 
 import io.github.devcircle.auth.application.AuthService;
 import io.github.devcircle.auth.application.AuthTokenRepository;
+import io.github.devcircle.auth.application.GitHubOAuthService;
 import io.github.devcircle.auth.application.JwtService;
 import io.github.devcircle.common.error.BusinessException;
+import io.github.devcircle.common.error.ErrorCode;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 
 import java.time.Instant;
 import java.util.List;
@@ -57,5 +61,26 @@ class AuthControllerTest {
 
         assertThatThrownBy(() -> service.register("reader@example.com", "short", "星海读者", "trace"))
                 .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void oauthAccountConflictReturnsToTheFrontendWithoutLeakingProviderDetails() throws Exception {
+        AuthService authService = mock(AuthService.class);
+        GitHubOAuthService oauthService = mock(GitHubOAuthService.class);
+        when(oauthService.callback("code", "state")).thenThrow(
+                new BusinessException(ErrorCode.OAUTH_ACCOUNT_CONFLICT, "conflict"));
+        AuthController controller = new AuthController(authService, oauthService,
+                "https://mysticverse.example.com/auth/callback", true);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        controller.finishGitHubOAuth("code", "state", "state", new MockHttpServletRequest(), response);
+
+        assertThat(response.getRedirectedUrl()).isEqualTo(
+                "https://mysticverse.example.com/auth/callback?error=OAUTH_ACCOUNT_CONFLICT");
+        assertThat(response.getHeaders("Set-Cookie")).anySatisfy(cookie -> {
+            assertThat(cookie).contains("dc_oauth_state=");
+            assertThat(cookie).contains("Max-Age=0");
+            assertThat(cookie).contains("Secure");
+        });
     }
 }

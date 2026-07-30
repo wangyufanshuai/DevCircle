@@ -94,22 +94,25 @@ public class GitHubOAuthService {
         if (profile == null || profile.id() == null) {
             throw new BusinessException(ErrorCode.AUTHENTICATION_FAILED, "无法读取 GitHub 用户资料");
         }
-        String email = profile.email();
-        if (email == null || email.isBlank()) {
-            GitHubEmail[] emails = restClient.get()
-                    .uri("https://api.github.com/user/emails")
-                    .header("Authorization", "Bearer " + token.accessToken())
-                    .header("Accept", "application/vnd.github+json")
-                    .retrieve()
-                    .body(GitHubEmail[].class);
-            if (emails != null) {
-                email = List.of(emails).stream()
-                        .filter(item -> item.primary() && item.verified())
+        GitHubEmail[] emails = restClient.get()
+                .uri("https://api.github.com/user/emails")
+                .header("Authorization", "Bearer " + token.accessToken())
+                .header("Accept", "application/vnd.github+json")
+                .retrieve()
+                .body(GitHubEmail[].class);
+        String profileEmail = profile.email();
+        String email = emails == null ? null : List.of(emails).stream()
+                .filter(GitHubEmail::verified)
+                .filter(item -> item.primary()
+                        || (profileEmail != null && item.email().equalsIgnoreCase(profileEmail)))
+                .sorted((left, right) -> Boolean.compare(right.primary(), left.primary()))
+                .map(GitHubEmail::email)
+                .findFirst()
+                .orElseGet(() -> List.of(emails).stream()
+                        .filter(GitHubEmail::verified)
                         .map(GitHubEmail::email)
                         .findFirst()
-                        .orElse(null);
-            }
-        }
+                        .orElse(null));
         if (email == null || email.isBlank()) {
             throw new BusinessException(ErrorCode.AUTHENTICATION_FAILED, "GitHub 账号没有可用的已验证邮箱");
         }

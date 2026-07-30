@@ -1,0 +1,87 @@
+package io.github.devcircle.auth.application;
+
+import io.github.devcircle.common.error.BusinessException;
+import io.github.devcircle.common.error.ErrorCode;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestClient;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+
+class GitHubOAuthServiceTest {
+    @Test
+    void callbackUsesOnlyAnEmailVerifiedByGitHub() {
+        AuthTokenRepository repository = mock(AuthTokenRepository.class);
+        PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        when(repository.consumeOAuthState("state-1")).thenReturn("verifier-1");
+        when(passwordEncoder.encode(anyString())).thenReturn("unusable-hash");
+        AuthTokenRepository.Account account = new AuthTokenRepository.Account(
+                73L, "verified@example.com", "Orbit Reader", "unused", "ACTIVE", List.of("USER"));
+        when(repository.bindOrCreateOAuthAccount(eq("github"), eq("9001"), eq("verified@example.com"),
+                eq("Orbit Reader"), eq("unusable-hash"))).thenReturn(account);
+        GitHubOAuthService service = new GitHubOAuthService(
+                "client-id", "client-secret", "https://example.com/callback", repository, passwordEncoder, builder);
+
+        expectGitHubExchange(server,
+                "{\"id\":9001,\"login\":\"orbit\",\"name\":\"Orbit Reader\",\"email\":\"public-unverified@example.com\"}",
+                "[{\"email\":\"public-unverified@example.com\",\"primary\":false,\"verified\":false},"
+                        + "{\"email\":\"verified@example.com\",\"primary\":true,\"verified\":true}]");
+
+        AuthTokenRepository.Account result = service.callback("code-1", "state-1");
+
+        assertThat(result).isEqualTo(account);
+        verify(repository).bindOrCreateOAuthAccount("github", "9001", "verified@example.com",
+                "Orbit Reader", "unusable-hash");
+        server.verify();
+    }
+
+    @Test
+    void callbackRejectsAProfileEmailThatGitHubDoesNotVerify() {
+        AuthTokenRepository repository = mock(AuthTokenRepository.class);
+        PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        when(repository.consumeOAuthState("state-2")).thenReturn("verifier-2");
+        GitHubOAuthService service = new GitHubOAuthService(
+                "client-id", "client-secret", "https://example.com/callback", repository, passwordEncoder, builder);
+
+        expectGitHubExchange(server,
+                "{\"id\":9002,\"login\":\"unsafe\",\"name\":\"Unsafe\",\"email\":\"unverified@example.com\"}",
+                "[{\"email\":\"unverified@example.com\",\"primary\":true,\"verified\":false}]");
+
+        assertThatThrownBy(() -> service.callback("code-2", "state-2"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.code()).isEqualTo(ErrorCode.AUTHENTICATION_FAILED));
+        verify(repository, never()).bindOrCreateOAuthAccount(anyString(), anyString(), anyString(), anyString(), anyString());
+        server.verify();
+    }
+
+    private void expectGitHubExchange(MockRestServiceServer server, String profile, String emails) {
+        server.expect(requestTo("https://github.com/login/oauth/access_token"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("{\"access_token\":\"github-token\"}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://api.github.com/user"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(profile, MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://api.github.com/user/emails"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(emails, MediaType.APPLICATION_JSON));
+    }
+}
