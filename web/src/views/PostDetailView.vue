@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ArrowLeft, Bookmark, CheckCircle2, Eye, Heart, LoaderCircle, MessageCircle, Reply, Send, ShieldAlert, UserPlus } from 'lucide-vue-next'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   answerCase, createComment, currentSession, deleteComment, fetchComments, fetchFollowState,
   fetchInteractionState, fetchMediaAccess, fetchPost, fetchRelated, fetchUserProfile, followUser, interact, revealAnswer,
@@ -14,6 +14,7 @@ import PostCard from '../components/PostCard.vue'
 import StatusPanel from '../components/StatusPanel.vue'
 
 const route = useRoute()
+const router = useRouter()
 const post = ref<PostDetail | null>(null)
 const related = ref<Post[]>([])
 const threads = ref<CommentThread[]>([])
@@ -138,31 +139,43 @@ async function persistProgress() {
 }
 
 async function toggleInteraction(type: 'like' | 'favorite') {
-  if (!post.value) return
+  if (!post.value || !await requireSession()) return
   const key = type === 'like' ? 'liked' : 'favorited'
   const active = !post.value.viewerState[key]
+  post.value.viewerState[key] = active
+  if (type === 'like') post.value.likes += active ? 1 : -1
+  error.value = ''
   try {
     await interact(post.value.id, type, active)
-    post.value.viewerState[key] = active
-    if (type === 'like') post.value.likes += active ? 1 : -1
   } catch (reason) {
+    post.value.viewerState[key] = !active
+    if (type === 'like') post.value.likes += active ? -1 : 1
     error.value = reason instanceof Error ? reason.message : '互动暂时不可用'
   }
 }
 
 async function toggleFollow() {
-  if (!post.value) return
+  if (!post.value || !await requireSession()) return
+  const active = !following.value
+  following.value = active
+  error.value = ''
   try {
-    if (following.value) await unfollowUser(post.value.author.id)
+    if (!active) await unfollowUser(post.value.author.id)
     else await followUser(post.value.author.id)
-    following.value = !following.value
   } catch (reason) {
+    following.value = !active
     error.value = reason instanceof Error ? reason.message : '关注暂时不可用'
   }
 }
 
+async function requireSession() {
+  if (session.value) return true
+  await router.push({ path: '/auth', query: { redirect: route.fullPath } })
+  return false
+}
+
 async function submitAnswer() {
-  if (!post.value || !answer.value.trim()) return
+  if (!post.value || !answer.value.trim() || !await requireSession()) return
   try {
     const result = await answerCase(post.value.id, answer.value.trim())
     post.value.deductionState = {
@@ -177,7 +190,7 @@ async function submitAnswer() {
 }
 
 async function reveal() {
-  if (!post.value || !window.confirm('查看答案后，本题将不再获得积分。确定继续吗？')) return
+  if (!post.value || !await requireSession() || !window.confirm('查看答案后，本题将不再获得积分。确定继续吗？')) return
   try {
     const result = await revealAnswer(post.value.id)
     post.value.deductionState = { attempted: true, solved: result.correct, revealed: true, points: 0, solutionUnlocked: true }
@@ -276,6 +289,7 @@ onBeforeUnmount(() => {
           <button class="button button-quiet" :aria-pressed="post.viewerState.favorited" type="button" @click="toggleInteraction('favorite')"><Bookmark :size="16" /> {{ post.viewerState.favorited ? '已收藏' : '收藏' }}</button>
         </div>
       </header>
+      <p v-if="error" class="form-error detail-feedback" role="alert">{{ error }}</p>
 
       <section class="author-strip">
         <div class="profile-avatar">{{ post.author.username.slice(0, 1).toUpperCase() }}</div>

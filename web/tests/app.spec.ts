@@ -41,12 +41,30 @@ test('desktop home has observatory hierarchy and theme links', async ({ page }) 
 })
 
 test('formal post route opens case and submits deduction', async ({ page }) => {
+  await authenticate(page)
   await page.goto('/posts/1001')
   await expect(page.getByRole('heading', { name: '雾港钟楼失踪案', exact: true })).toBeVisible()
-  await expect(page.getByRole('link', { name: '登录参与讨论' })).toBeVisible()
   await page.getByLabel('推理结论').fill('夹层藏身，怀表')
   await page.getByRole('button', { name: '提交推理' }).click()
   await expect(page.getByRole('status')).toContainText('推理成立')
+})
+
+test('anonymous interaction enters login and returns to the same post', async ({ page }) => {
+  await page.goto('/posts/1001')
+  await expect(page.getByRole('link', { name: '登录参与讨论' })).toBeVisible()
+  await page.getByRole('button', { name: '关注作者' }).click()
+  await expect(page).toHaveURL(/\/auth\?redirect=\/posts\/1001$/)
+})
+
+test('failed optimistic like rolls back and shows a readable error', async ({ page }) => {
+  await authenticate(page)
+  await page.route('**/api/posts/1001/like', route => route.fulfill({ status: 503, json: { code: 'SERVICE_UNAVAILABLE', message: '喜欢操作暂时不可用', data: null, traceId: 'like-test' } }))
+  await page.goto('/posts/1001')
+  const like = page.getByRole('button', { name: /喜欢 520/ })
+  await like.click()
+  await expect(like).toHaveAttribute('aria-pressed', 'false')
+  await expect(like).toContainText('喜欢 520')
+  await expect(page.getByRole('alert')).toContainText('喜欢操作暂时不可用')
 })
 
 test('write route exposes draft editor and safe preview', async ({ page }) => {
