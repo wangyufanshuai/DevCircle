@@ -35,6 +35,7 @@ class FileUploadIntegrationTest {
         registry.add("spring.datasource.username", mysql::getUsername);
         registry.add("spring.datasource.password", mysql::getPassword);
         registry.add("devcircle.s3.endpoint", () -> "http://" + minio.getHost() + ":" + minio.getMappedPort(9000));
+        registry.add("devcircle.s3.presign-endpoint", () -> "http://" + minio.getHost() + ":" + minio.getMappedPort(9000));
         registry.add("devcircle.s3.public-base-url", () -> "http://internal-minio/devcircle");
         registry.add("devcircle.s3.access-key", () -> "minioadmin");
         registry.add("devcircle.s3.secret-key", () -> "minioadmin");

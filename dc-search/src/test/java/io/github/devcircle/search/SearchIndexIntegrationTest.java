@@ -28,7 +28,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SearchIndexIntegrationTest {
     @Container
     static final ElasticsearchContainer elasticsearch = new ElasticsearchContainer("docker.elastic.co/elasticsearch/elasticsearch:9.2.2")
+            .withEnv("ES_JAVA_OPTS", "-Xms256m -Xmx256m")
             .withEnv("xpack.security.enabled", "false")
+            .withEnv("xpack.ml.enabled", "false")
             .withEnv("discovery.type", "single-node");
 
     @DynamicPropertySource

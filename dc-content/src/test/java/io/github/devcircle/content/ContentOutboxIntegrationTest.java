@@ -17,7 +17,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.jdbc.Sql;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -32,11 +31,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest
-@Sql(scripts = {
-        "classpath:db/migration/V1__content_schema.sql",
-        "classpath:db/migration/V2__content_details_and_audit.sql",
-        "classpath:db/migration/V3__governance_and_experiment.sql"
-})
 class ContentOutboxIntegrationTest {
     @Container
     static final MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.4")
@@ -71,7 +65,7 @@ class ContentOutboxIntegrationTest {
     static class TestBeans {
         @Bean
         ObjectMapper objectMapper() {
-            return new ObjectMapper();
+            return new ObjectMapper().findAndRegisterModules();
         }
     }
 

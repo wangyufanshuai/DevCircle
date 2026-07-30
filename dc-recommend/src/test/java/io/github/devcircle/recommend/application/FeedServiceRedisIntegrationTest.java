@@ -8,6 +8,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.jdbc.Sql;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -19,6 +20,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(properties = "devcircle.recommend.read-fallback-enabled=true")
+@Sql(statements = {
+        "CREATE TABLE IF NOT EXISTS recommend_write_idempotency (idempotency_key VARCHAR(128) PRIMARY KEY, user_id BIGINT NOT NULL, operation VARCHAR(48) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE TABLE IF NOT EXISTS recommendation_exposure (user_id BIGINT NOT NULL, post_id BIGINT NOT NULL, scene VARCHAR(64) NOT NULL, exposed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, post_id, scene))"
+})
 class FeedServiceRedisIntegrationTest {
     @Container
     static final GenericContainer<?> redis = new GenericContainer<>("redis:8.2")
@@ -40,7 +45,7 @@ class FeedServiceRedisIntegrationTest {
     StringRedisTemplate redisTemplate;
 
     @Test
-    void redisSignalsAffectRankingAndExposureRemovesSeenPosts() {
+    void redisSignalsAffectRankingAndExposureDownranksSeenPosts() {
         Long userId = 77L;
         redisTemplate.opsForSet().add("user:" + userId + ":interest-tags", "Kafka");
         redisTemplate.opsForSet().add("user:" + userId + ":followees", "lin");
@@ -52,14 +57,15 @@ class FeedServiceRedisIntegrationTest {
 
         var firstPage = feedService.feedFromPosts(userId, List.of(redisPost, kafkaPost), null, 2);
         assertThat(firstPage.records().getFirst().post().id()).isEqualTo(1L);
-        assertThat(firstPage.records().getFirst().algorithm()).isEqualTo("THEME_LINEAR_MODEL");
-        assertThat(firstPage.records().getFirst().features()).containsKeys("followedAuthor", "mutualFollowees");
+        assertThat(firstPage.records().getFirst().algorithm()).isEqualTo("EXPLAINABLE_RULE_V1");
+        assertThat(firstPage.records().getFirst().features()).containsKeys(
+                "themeInterest35", "followedAuthor20", "qualityHotness20", "freshness15", "exploration10");
 
         feedService.recordExposure(new ExposureRequest(userId, List.of(1L), "home_feed"));
         var afterExposure = feedService.feedFromPosts(userId, List.of(redisPost, kafkaPost), null, 2);
 
-        assertThat(afterExposure.records()).extracting(item -> item.post().id()).doesNotContain(1L);
-        assertThat(afterExposure.records()).extracting(item -> item.post().id()).contains(2L);
+        assertThat(afterExposure.records()).extracting(item -> item.post().id()).containsExactly(2L, 1L);
+        assertThat(afterExposure.records().getLast().features().get("exposurePenalty")).isEqualTo(100.0);
     }
 
     @Test

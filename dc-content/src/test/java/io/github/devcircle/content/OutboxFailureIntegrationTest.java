@@ -12,7 +12,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.jdbc.Sql;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -28,11 +27,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         "spring.kafka.producer.properties.max.block.ms=1000",
         "spring.kafka.producer.properties.request.timeout.ms=1000",
         "spring.kafka.producer.properties.delivery.timeout.ms=2000"
-})
-@Sql(scripts = {
-        "classpath:db/migration/V1__content_schema.sql",
-        "classpath:db/migration/V2__content_details_and_audit.sql",
-        "classpath:db/migration/V3__governance_and_experiment.sql"
 })
 class OutboxFailureIntegrationTest {
     @Container
@@ -61,7 +55,7 @@ class OutboxFailureIntegrationTest {
     static class TestBeans {
         @Bean
         ObjectMapper objectMapper() {
-            return new ObjectMapper();
+            return new ObjectMapper().findAndRegisterModules();
         }
     }
 
