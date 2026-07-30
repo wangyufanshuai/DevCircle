@@ -878,6 +878,7 @@ public class PostRepository {
     }
 
     private void requireOwnedCompletedMedia(Long authorId, Long mediaId) {
+        requireMediaUploadContract();
         Integer owned = jdbcClient.sql("""
                         SELECT COUNT(*) FROM media_asset
                         WHERE id = :mediaId AND uploader_id = :authorId AND upload_status = 'COMPLETED'
@@ -889,6 +890,14 @@ public class PostRepository {
     }
 
     private void requireSubmittableMedia(Long authorId, Long draftId) {
+        Long attachmentCount = jdbcClient.sql("SELECT COUNT(*) FROM post_media WHERE post_id = :draftId")
+                .param("draftId", draftId)
+                .query(Long.class)
+                .single();
+        if (attachmentCount == null || attachmentCount == 0) {
+            return;
+        }
+        requireMediaUploadContract();
         SubmissionMediaState state = jdbcClient.sql("""
                         SELECT COUNT(*) AS attachment_count,
                                COALESCE(SUM(CASE WHEN m.id IS NOT NULL AND m.uploader_id = :authorId
@@ -914,6 +923,21 @@ public class PostRepository {
         }
         if (state.invalidRole() > 0 || state.coverCount() > 1) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "媒体角色无效，请重新设置后再投稿");
+        }
+    }
+
+    private void requireMediaUploadContract() {
+        Integer columns = jdbcClient.sql("""
+                        SELECT COUNT(*)
+                        FROM information_schema.columns
+                        WHERE table_schema = DATABASE() AND table_name = 'media_asset'
+                          AND column_name IN ('uploader_id', 'upload_status')
+                        """)
+                .query(Integer.class)
+                .single();
+        if (columns == null || columns < 2) {
+            throw new BusinessException(ErrorCode.DEPENDENCY_UNAVAILABLE,
+                    "媒体上传服务尚未完成初始化，请稍后重试");
         }
     }
 
