@@ -64,13 +64,14 @@ class InteractionPipelineIntegrationTest {
         Long likeCount = jdbcClient.sql("SELECT like_count FROM post_counter WHERE post_id = 9001")
                 .query(Long.class)
                 .single();
-        Double hotScore = redisTemplate.opsForZSet().score("feed:hot-posts", "9001");
+        Long interactionEvents = jdbcClient.sql("SELECT COUNT(*) FROM outbox_event WHERE topic = 'interaction.changed'")
+                .query(Long.class).single();
 
         assertThat(first.duplicated()).isFalse();
         assertThat(duplicate.duplicated()).isTrue();
         assertThat(likeRows).isEqualTo(1);
         assertThat(likeCount).isEqualTo(1);
-        assertThat(hotScore).isEqualTo(3.0);
+        assertThat(interactionEvents).isEqualTo(1L);
     }
 
     @Test

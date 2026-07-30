@@ -7,6 +7,7 @@ import io.github.devcircle.common.event.EventEnvelope;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.model.FeedItem;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -19,10 +20,14 @@ import java.util.Map;
 class RecommendationImpressionRepository {
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
+    private final boolean readFallbackEnabled;
 
-    RecommendationImpressionRepository(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+    RecommendationImpressionRepository(JdbcClient jdbcClient,
+                                       ObjectMapper objectMapper,
+                                       @Value("${devcircle.recommend.read-fallback-enabled:false}") boolean readFallbackEnabled) {
         this.jdbcClient = jdbcClient;
         this.objectMapper = objectMapper;
+        this.readFallbackEnabled = readFallbackEnabled;
     }
 
     void save(Long userId, String scene, FeedItem item) {
@@ -38,8 +43,10 @@ class RecommendationImpressionRepository {
                     .param("score", item.score())
                     .param("features", objectMapper.writeValueAsString(item.features()))
                     .update();
-        } catch (DataAccessException | JsonProcessingException ignored) {
-            // Recommendation logging must not block feed delivery.
+        } catch (DataAccessException ex) {
+            if (!readFallbackEnabled) throw dependency("推荐曝光记录暂时不可用", ex);
+        } catch (JsonProcessingException ex) {
+            throw dependency("推荐曝光记录暂时不可用", ex);
         }
     }
 
@@ -63,6 +70,7 @@ class RecommendationImpressionRepository {
             String bucket = Math.floorMod(userId.hashCode(), 100) < 50 ? "control" : "treatment";
             return Map.of("experimentId", experiment.get("experimentId"), "bucket", bucket);
         } catch (DataAccessException ex) {
+            if (!readFallbackEnabled) throw dependency("推荐实验暂时不可用", ex);
             return Map.of("experimentId", "exp-theme-feed-v1", "bucket", Math.floorMod(userId.hashCode(), 100) < 50 ? "control" : "treatment");
         }
     }
@@ -147,5 +155,11 @@ class RecommendationImpressionRepository {
             throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已被其他推荐写操作使用");
         }
         return false;
+    }
+
+    private BusinessException dependency(String message, Exception cause) {
+        BusinessException failure = new BusinessException(ErrorCode.DEPENDENCY_UNAVAILABLE, message);
+        failure.initCause(cause);
+        return failure;
     }
 }

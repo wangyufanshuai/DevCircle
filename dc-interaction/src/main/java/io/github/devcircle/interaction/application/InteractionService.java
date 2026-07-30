@@ -4,19 +4,22 @@ import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.interaction.api.InteractionResult;
 import io.github.devcircle.interaction.infrastructure.InteractionRepository;
-import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-
-import java.time.Duration;
 
 @Service
 public class InteractionService {
     private final InteractionRepository interactionRepository;
-    private final StringRedisTemplate redisTemplate;
 
-    public InteractionService(InteractionRepository interactionRepository, StringRedisTemplate redisTemplate) {
+    @Autowired
+    public InteractionService(InteractionRepository interactionRepository) {
         this.interactionRepository = interactionRepository;
-        this.redisTemplate = redisTemplate;
+    }
+
+    /** Compatibility constructor retained for isolated unit tests and older embedders. */
+    public InteractionService(InteractionRepository interactionRepository,
+                              org.springframework.data.redis.core.StringRedisTemplate ignoredRedisTemplate) {
+        this(interactionRepository);
     }
 
     public InteractionResult like(Long userId, Long postId, String idempotencyKey) {
@@ -45,7 +48,6 @@ public class InteractionService {
             result = active ? interactionRepository.insertFavorite(userId, postId, idempotencyKey)
                     : interactionRepository.deleteFavorite(userId, postId, idempotencyKey);
         }
-        updateRedisSignals(userId, postId, type, result.inserted() ? (active ? 1 : -1) : 0);
         return new InteractionResult(postId, type, active, result.duplicateRequest() || !result.inserted(), idempotencyKey);
     }
 
@@ -55,18 +57,4 @@ public class InteractionService {
         }
     }
 
-    private void updateRedisSignals(Long userId, Long postId, String type, int direction) {
-        if (direction == 0) return;
-        try {
-            double weight = "LIKE".equals(type) ? 3.0 : 5.0;
-            redisTemplate.opsForZSet().incrementScore("feed:hot-posts", postId.toString(), weight * direction);
-            redisTemplate.opsForHash().increment("post:" + postId + ":stats", type.toLowerCase(), direction);
-            if (direction > 0) {
-                redisTemplate.opsForSet().add("user:" + userId + ":interest-tags", type.toLowerCase());
-                redisTemplate.expire("user:" + userId + ":interest-tags", Duration.ofDays(30));
-            }
-        } catch (RuntimeException ignored) {
-            // Redis is an optimization path; MySQL remains authoritative.
-        }
-    }
 }

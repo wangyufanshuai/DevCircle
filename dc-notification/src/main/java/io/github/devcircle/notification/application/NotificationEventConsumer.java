@@ -11,10 +11,17 @@ import org.springframework.stereotype.Component;
 class NotificationEventConsumer {
     private final NotificationRepository notificationRepository;
     private final ObjectMapper objectMapper;
+    private final NotificationTargetResolver targetResolver;
 
-    NotificationEventConsumer(NotificationRepository notificationRepository, ObjectMapper objectMapper) {
+    NotificationEventConsumer(NotificationRepository notificationRepository, ObjectMapper objectMapper,
+                              NotificationTargetResolver targetResolver) {
         this.notificationRepository = notificationRepository;
         this.objectMapper = objectMapper;
+        this.targetResolver = targetResolver;
+    }
+
+    NotificationEventConsumer(NotificationRepository notificationRepository, ObjectMapper objectMapper) {
+        this(notificationRepository, objectMapper, null);
     }
 
     @KafkaListener(topics = {EventTopics.AUDIT_COMPLETED, EventTopics.CONTENT_REJECTED,
@@ -27,12 +34,16 @@ class NotificationEventConsumer {
         if (!payload.isObject()) {
             throw new IllegalArgumentException("Event payload must be an object");
         }
+        boolean interaction = EventTopics.INTERACTION_CHANGED.equals(topic);
+        boolean appeal = EventTopics.APPEAL_RESOLVED.equals(topic);
         long receiverId = payload.path("receiverId").asLong(0);
+        long targetIdValue = payload.path("targetId").asLong(payload.path("postId").asLong(0));
+        if (interaction && receiverId <= 0 && targetResolver != null && targetIdValue > 0) {
+            receiverId = targetResolver.postAuthorId(targetIdValue);
+        }
         if (receiverId <= 0) {
             throw new IllegalArgumentException("Notification event is missing receiverId");
         }
-        boolean interaction = EventTopics.INTERACTION_CHANGED.equals(topic);
-        boolean appeal = EventTopics.APPEAL_RESOLVED.equals(topic);
         String type = interaction ? "INTERACTION" : "AUDIT";
         String title = interaction ? "新的内容互动" : appeal ? "申诉处理结果" : "投稿审核状态更新";
         String status = payload.path("status").asText("UNKNOWN");
@@ -40,7 +51,6 @@ class NotificationEventConsumer {
                 : appeal ? ("PENDING".equals(status) ? "你的申诉已受理，投稿已进入人工复审队列" : "你的申诉已处理，请查看审核时间线")
                 : "你的投稿状态已更新为 " + status;
         long actorId = payload.path("actorId").asLong(0);
-        long targetIdValue = payload.path("targetId").asLong(payload.path("postId").asLong(0));
         Long targetId = targetIdValue > 0 ? targetIdValue : null;
         String targetType = payload.path("targetType").asText(targetId == null ? "" : "POST");
         String targetRoute = payload.path("targetRoute").asText(targetId == null ? "" : "/posts/" + targetId);

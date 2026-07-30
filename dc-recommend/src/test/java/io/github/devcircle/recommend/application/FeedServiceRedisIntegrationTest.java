@@ -18,7 +18,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers(disabledWithoutDocker = true)
-@SpringBootTest
+@SpringBootTest(properties = "devcircle.recommend.read-fallback-enabled=true")
 class FeedServiceRedisIntegrationTest {
     @Container
     static final GenericContainer<?> redis = new GenericContainer<>("redis:8.2")
