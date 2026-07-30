@@ -8,7 +8,6 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
@@ -35,23 +34,41 @@ public class ReliableOutboxWorker {
 
     @Scheduled(fixedDelayString = "${devcircle.outbox.poll-interval-ms:1000}")
     public void publishAvailable() {
+        runBatch(batchSize, false);
+    }
+
+    /** Publishes through the same lease/retry state machine for an operator-triggered replay. */
+    public int publishBatch(int requestedBatchSize) {
+        return runBatch(Math.max(1, Math.min(requestedBatchSize, 500)), true);
+    }
+
+    private int runBatch(int requestedBatchSize, boolean failFast) {
         if (!running.compareAndSet(false, true)) {
-            return;
+            if (failFast) throw new IllegalStateException("Outbox publisher is already running");
+            return 0;
         }
+        int published = 0;
         try {
-            for (EventRow event : candidates()) {
+            for (EventRow event : candidates(requestedBatchSize)) {
                 if (claim(event.id()) == 1) {
-                    publish(event);
+                    if (publish(event)) {
+                        published++;
+                    } else if (failFast) {
+                        throw new IllegalStateException("Failed to publish outbox event " + event.id()
+                                + "; event remains available for retry");
+                    }
                 }
             }
         } catch (BadSqlGrammarException ex) {
+            if (failFast) throw ex;
             log.debug("Outbox table is not available for this service: {}", ex.getMostSpecificCause().getMessage());
         } finally {
             running.set(false);
         }
+        return published;
     }
 
-    private List<EventRow> candidates() {
+    private List<EventRow> candidates(int requestedBatchSize) {
         return jdbcClient.sql("""
                         SELECT id, event_id, topic, aggregate_id, CAST(payload AS CHAR) payload, attempts
                         FROM outbox_event
@@ -60,7 +77,7 @@ public class ReliableOutboxWorker {
                         ORDER BY created_at
                         LIMIT :batchSize
                         """)
-                .param("batchSize", batchSize)
+                .param("batchSize", requestedBatchSize)
                 .query((rs, rowNum) -> new EventRow(
                         rs.getLong("id"), rs.getString("event_id"), rs.getString("topic"),
                         rs.getString("aggregate_id"), rs.getString("payload"), rs.getInt("attempts")))
@@ -80,7 +97,7 @@ public class ReliableOutboxWorker {
                 .update();
     }
 
-    private void publish(EventRow event) {
+    private boolean publish(EventRow event) {
         try {
             kafkaTemplate.send(event.topic(), event.aggregateId(), event.payload()).get();
             jdbcClient.sql("""
@@ -92,12 +109,14 @@ public class ReliableOutboxWorker {
                     .param("id", event.id())
                     .param("workerId", workerId)
                     .update();
+            return true;
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             fail(event, ex);
         } catch (ExecutionException | RuntimeException ex) {
             fail(event, ex);
         }
+        return false;
     }
 
     private void fail(EventRow event, Exception ex) {
