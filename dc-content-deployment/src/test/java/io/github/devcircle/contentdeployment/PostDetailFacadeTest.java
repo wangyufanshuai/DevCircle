@@ -34,7 +34,8 @@ class PostDetailFacadeTest {
                      "answerKeywords":["林墨"],"solution":"secret solution","likes":17,
                      "deductionState":{"solutionUnlocked":false},
                      "media":[{"mediaId":8,"url":"","contentType":"image/webp","status":"APPROVED"}],
-                     "viewerState":{"liked":false,"favorited":false,"readingProgress":42}}
+                     "viewerState":{"liked":false,"favorited":false,"readingProgress":42,
+                                    "readingAnchor":"reading-section-2","readingCompleted":false}}
                     """);
             if (host.equals("user.test") && path.endsWith("/follow-state")) {
                 return ok("{\"following\":true}");
@@ -61,6 +62,8 @@ class PostDetailFacadeTest {
         assertThat(detail.at("/viewerState/favorited").asBoolean()).isTrue();
         assertThat(detail.at("/likes").asLong()).isEqualTo(23);
         assertThat(detail.at("/viewerState/readingProgress").asInt()).isEqualTo(42);
+        assertThat(detail.at("/viewerState/readingAnchor").asText()).isEqualTo("reading-section-2");
+        assertThat(detail.at("/viewerState/readingCompleted").asBoolean()).isFalse();
         assertThat(detail.has("answerKeywords")).isFalse();
         assertThat(detail.get("solution").isNull()).isTrue();
         assertThat(detail.at("/media/0/url").asText()).isEqualTo("https://signed.example/evidence.webp");

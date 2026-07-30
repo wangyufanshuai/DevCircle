@@ -50,6 +50,7 @@ class ContentOutboxIntegrationTest {
         registry.add("spring.datasource.username", mysql::getUsername);
         registry.add("spring.datasource.password", mysql::getPassword);
         registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
+        registry.add("devcircle.outbox.poll-interval-ms", () -> "60000");
     }
 
     @Autowired

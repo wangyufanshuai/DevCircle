@@ -37,7 +37,8 @@ public record PostDetailView(
                              Long followerCount, Boolean followedByViewer) {
     }
 
-    public record ViewerState(boolean liked, boolean favorited, int readingProgress) {
+    public record ViewerState(boolean liked, boolean favorited, int readingProgress,
+                              String readingAnchor, boolean readingCompleted) {
     }
 
     public record DeductionState(boolean attempted, boolean solved, boolean revealed,

@@ -74,7 +74,13 @@ export type PostDetail = Omit<Post, 'author' | 'mediaAssets' | 'answerKeywords' 
   author: AuthorProfile
   markdown: string
   media: MediaAsset[]
-  viewerState: { liked: boolean; favorited: boolean; readingProgress: number }
+  viewerState: {
+    liked: boolean
+    favorited: boolean
+    readingProgress: number
+    readingAnchor?: string | null
+    readingCompleted?: boolean
+  }
   deductionState: { attempted: boolean; solved: boolean; revealed: boolean; points: number; solutionUnlocked: boolean }
   solution?: string | null
 }
@@ -134,9 +140,20 @@ export type UploadResult = { mediaId: number; objectKey: string; url: string; co
 export type InteractionResult = { targetId: number; type: string; active: boolean; duplicated: boolean; idempotencyKey: string }
 export type DeductionAnswerResult = { postId: number; userId: number; correct: boolean; duplicated: boolean; revealed: boolean; solutionUnlocked: boolean; points: number; explanation: string; solution?: string | null }
 export type ReadingProgress = { postId: number; progressPercent: number; anchor?: string | null; completed: boolean; lastReadAt?: string | null }
+export type ReadingTrackState = 'IN_PROGRESS' | 'COMPLETED' | 'SOLVED' | 'REVEALED' | 'UNAVAILABLE'
+export type ReadingTrack = {
+  postId: number
+  title: string
+  theme?: Theme | null
+  progressPercent: number
+  completed: boolean
+  lastReadAt: string
+  available?: boolean
+  trackState?: ReadingTrackState
+}
 export type Dashboard = {
   profile: { id: number; username: string; bio?: string | null; followers: number; following: number; status: string }
-  readingProgress: Array<{ postId: number; title: string; theme: Theme; progressPercent: number; completed: boolean; lastReadAt: string }>
+  readingProgress: ReadingTrack[]
   submissions: Array<{ postId: number; title: string; status: PostStatus; updatedAt: string; reviewReason?: string | null }>
   favorites: Array<{ id: number; title: string; excerpt: string; theme: Theme; contentKind: ContentKind; difficulty: 'EASY' | 'MEDIUM' | 'HARD'; createdAt: string }>
   unreadNotifications: number

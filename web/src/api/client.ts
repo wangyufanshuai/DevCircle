@@ -172,8 +172,19 @@ export function recordRecommendEvent(item: FeedItem, eventType: string) {
 }
 export function answerCase(postId: number, answer: string) { return write<DeductionAnswerResult>(`/api/deduction/cases/${postId}/answers`, 'POST', { answer }) }
 export function revealAnswer(postId: number) { return write<DeductionAnswerResult>(`/api/deduction/cases/${postId}/reveal`, 'POST') }
-export function saveReadingProgress(postId: number, progressPercent: number, anchor: string | null, completed = false) {
-  return write<ReadingProgress>(`/api/posts/${postId}/reading-progress`, 'PUT', { progressPercent, anchor, completed })
+export function saveReadingProgress(
+  postId: number,
+  progressPercent: number,
+  anchor: string | null,
+  completed = false,
+  options: { key?: string; keepalive?: boolean } = {}
+) {
+  return request<ReadingProgress>(`/api/posts/${postId}/reading-progress`, {
+    method: 'PUT',
+    keepalive: options.keepalive,
+    headers: { 'Idempotency-Key': options.key ?? idempotencyKey() },
+    body: JSON.stringify({ progressPercent, anchor, completed })
+  })
 }
 export async function fetchComments(postId: number, cursor = '') {
   const query = new URLSearchParams({ size: '20' })

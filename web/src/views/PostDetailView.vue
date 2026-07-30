@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ArrowLeft, Bookmark, CheckCircle2, Eye, Heart, LoaderCircle, MessageCircle, Reply, Send, ShieldAlert, UserPlus } from 'lucide-vue-next'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   answerCase, createComment, currentSession, deleteComment, fetchComments,
   fetchPost, fetchRelated, fetchUserProfiles, followUser, interact, revealAnswer,
@@ -34,7 +34,18 @@ const feedback = ref('')
 const commentError = ref('')
 const following = ref(false)
 const savingProgress = ref(false)
+const readingContent = ref<HTMLElement | null>(null)
+const progressSyncState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
+const progressSyncError = ref('')
 let progressTimer: ReturnType<typeof setTimeout> | undefined
+let lastSavedProgress = 0
+let lastSavedAnchor: string | null = null
+let lastSavedCompleted = false
+let queuedProgress: ProgressSnapshot | null = null
+let retryProgress: { key: string; snapshot: ProgressSnapshot } | null = null
+let progressInFlight: Promise<boolean> | null = null
+let leavingPage = false
+type ProgressSnapshot = { percent: number; anchor: string | null; completed: boolean }
 const id = computed(() => Number(route.params.id))
 const session = sessionState
 const canModerate = computed(() => session.value?.roles.some(role => role === 'ADMIN' || role === 'MODERATOR') ?? false)
@@ -62,8 +73,18 @@ async function load() {
     commentCursor.value = commentPage.nextCursor
     commentHasMore.value = commentPage.hasMore
     following.value = detail.author.followedByViewer === true
+    lastSavedProgress = detail.viewerState.readingProgress
+    lastSavedAnchor = detail.viewerState.readingAnchor ?? null
+    lastSavedCompleted = detail.viewerState.readingCompleted === true
+    queuedProgress = null
+    retryProgress = null
+    progressInFlight = null
+    progressSyncError.value = ''
+    progressSyncState.value = 'idle'
     await nextTick()
-    restoreAnchor(detail.viewerState.readingProgress)
+    restoreReadingPosition(detail.viewerState)
+    queuedProgress = measureProgress()
+    void persistProgress(true)
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '案件暂时无法打开'
   } finally {
@@ -98,31 +119,118 @@ async function loadMoreComments() {
   finally { loadingMoreComments.value = false }
 }
 
-function restoreAnchor(progress: number) {
-  if (progress <= 0) return
-  window.scrollTo({ top: (document.documentElement.scrollHeight - window.innerHeight) * progress / 100, behavior: 'auto' })
+function restoreReadingPosition(viewerState: PostDetail['viewerState']) {
+  if (viewerState.readingCompleted) return
+  const anchor = viewerState.readingAnchor ? document.getElementById(viewerState.readingAnchor) : null
+  if (anchor) {
+    anchor.scrollIntoView({ block: 'start', behavior: 'auto' })
+    return
+  }
+  const content = readingContent.value
+  if (!content || viewerState.readingProgress <= 0) return
+  const top = content.getBoundingClientRect().top + window.scrollY
+  const target = top + content.scrollHeight * viewerState.readingProgress / 100 - window.innerHeight * .35
+  window.scrollTo({ top: Math.max(0, target), behavior: 'auto' })
 }
 
 function scheduleProgressSave() {
-  if (!session.value || !post.value || savingProgress.value) return
+  if (!session.value || !post.value) return
+  const snapshot = measureProgress()
+  if (isSignificant(snapshot)) queueProgress(snapshot)
+  if (!queuedProgress || !isSignificant(queuedProgress)) return
   if (progressTimer) clearTimeout(progressTimer)
-  progressTimer = setTimeout(() => void persistProgress(), 650)
+  progressTimer = setTimeout(() => void persistProgress(), 5000)
 }
 
-async function persistProgress() {
-  if (!session.value || !post.value) return
-  const max = Math.max(1, document.documentElement.scrollHeight - window.innerHeight)
-  const percent = Math.min(100, Math.round((window.scrollY / max) * 100))
-  const completed = percent >= 96
-  savingProgress.value = true
-  try {
-    const saved = await saveReadingProgress(post.value.id, percent, `scroll:${Math.round(window.scrollY)}`, completed)
-    post.value.viewerState.readingProgress = saved.progressPercent
-  } catch {
-    // Progress is secondary; a failed save must not interrupt reading.
-  } finally {
-    savingProgress.value = false
+function queueProgress(snapshot: ProgressSnapshot) {
+  if (!queuedProgress || snapshot.completed || snapshot.percent >= queuedProgress.percent) {
+    queuedProgress = snapshot
   }
+}
+
+function sameProgress(left: ProgressSnapshot | null, right: ProgressSnapshot) {
+  return left?.percent === right.percent && left.anchor === right.anchor && left.completed === right.completed
+}
+
+function measureProgress(): ProgressSnapshot {
+  const content = readingContent.value
+  if (!content) return { percent: lastSavedProgress, anchor: lastSavedAnchor, completed: lastSavedCompleted }
+  const contentTop = content.getBoundingClientRect().top + window.scrollY
+  const readingPoint = window.scrollY + window.innerHeight * .42
+  const percent = Math.max(0, Math.min(100, Math.round((readingPoint - contentTop) / Math.max(1, content.scrollHeight) * 100)))
+  const headings = [...content.querySelectorAll<HTMLElement>('[data-reading-anchor]')]
+  const active = headings.filter(heading => heading.getBoundingClientRect().top <= window.innerHeight * .42).at(-1)
+  return { percent, anchor: active?.dataset.readingAnchor ?? null, completed: percent >= 96 }
+}
+
+function isSignificant(snapshot: ProgressSnapshot) {
+  return snapshot.completed !== lastSavedCompleted
+    || snapshot.anchor !== lastSavedAnchor
+    || snapshot.percent >= lastSavedProgress + 5
+}
+
+async function persistProgress(force = false, keepalive = false) {
+  if (!session.value || !post.value) return true
+  if (!queuedProgress) queueProgress(measureProgress())
+  if (!force && queuedProgress && !isSignificant(queuedProgress)) return true
+  if (progressInFlight) {
+    const activeRequest = progressInFlight
+    const result = await activeRequest
+    if (progressInFlight === activeRequest) progressInFlight = null
+    if (force && queuedProgress && isSignificant(queuedProgress)) return persistProgress(true, keepalive)
+    return result
+  }
+  const request = retryProgress ?? { key: crypto.randomUUID(), snapshot: queuedProgress ?? measureProgress() }
+  retryProgress = request
+  const postId = post.value.id
+  const activeRequest = (async () => {
+    savingProgress.value = true
+    progressSyncState.value = 'saving'
+    progressSyncError.value = ''
+    try {
+      const saved = await saveReadingProgress(postId, request.snapshot.percent, request.snapshot.anchor,
+        request.snapshot.completed, { key: request.key, keepalive })
+      if (post.value?.id === postId) {
+        post.value.viewerState.readingProgress = saved.progressPercent
+        post.value.viewerState.readingAnchor = saved.anchor ?? null
+        post.value.viewerState.readingCompleted = saved.completed
+      }
+      lastSavedProgress = saved.progressPercent
+      lastSavedAnchor = saved.anchor ?? null
+      lastSavedCompleted = saved.completed
+      if (sameProgress(queuedProgress, request.snapshot)) queuedProgress = null
+      retryProgress = null
+      progressSyncState.value = 'saved'
+      return true
+    } catch (reason) {
+      progressSyncState.value = 'error'
+      progressSyncError.value = reason instanceof Error ? reason.message : '阅读进度尚未同步，请重试'
+      return false
+    } finally {
+      savingProgress.value = false
+    }
+  })()
+  progressInFlight = activeRequest
+  const result = await activeRequest
+  if (progressInFlight === activeRequest) progressInFlight = null
+  if (!leavingPage && queuedProgress && isSignificant(queuedProgress) && progressSyncState.value !== 'error') {
+    scheduleProgressSave()
+  }
+  return result
+}
+
+function retryProgressSave() {
+  void persistProgress(true)
+}
+
+function handlePageHide() {
+  leavingPage = true
+  if (progressTimer) clearTimeout(progressTimer)
+  void persistProgress(true, true)
+}
+
+function handlePageShow() {
+  leavingPage = false
 }
 
 async function toggleInteraction(type: 'like' | 'favorite') {
@@ -246,15 +354,29 @@ async function moderateComment(item: CommentItem) {
   finally { moderating.value = false }
 }
 
-watch(id, load)
+watch(id, async () => {
+  leavingPage = true
+  if (progressTimer) clearTimeout(progressTimer)
+  await persistProgress(true)
+  leavingPage = false
+  await load()
+})
 onMounted(() => {
   void load()
   window.addEventListener('scroll', scheduleProgressSave, { passive: true })
+  window.addEventListener('pagehide', handlePageHide)
+  window.addEventListener('pageshow', handlePageShow)
+})
+onBeforeRouteLeave(async () => {
+  leavingPage = true
+  if (progressTimer) clearTimeout(progressTimer)
+  await persistProgress(true)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('scroll', scheduleProgressSave)
+  window.removeEventListener('pagehide', handlePageHide)
+  window.removeEventListener('pageshow', handlePageShow)
   if (progressTimer) clearTimeout(progressTimer)
-  void persistProgress()
 })
 </script>
 
@@ -289,7 +411,7 @@ onBeforeUnmount(() => {
           <div v-if="standaloneMedia.length" class="detail-media-grid">
             <template v-for="media in standaloneMedia" :key="media.mediaId"><video v-if="media.contentType.startsWith('video/')" :src="media.url" :aria-label="media.altText || post.title" controls preload="metadata" /><img v-else :src="media.url" :alt="media.altText || post.title" loading="lazy" decoding="async" /></template>
           </div>
-          <div class="reading-copy markdown-body" v-html="renderedMarkdown" />
+          <div ref="readingContent" class="reading-copy markdown-body" v-html="renderedMarkdown" />
           <section v-if="post.question" class="case-question"><span class="eyebrow">CASE QUESTION</span><h2>案件问题</h2><p>{{ post.question }}</p></section>
           <section v-if="post.clues?.length" class="clue-list"><h2>已知线索</h2><ul><li v-for="clue in post.clues" :key="clue">{{ clue }}</li></ul></section>
 
@@ -328,7 +450,7 @@ onBeforeUnmount(() => {
           </section>
         </div>
         <aside class="detail-aside">
-          <div class="aside-card"><span class="eyebrow">CASE STATUS</span><strong>{{ post.status }}</strong><p>线索 {{ post.clues?.length ?? 0 }} 条 · 已有 {{ post.solvedCount }} 人参与</p><div v-if="post.viewerState.readingProgress" class="progress-meter"><span :style="{ width: `${post.viewerState.readingProgress}%` }" /><small>阅读进度 {{ post.viewerState.readingProgress }}%</small></div></div>
+          <div class="aside-card"><span class="eyebrow">CASE STATUS</span><strong>{{ post.status }}</strong><p>线索 {{ post.clues?.length ?? 0 }} 条 · 已有 {{ post.solvedCount }} 人参与</p><div v-if="session" class="progress-meter"><span :style="{ width: `${post.viewerState.readingProgress}%` }" /><small>阅读进度 {{ post.viewerState.readingProgress }}%</small><p class="progress-sync" :class="`is-${progressSyncState}`" :role="progressSyncState === 'error' ? 'alert' : undefined" aria-live="polite"><template v-if="progressSyncState === 'saving'">正在保存阅读进度…</template><template v-else-if="progressSyncState === 'saved'">阅读进度已同步</template><template v-else-if="progressSyncState === 'error'">{{ progressSyncError }} <button type="button" class="text-button" @click="retryProgressSave">重试</button></template><template v-else>滚动后会自动保存</template></p></div></div>
           <div v-if="related.length" class="related-list"><div class="section-heading"><h2>相邻轨道</h2></div><PostCard v-for="item in related" :key="item.id" :post="item" /></div>
         </aside>
       </section>

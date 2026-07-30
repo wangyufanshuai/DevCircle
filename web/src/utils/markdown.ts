@@ -34,8 +34,14 @@ export function markdownMediaIds(markdown: string) {
 export function renderSafeMarkdown(markdown: string, media: MarkdownMedia[] = []) {
   const mediaById = new Map(media.map(item => [item.mediaId, item]))
   const renderer = new Renderer()
+  let headingIndex = 0
 
   renderer.html = ({ text }) => escapeHtml(text)
+  renderer.heading = ({ tokens, depth }) => {
+    const safeDepth = Math.max(2, Math.min(depth, 4))
+    const anchor = `reading-section-${++headingIndex}`
+    return `<h${safeDepth} id="${anchor}" data-reading-anchor="${anchor}">${renderer.parser.parseInline(tokens)}</h${safeDepth}>`
+  }
   renderer.image = ({ href, text }) => {
     const match = mediaReference.exec(href)
     if (!match) {

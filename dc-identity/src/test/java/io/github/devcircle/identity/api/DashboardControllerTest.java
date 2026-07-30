@@ -23,7 +23,10 @@ class DashboardControllerTest {
         DashboardController controller = controller(request -> {
             String path = request.url().getRawPath();
             if (path.equals("/api/users/2")) return ok("{\"id\":2,\"username\":\"观测者\"}");
-            if (path.equals("/api/me/reading-progress")) return ok("[]");
+            if (path.equals("/api/me/reading-progress")) return ok("""
+                    [{"postId":1001,"title":"钟楼档案","theme":"DEDUCTION","progressPercent":42,
+                      "completed":false,"available":true,"trackState":"IN_PROGRESS"}]
+                    """);
             if (path.equals("/api/me/submissions")) return ok("[]");
             if (path.equals("/api/me/favorites")) return ok("[1001]");
             if (path.equals("/api/posts/summaries")) return ok("[{\"id\":1001,\"title\":\"雾港钟楼失踪案\"}]");
@@ -39,6 +42,8 @@ class DashboardControllerTest {
         assertThat(response.data().get("favorites").get(0).path("title").asText()).isEqualTo("雾港钟楼失踪案");
         assertThat(response.data().get("unreadNotifications").asInt()).isEqualTo(2);
         assertThat(response.data().get("deductionStats").path("totalPoints").asInt()).isEqualTo(40);
+        assertThat(response.data().get("readingProgress").get(0).path("trackState").asText())
+                .isEqualTo("IN_PROGRESS");
     }
 
     @Test

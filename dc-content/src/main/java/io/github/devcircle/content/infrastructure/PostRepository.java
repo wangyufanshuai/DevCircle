@@ -163,7 +163,7 @@ public class PostRepository {
 
     public PostDetailView publicDetail(Long id, Long viewerId) {
         DeductionSnapshot deduction = deductionSnapshot(viewerId, id);
-        int progress = readingProgress(viewerId, id);
+        ReadingProgressView progress = readingProgress(viewerId, id);
         return jdbcClient.sql("""
                         SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
                                p.title, pc.markdown, pc.solution, p.author_id, p.status,
@@ -200,7 +200,8 @@ public class PostRepository {
                             readStringList(rs.getString("timeline")), Optional.ofNullable(rs.getString("question")).orElse(""),
                             readStringList(rs.getString("worldbuilding")), readStringList(rs.getString("cosmic_facts")),
                             readLongList(rs.getString("related_post_ids")),
-                            new PostDetailView.ViewerState(false, false, progress),
+                            new PostDetailView.ViewerState(false, false, progress.progressPercent(),
+                                    progress.anchor(), progress.completed()),
                             new PostDetailView.DeductionState(deduction.attempted(), deduction.solved(), deduction.revealed(),
                                     deduction.points(), unlocked),
                             unlocked ? Optional.ofNullable(rs.getString("solution")).orElse("") : null
@@ -284,15 +285,35 @@ public class PostRepository {
 
     public List<io.github.devcircle.content.api.ReadingProgressSummary> listReadingProgress(Long userId, int size) {
         return jdbcClient.sql("""
-                        SELECT rp.post_id, p.title, p.theme, rp.progress_percent, rp.completed, rp.last_read_at
-                        FROM reading_progress rp JOIN post p ON p.id = rp.post_id
-                        WHERE rp.user_id = :userId AND p.status = 'PUBLISHED'
-                        ORDER BY rp.last_read_at DESC LIMIT :size
+                        SELECT rp.post_id,
+                               CASE WHEN p.id IS NULL OR p.status <> 'PUBLISHED' THEN '内容已不可用' ELSE p.title END AS title,
+                               CASE WHEN p.status = 'PUBLISHED' THEN p.theme ELSE NULL END AS theme,
+                               rp.progress_percent, rp.completed, rp.last_read_at,
+                               CASE WHEN p.status = 'PUBLISHED' THEN TRUE ELSE FALSE END AS available,
+                               CASE
+                                 WHEN p.id IS NULL OR p.status <> 'PUBLISHED' THEN 'UNAVAILABLE'
+                                 WHEN COALESCE(da.revealed, FALSE) THEN 'REVEALED'
+                                 WHEN COALESCE(da.correct, FALSE) THEN 'SOLVED'
+                                 WHEN rp.completed THEN 'COMPLETED'
+                                 ELSE 'IN_PROGRESS'
+                               END AS track_state
+                        FROM reading_progress rp
+                        LEFT JOIN post p ON p.id = rp.post_id
+                        LEFT JOIN deduction_attempt da ON da.user_id = rp.user_id AND da.post_id = rp.post_id
+                        WHERE rp.user_id = :userId
+                        ORDER BY CASE
+                                   WHEN p.status = 'PUBLISHED' AND NOT rp.completed
+                                        AND NOT COALESCE(da.correct, FALSE) AND NOT COALESCE(da.revealed, FALSE)
+                                   THEN 0 ELSE 1
+                                 END,
+                                 rp.last_read_at DESC
+                        LIMIT :size
                         """)
                 .param("userId", userId).param("size", Math.max(1, Math.min(size, 50)))
                 .query((rs, rowNum) -> new io.github.devcircle.content.api.ReadingProgressSummary(
                         rs.getLong("post_id"), rs.getString("title"), rs.getString("theme"),
-                        rs.getInt("progress_percent"), rs.getBoolean("completed"), rs.getTimestamp("last_read_at").toInstant()))
+                        rs.getInt("progress_percent"), rs.getBoolean("completed"), rs.getTimestamp("last_read_at").toInstant(),
+                        rs.getBoolean("available"), rs.getString("track_state")))
                 .list();
     }
 
@@ -1087,16 +1108,19 @@ public class PostRepository {
                 .optional().orElse(DeductionSnapshot.empty());
     }
 
-    private int readingProgress(Long userId, Long postId) {
+    private ReadingProgressView readingProgress(Long userId, Long postId) {
         if (userId == null || userId <= 0) {
-            return 0;
+            return new ReadingProgressView(postId, 0, null, false, null);
         }
         return jdbcClient.sql("""
-                        SELECT progress_percent FROM reading_progress
+                        SELECT progress_percent, anchor, completed, last_read_at FROM reading_progress
                         WHERE user_id = :userId AND post_id = :postId
                         """)
                 .param("userId", userId).param("postId", postId)
-                .query(Integer.class).optional().orElse(0);
+                .query((rs, rowNum) -> new ReadingProgressView(postId, rs.getInt("progress_percent"),
+                        rs.getString("anchor"), rs.getBoolean("completed"),
+                        rs.getTimestamp("last_read_at").toInstant()))
+                .optional().orElse(new ReadingProgressView(postId, 0, null, false, null));
     }
 
     private record DeductionSnapshot(boolean attempted, boolean solved, boolean revealed, int points) {

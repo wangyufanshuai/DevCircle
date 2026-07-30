@@ -4,7 +4,7 @@ const post = {
   id: 1001, type: 'TEXT', theme: 'DEDUCTION', contentKind: 'CASE_FILE', difficulty: 'HARD', solvable: true,
   solvedCount: 58, title: '雾港钟楼失踪案', excerpt: '钟声停在 00:07，鞋印只到楼梯口。', markdown: '# 雾港钟楼\n\n钟声停在 00:07，鞋印只到楼梯口。', author: { id: 7, username: '林墨', bio: '记录异常信号', followerCount: 18, followedByViewer: false },
   tags: ['推理', '时间线'], media: [], likes: 520, comments: 4, views: 12800, status: 'PUBLISHED', clues: ['怀表与公开记录的时间不一致。', '现场只留下向内的擦痕。'],
-  question: '谁制造了不在场证明？', worldbuilding: [], cosmicFacts: [], relatedPostIds: [], viewerState: { liked: false, favorited: false, readingProgress: 0 }, deductionState: { attempted: false, solved: false, revealed: false, points: 0, solutionUnlocked: false }, solution: null
+  question: '谁制造了不在场证明？', worldbuilding: [], cosmicFacts: [], relatedPostIds: [], viewerState: { liked: false, favorited: false, readingProgress: 0, readingAnchor: null, readingCompleted: false }, deductionState: { attempted: false, solved: false, revealed: false, points: 0, solutionUnlocked: false }, solution: null
 }
 const feed = Array.from({ length: 8 }, (_, index) => ({ post: { ...post, id: post.id + index, title: `${post.title} ${index + 1}` }, reason: '与你近期感兴趣的主题相关', score: 100 - index, liked: false, favorited: false, algorithm: 'EXPLAINABLE_RULE_V1', features: {} }))
 const dashboard = { profile: { id: 2, username: '观测者', bio: '追踪星图中的异常', followers: 3, following: 5, status: 'ACTIVE' }, readingProgress: [], submissions: [], favorites: [{ id: 1001, title: '雾港钟楼失踪案', excerpt: '钟声停在 00:07。', theme: 'DEDUCTION', contentKind: 'CASE_FILE', difficulty: 'HARD', createdAt: '2026-07-30T00:00:00Z' }], unreadNotifications: 0, deductionStats: { attempts: 6, correctCount: 4, revealedCount: 1, totalPoints: 80 } }
@@ -57,6 +57,65 @@ test('formal post route opens case and submits deduction', async ({ page }) => {
   await page.getByLabel('推理结论').fill('夹层藏身，怀表')
   await page.getByRole('button', { name: '提交推理' }).click()
   await expect(page.getByRole('status')).toContainText('推理成立')
+})
+
+test('reader tracks separate active solved revealed completed and unavailable content', async ({ page }) => {
+  await authenticate(page)
+  const trackDashboard = {
+    ...dashboard,
+    readingProgress: [
+      { postId: 1001, title: '仍在阅读的钟楼', theme: 'DEDUCTION', progressPercent: 42, completed: false, lastReadAt: '2026-07-30T03:00:00Z', available: true, trackState: 'IN_PROGRESS' },
+      { postId: 1002, title: '已经解开的密室', theme: 'DEDUCTION', progressPercent: 76, completed: false, lastReadAt: '2026-07-30T02:00:00Z', available: true, trackState: 'SOLVED' },
+      { postId: 1003, title: '主动查看答案的档案', theme: 'COSMOS', progressPercent: 61, completed: false, lastReadAt: '2026-07-30T01:00:00Z', available: true, trackState: 'REVEALED' },
+      { postId: 1004, title: '已经读完的航行日志', theme: 'SCI_FI', progressPercent: 100, completed: true, lastReadAt: '2026-07-30T00:30:00Z', available: true, trackState: 'COMPLETED' },
+      { postId: 1005, title: '内容已不可用', theme: null, progressPercent: 33, completed: false, lastReadAt: '2026-07-30T00:00:00Z', available: false, trackState: 'UNAVAILABLE' }
+    ]
+  }
+  await page.route('**/api/me/dashboard', route => route.fulfill({ json: { code: 'OK', message: 'success', data: trackDashboard } }))
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: '继续上次的观测' })).toBeVisible()
+  await expect(page.getByRole('link', { name: /仍在阅读的钟楼/ })).toBeVisible()
+  await expect(page.getByRole('link', { name: /已经解开的密室/ })).toHaveCount(0)
+
+  await page.goto('/me')
+  await expect(page.getByRole('heading', { name: '阅读与解谜轨道' })).toBeVisible()
+  await expect(page.getByText('已解开谜题', { exact: true })).toBeVisible()
+  await expect(page.getByText('已查看答案', { exact: true })).toBeVisible()
+  await expect(page.getByText('已完成阅读', { exact: true })).toBeVisible()
+  const unavailable = page.locator('.progress-row.is-unavailable')
+  await expect(unavailable).toContainText('内容已不可用')
+  await expect(unavailable.locator('a')).toHaveCount(0)
+})
+
+test('reading progress exposes sync failure, retries idempotently and saves a content anchor on exit', async ({ page }) => {
+  await authenticate(page)
+  const longMarkdown = `# 第一节 **钟声**\n\n${'钟楼里的线索仍在延伸。'.repeat(120)}\n\n## 第二节\n\n${'观测者继续核对时间线。'.repeat(120)}`
+  await page.route('**/api/posts/1001', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { ...post, markdown: longMarkdown } } }))
+  const progressRequests: Array<{ key: string | null; payload: { progressPercent: number; anchor: string | null; completed: boolean } }> = []
+  await page.route('**/api/posts/1001/reading-progress', route => {
+    const payload = JSON.parse(route.request().postData() || '{}')
+    progressRequests.push({ key: route.request().headers()['idempotency-key'] ?? null, payload })
+    if (progressRequests.length === 1) {
+      return route.fulfill({ status: 503, json: { code: 'DEPENDENCY_UNAVAILABLE', message: '阅读进度暂时无法同步', data: null } })
+    }
+    return route.fulfill({ json: { code: 'OK', message: 'success', data: { postId: 1001, ...payload, lastReadAt: '2026-07-30T04:00:00Z' } } })
+  })
+
+  await page.goto('/posts/1001')
+  await expect(page.locator('#reading-section-1 strong')).toHaveText('钟声')
+  const sync = page.locator('.progress-sync')
+  await expect(sync).toContainText('阅读进度暂时无法同步')
+  await sync.getByRole('button', { name: '重试' }).click()
+  await expect(sync).toContainText('阅读进度已同步')
+  expect(progressRequests[1].key).toBe(progressRequests[0].key)
+
+  const secondSection = page.locator('#reading-section-2')
+  await secondSection.evaluate(element => element.scrollIntoView({ block: 'start' }))
+  await expect.poll(() => secondSection.evaluate(element => Math.round(element.getBoundingClientRect().top))).toBeLessThan(120)
+  await page.getByRole('link', { name: '返回发现' }).click()
+  await expect(page).toHaveURL(/\/discover$/)
+  expect(progressRequests.at(-1)?.payload.anchor).toBe('reading-section-2')
 })
 
 test('anonymous interaction enters login and returns to the same post', async ({ page }) => {

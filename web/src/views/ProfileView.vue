@@ -14,6 +14,22 @@ const loading = ref(true)
 const error = ref('')
 const logoutError = ref('')
 const signingOut = ref(false)
+const trackLabels = {
+  IN_PROGRESS: '继续阅读',
+  COMPLETED: '已完成阅读',
+  SOLVED: '已解开谜题',
+  REVEALED: '已查看答案',
+  UNAVAILABLE: '内容已不可用'
+} as const
+
+function normalizedTrackState(item: Dashboard['readingProgress'][number]) {
+  return item.trackState ?? (item.completed ? 'COMPLETED' : 'IN_PROGRESS')
+}
+
+function trackLabel(item: Dashboard['readingProgress'][number]) {
+  const state = normalizedTrackState(item)
+  return state === 'IN_PROGRESS' ? `阅读 ${item.progressPercent}%` : trackLabels[state]
+}
 
 async function load() {
   loading.value = true; error.value = ''
@@ -51,9 +67,12 @@ async function signOut() {
       </section>
 
       <section>
-        <div class="section-heading"><div><span class="eyebrow">CONTINUE ORBIT</span><h2>继续解谜轨道</h2></div><RouterLink class="text-button" to="/discover">发现更多</RouterLink></div>
+        <div class="section-heading"><div><span class="eyebrow">CONTINUE ORBIT</span><h2>阅读与解谜轨道</h2></div><RouterLink class="text-button" to="/discover">发现更多</RouterLink></div>
         <div v-if="dashboard.readingProgress.length" class="progress-list">
-          <RouterLink v-for="item in dashboard.readingProgress" :key="item.postId" :to="`/posts/${item.postId}`" class="progress-row"><BookOpen :size="18" /><span><strong>{{ item.title }}</strong><small>{{ item.theme }} · {{ item.completed ? '已完成' : `阅读 ${item.progressPercent}%` }}</small></span><div class="progress-track"><i :style="{ width: `${item.progressPercent}%` }" /></div></RouterLink>
+          <template v-for="item in dashboard.readingProgress" :key="item.postId">
+            <RouterLink v-if="item.available !== false" :to="`/posts/${item.postId}`" class="progress-row"><BookOpen :size="18" /><span><strong>{{ item.title }}</strong><small>{{ item.theme }} · <em class="track-state" :class="`is-${normalizedTrackState(item).toLowerCase()}`">{{ trackLabel(item) }}</em></small></span><div class="progress-track"><i :style="{ width: `${item.progressPercent}%` }" /></div></RouterLink>
+            <div v-else class="progress-row is-unavailable" role="status"><BookOpen :size="18" /><span><strong>{{ item.title }}</strong><small><em class="track-state is-unavailable">{{ trackLabel(item) }}</em></small></span></div>
+          </template>
         </div>
         <p v-else class="empty-copy muted">还没有保存的阅读轨道。</p>
       </section>

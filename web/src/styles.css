@@ -216,6 +216,10 @@ select { color-scheme: dark; }
 .progress-meter { margin-top: 17px; }
 .progress-meter > span { display: block; height: 4px; border-radius: 99px; background: var(--cyan); }
 .progress-meter small { display: block; margin-top: 7px; color: var(--muted); }
+.progress-sync { margin: 10px 0 0; font-size: 11px; }
+.progress-sync.is-saved { color: var(--cyan); }
+.progress-sync.is-error { color: var(--danger); }
+.progress-sync .text-button { padding: 0; border: 0; background: transparent; cursor: pointer; }
 .related-list { margin-top: 32px; }
 .related-list .post-card { grid-template-columns: 1fr; }
 .related-list .post-card-image { min-height: 120px; }
@@ -301,6 +305,10 @@ select { color-scheme: dark; }
 .progress-row > svg { color: var(--gold); }
 .progress-row strong, .progress-row small { display: block; }
 .progress-row small { margin-top: 4px; color: var(--muted); font-size: 11px; }
+.progress-row.is-unavailable { color: var(--muted); }
+.track-state { color: var(--cyan); font-style: normal; }
+.track-state.is-completed, .track-state.is-solved { color: var(--gold-bright); }
+.track-state.is-revealed, .track-state.is-unavailable { color: var(--muted); }
 .progress-track, .orbit-row i { height: 4px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.08); }
 .progress-track i, .orbit-row b { display: block; height: 100%; border-radius: inherit; background: var(--cyan); }
 .submission-list a { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 4px; border-bottom: 1px solid var(--line-soft); }
@@ -310,6 +318,7 @@ select { color-scheme: dark; }
 .admin-dashboard-link { display: flex; align-items: center; gap: 13px; padding: 18px; border: 1px solid rgba(101,201,208,.2); background: rgba(101,201,208,.04); }
 .admin-dashboard-link small { display: block; margin-top: 4px; color: var(--muted); }
 .continue-orbit { display: grid; gap: 18px; }
+.continue-orbit-empty { padding-bottom: 18px; border-bottom: 1px solid var(--line-soft); }
 .orbit-row { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line-soft); }
 .orbit-row a { min-width: 0; display: grid; gap: 7px; padding: 18px 18px 18px 0; border-right: 1px solid var(--line-soft); }
 .orbit-row a + a { padding-left: 18px; }
