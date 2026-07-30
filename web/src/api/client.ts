@@ -1,7 +1,7 @@
 import type {
   ApiResponse, CommentItem, CommentThread, CursorPage, Dashboard, DeductionAnswerResult, Draft, FeedItem, InteractionResult,
   LoginResponse, ModerationTask, NotificationItem, PageResponse, Post, SaveDraftRequest,
-  PostAudit, PostDetail, ReadingProgress, Theme, UploadIntent, UserSession
+  PostAudit, PostDetail, ReadingProgress, Theme, UploadIntent, UploadResult, UserSession
 } from './types'
 import { readonly, shallowRef } from 'vue'
 
@@ -159,12 +159,11 @@ export function createDraft(payload: SaveDraftRequest) { return write<Draft>('/a
 export function updateDraft(id: number, payload: SaveDraftRequest) { return write<Draft>(`/api/posts/drafts/${id}`, 'PUT', payload) }
 export function submitDraft(id: number, version: number) { return write<Draft>(`/api/posts/drafts/${id}/submit?version=${version}`, 'POST') }
 
-export async function uploadMedia(file: File): Promise<number> {
+export async function uploadMedia(file: File): Promise<UploadResult> {
   const intent = await write<UploadIntent>('/api/files/intents', 'POST', { filename: file.name, contentType: file.type, size: file.size })
   const upload = await fetch(intent.uploadUrl, { method: 'PUT', headers: intent.requiredHeaders, body: file })
   if (!upload.ok) throw new ApiError('UPLOAD_FAILED', '媒体上传失败，请重试')
-  const completed = await write<{ mediaId: number }>(`/api/files/${intent.mediaId}/complete`, 'POST')
-  return completed.mediaId
+  return write<UploadResult>(`/api/files/${intent.mediaId}/complete`, 'POST')
 }
 
 export function interact(postId: number, type: 'like' | 'favorite', active = true) {

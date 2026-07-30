@@ -6,6 +6,7 @@ import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.model.PostSummary;
 import io.github.devcircle.common.seed.ThemeContentLibrary;
 import io.github.devcircle.content.api.CreatePostRequest;
+import io.github.devcircle.content.api.DraftMediaInput;
 import io.github.devcircle.content.api.DraftView;
 import io.github.devcircle.content.api.PostDetailView;
 import io.github.devcircle.content.api.PostCursorPage;
@@ -18,6 +19,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -103,6 +105,7 @@ public class PostService {
 
     public DraftView createDraft(Long authorId, SaveDraftRequest request, String idempotencyKey) {
         requireWriteHeaders(authorId, idempotencyKey);
+        validateDraftMedia(request);
         return postRepository.createDraft(authorId, request, idempotencyKey);
     }
 
@@ -126,6 +129,7 @@ public class PostService {
         if (request.version() == null) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "保存草稿必须携带 version");
         }
+        validateDraftMedia(request);
         return postRepository.updateDraft(authorId, draftId, request, idempotencyKey);
     }
 
@@ -146,6 +150,32 @@ public class PostService {
         }
         if (idempotencyKey.length() > 128) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "Idempotency-Key 长度不能超过 128");
+        }
+    }
+
+    private void validateDraftMedia(SaveDraftRequest request) {
+        List<DraftMediaInput> media = request.media();
+        if (media == null || media.isEmpty()) return;
+        if (media.size() > 20) throw new BusinessException(ErrorCode.VALIDATION_FAILED, "每份草稿最多关联 20 个媒体");
+        var ids = new HashSet<Long>();
+        int covers = 0;
+        for (DraftMediaInput item : media) {
+            if (item == null || item.mediaId() == null || item.mediaId() <= 0 || !ids.add(item.mediaId())) {
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "媒体 ID 必须有效且不能重复");
+            }
+            String role = item.role() == null ? "INLINE" : item.role();
+            if (!role.equals("COVER") && !role.equals("INLINE")) {
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "媒体角色只能是 COVER 或 INLINE");
+            }
+            if (role.equals("COVER") && ++covers > 1) {
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "每份草稿只能设置一张封面");
+            }
+            if (item.altText() == null || item.altText().isBlank() || item.altText().trim().length() > 240) {
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "每个媒体都必须填写 1 至 240 个字符的替代文本");
+            }
+            if (item.sortOrder() != null && item.sortOrder() < 0) {
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "媒体排序不能为负数");
+            }
         }
     }
 

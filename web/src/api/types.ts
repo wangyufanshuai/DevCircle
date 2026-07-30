@@ -99,6 +99,7 @@ export type Draft = {
   tags: string[]
   type: 'TEXT' | 'IMAGE' | 'VIDEO'
   mediaIds: number[]
+  media?: DraftMedia[]
   theme: Theme
   contentKind: ContentKind
   difficulty: 'EASY' | 'MEDIUM' | 'HARD'
@@ -115,6 +116,7 @@ export type Draft = {
   submittedAt?: string
   reviewReason?: string | null
 }
+export type DraftMedia = { mediaId: number; role: 'COVER' | 'INLINE'; altText: string; sortOrder: number }
 export type PostAudit = { id: number; postId: number; auditorId?: number | null; action: string; reason: string; createdAt: string }
 
 export type SaveDraftRequest = Omit<Draft, 'id' | 'authorId' | 'status' | 'version' | 'lastSavedAt' | 'submittedAt' | 'reviewReason'> & { version?: number }
@@ -125,6 +127,7 @@ export type CommentItem = { id: number; postId: number; authorId: number; author
 export type CommentThread = { root: CommentItem; replies: CommentItem[] }
 export type ModerationTask = { taskId: number; postId: number; title: string; authorId?: number; queue: string; machineResult?: string; riskLevel: string; riskScore: number; reason: string; status: string; reviewLevel?: string; slaDeadline?: string }
 export type UploadIntent = { mediaId: number; objectKey: string; uploadUrl: string; requiredHeaders: Record<string, string>; expiresAt: string }
+export type UploadResult = { mediaId: number; objectKey: string; url: string; contentType: string; size: number; width?: number; height?: number; durationSeconds?: number; status: string }
 export type InteractionResult = { targetId: number; type: string; active: boolean; duplicated: boolean; idempotencyKey: string }
 export type DeductionAnswerResult = { postId: number; userId: number; correct: boolean; duplicated: boolean; revealed: boolean; solutionUnlocked: boolean; points: number; explanation: string; solution?: string | null }
 export type ReadingProgress = { postId: number; progressPercent: number; anchor?: string | null; completed: boolean; lastReadAt?: string | null }

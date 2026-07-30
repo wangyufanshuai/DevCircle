@@ -10,6 +10,8 @@ import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.common.model.MediaAssetView;
 import io.github.devcircle.common.model.PostSummary;
 import io.github.devcircle.content.api.CreatePostRequest;
+import io.github.devcircle.content.api.DraftMediaInput;
+import io.github.devcircle.content.api.DraftMediaView;
 import io.github.devcircle.content.api.DraftView;
 import io.github.devcircle.content.api.PostDetailView;
 import io.github.devcircle.content.api.PostCursorPage;
@@ -23,18 +25,20 @@ import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.Optional;
-import java.util.Base64;
-import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 
 @Repository
 public class PostRepository {
@@ -440,6 +444,7 @@ public class PostRepository {
         }
         int index = 0;
         for (Long mediaId : safeMediaIds(request.mediaIds())) {
+            requireOwnedCompletedMedia(authorId, mediaId);
             jdbcClient.sql("INSERT IGNORE INTO post_media(post_id, media_id, sort_order) VALUES (:postId, :mediaId, :sortOrder)")
                     .param("postId", postId)
                     .param("mediaId", mediaId)
@@ -481,17 +486,18 @@ public class PostRepository {
         }
         Long draftId = key.longValue();
         insertDraftContent(draftId, request);
-        replaceDraftRelations(draftId, request.tags(), request.mediaIds());
+        replaceDraftRelations(draftId, authorId, request.tags(), request.mediaIds(), request.media());
         attachIdempotencyResource(idempotencyKey, draftId);
         return getDraft(authorId, draftId);
     }
 
     public List<DraftView> listDrafts(Long authorId, int size) {
-        return draftQuery("WHERE p.author_id = :authorId")
+        List<DraftView> drafts = draftQuery("WHERE p.author_id = :authorId")
                 .param("authorId", authorId)
                 .param("size", size)
                 .query(this::mapDraft)
                 .list();
+        return attachDraftMedia(drafts);
     }
 
     public DraftView getDraft(Long authorId, Long draftId) {
@@ -504,7 +510,7 @@ public class PostRepository {
         if (drafts.isEmpty()) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "草稿不存在");
         }
-        return drafts.getFirst();
+        return attachDraftMedia(drafts).getFirst();
     }
 
     @Transactional
@@ -536,7 +542,7 @@ public class PostRepository {
             throw new BusinessException(ErrorCode.VERSION_CONFLICT, "草稿已在其他位置更新，请刷新后重试");
         }
         updateDraftContent(draftId, request);
-        replaceDraftRelations(draftId, request.tags(), request.mediaIds());
+        replaceDraftRelations(draftId, authorId, request.tags(), request.mediaIds(), request.media());
         attachIdempotencyResource(idempotencyKey, draftId);
         return getDraft(authorId, draftId);
     }
@@ -711,6 +717,7 @@ public class PostRepository {
                 splitTags(rs.getString("tags")),
                 rs.getString("type"),
                 readLongCsv(rs.getString("media_ids")),
+                List.of(),
                 rs.getString("theme"),
                 rs.getString("content_kind"),
                 rs.getString("difficulty"),
@@ -783,7 +790,8 @@ public class PostRepository {
                 .update();
     }
 
-    private void replaceDraftRelations(Long draftId, List<String> tags, List<Long> mediaIds) {
+    private void replaceDraftRelations(Long draftId, Long authorId, List<String> tags, List<Long> mediaIds,
+                                       List<DraftMediaInput> media) {
         jdbcClient.sql("DELETE FROM post_tag WHERE post_id = :postId").param("postId", draftId).update();
         for (String tagName : safeTags(tags).stream().map(String::trim).filter(tag -> !tag.isBlank()).distinct().limit(10).toList()) {
             Long tagId = upsertTag(tagName);
@@ -791,11 +799,56 @@ public class PostRepository {
                     .param("postId", draftId).param("tagId", tagId).update();
         }
         jdbcClient.sql("DELETE FROM post_media WHERE post_id = :postId").param("postId", draftId).update();
+        List<DraftMediaInput> items = media == null || media.isEmpty()
+                ? safeMediaIds(mediaIds).stream().distinct().limit(20)
+                    .map(id -> new DraftMediaInput(id, "INLINE", null, null)).toList()
+                : media.stream().limit(20).toList();
         int sortOrder = 0;
-        for (Long mediaId : safeMediaIds(mediaIds).stream().distinct().limit(20).toList()) {
-            jdbcClient.sql("INSERT INTO post_media(post_id, media_id, sort_order) VALUES (:postId, :mediaId, :sortOrder)")
-                    .param("postId", draftId).param("mediaId", mediaId).param("sortOrder", sortOrder++).update();
+        for (DraftMediaInput item : items) {
+            requireOwnedCompletedMedia(authorId, item.mediaId());
+            String role = "COVER".equals(item.role()) ? "COVER" : "INLINE";
+            String altText = item.altText() == null ? null : item.altText().trim();
+            jdbcClient.sql("""
+                            INSERT INTO post_media(post_id, media_id, role, alt_text, sort_order)
+                            VALUES (:postId, :mediaId, :role, :altText, :sortOrder)
+                            """)
+                    .param("postId", draftId).param("mediaId", item.mediaId()).param("role", role)
+                    .param("altText", altText).param("sortOrder", sortOrder++).update();
         }
+    }
+
+    private List<DraftView> attachDraftMedia(List<DraftView> drafts) {
+        if (drafts.isEmpty()) return drafts;
+        List<Long> postIds = drafts.stream().map(DraftView::id).toList();
+        List<DraftMediaRow> rows = jdbcClient.sql("""
+                        SELECT post_id, media_id, role, alt_text, sort_order
+                        FROM post_media WHERE post_id IN (:postIds)
+                        ORDER BY post_id, sort_order, media_id
+                        """)
+                .param("postIds", postIds)
+                .query((rs, rowNum) -> new DraftMediaRow(rs.getLong("post_id"),
+                        new DraftMediaView(rs.getLong("media_id"), rs.getString("role"),
+                                safeText(rs.getString("alt_text")), rs.getInt("sort_order"))))
+                .list();
+        Map<Long, List<DraftMediaView>> mediaByPost = new LinkedHashMap<>();
+        for (DraftMediaRow row : rows) {
+            mediaByPost.computeIfAbsent(row.postId(), ignored -> new ArrayList<>()).add(row.media());
+        }
+        return drafts.stream().map(draft -> draft.withMedia(mediaByPost.getOrDefault(draft.id(), List.of()))).toList();
+    }
+
+    private void requireOwnedCompletedMedia(Long authorId, Long mediaId) {
+        Integer owned = jdbcClient.sql("""
+                        SELECT COUNT(*) FROM media_asset
+                        WHERE id = :mediaId AND uploader_id = :authorId AND upload_status = 'COMPLETED'
+                        """)
+                .param("mediaId", mediaId).param("authorId", authorId).query(Integer.class).single();
+        if (owned == null || owned == 0) {
+            throw new BusinessException(ErrorCode.UPLOAD_REJECTED, "媒体未完成上传或不属于当前作者");
+        }
+    }
+
+    private record DraftMediaRow(Long postId, DraftMediaView media) {
     }
 
     private Long claimIdempotency(Long userId, String operation, String idempotencyKey) {

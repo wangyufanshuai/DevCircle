@@ -1,5 +1,6 @@
 package io.github.devcircle.content.api;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
 
@@ -11,6 +12,7 @@ public record SaveDraftRequest(
         List<String> tags,
         String type,
         List<Long> mediaIds,
+        List<@Valid DraftMediaInput> media,
         String theme,
         String contentKind,
         String difficulty,

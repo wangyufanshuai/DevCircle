@@ -11,6 +11,7 @@ public record DraftView(
         List<String> tags,
         String type,
         List<Long> mediaIds,
+        List<DraftMediaView> media,
         String theme,
         String contentKind,
         String difficulty,
@@ -27,4 +28,9 @@ public record DraftView(
         Instant submittedAt,
         String reviewReason
 ) {
+    public DraftView withMedia(List<DraftMediaView> items) {
+        return new DraftView(id, authorId, title, content, tags, type, mediaIds, List.copyOf(items), theme,
+                contentKind, difficulty, solvable, clues, suspects, timeline, question, answerKeywords, solution,
+                status, version, lastSavedAt, submittedAt, reviewReason);
+    }
 }

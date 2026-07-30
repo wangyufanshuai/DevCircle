@@ -256,6 +256,39 @@ test('version conflict keeps local draft and blocks stale submission', async ({ 
   await expect(page.getByRole('button', { name: '提交审核' })).toBeEnabled()
 })
 
+test('creator persists media role alt text and canonical order', async ({ page }) => {
+  await authenticate(page)
+  let nextMediaId = 200; let savedBody: any = null
+  await page.route('**/api/files/intents', route => {
+    const mediaId = ++nextMediaId; const origin = new URL(route.request().url()).origin
+    return route.fulfill({ json: { code: 'OK', message: 'success', data: { mediaId, objectKey: `private/${mediaId}.png`, uploadUrl: `${origin}/direct-upload/${mediaId}`, requiredHeaders: { 'Content-Type': 'image/png' }, expiresAt: '2099-01-01T00:00:00Z' } } })
+  })
+  await page.route('**/direct-upload/*', route => route.fulfill({ status: 200, body: '' }))
+  await page.route('**/api/files/*/complete', route => { const mediaId = Number(new URL(route.request().url()).pathname.split('/').at(-2)); return route.fulfill({ json: { code: 'OK', message: 'success', data: { mediaId, objectKey: `private/${mediaId}.png`, url: '', contentType: 'image/png', size: 12, status: 'PENDING_REVIEW' } } }) })
+  await page.route('**/api/posts/drafts', route => {
+    savedBody = JSON.parse(route.request().postData() || '{}')
+    return route.fulfill({ json: { code: 'OK', message: 'success', data: { ...savedBody, id: 77, authorId: 2, status: 'DRAFT', version: 0, lastSavedAt: '2026-07-30T03:00:00Z', reviewReason: null } } })
+  })
+  await page.goto('/write')
+  await page.getByLabel('标题').fill('双媒体观测记录')
+  await page.getByLabel('正文 Markdown').fill('正文中的两张观测图。')
+  const upload = page.getByLabel('上传封面或媒体')
+  await upload.setInputFiles({ name: 'station-cover.png', mimeType: 'image/png', buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]) })
+  await expect(page.getByLabel('媒体 #201 替代文本')).toHaveValue('station cover')
+  await upload.setInputFiles({ name: 'evidence-clock.png', mimeType: 'image/png', buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]) })
+  await page.getByLabel('媒体 #202 角色').selectOption('COVER')
+  await expect(page.getByLabel('媒体 #201 角色')).toHaveValue('INLINE')
+  await page.getByLabel('媒体 #202 替代文本').fill('证物桌上的停摆怀表')
+  await page.getByRole('button', { name: '上移媒体 #202' }).click()
+  await page.getByRole('button', { name: '保存草稿' }).click()
+  await expect(page).toHaveURL(/\/write\/77$/)
+  expect(savedBody.mediaIds).toEqual([202, 201])
+  expect(savedBody.media).toEqual([
+    { mediaId: 202, role: 'COVER', altText: '证物桌上的停摆怀表', sortOrder: 0 },
+    { mediaId: 201, role: 'INLINE', altText: 'station cover', sortOrder: 1 }
+  ])
+})
+
 test('responsive shell has no horizontal overflow and uses the correct navigation', async ({ page }, testInfo) => {
   await page.goto('/')
   if (testInfo.project.name === 'mobile') await expect(page.locator('.mobile-nav')).toBeVisible()
