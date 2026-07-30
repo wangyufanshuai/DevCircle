@@ -1,12 +1,12 @@
 # 云服务器 Docker 部署
 
-本文档面向 v1.2 生产预备版，目标是在一台云服务器上用 Docker Compose 跑通 MysticVerse 全栈演示。
+本文档面向生产预备版。开发演示和公网生产使用不同 Compose 文件，生产路径不启用 seed/mock 降级。
 
 ## 前置条件
 
 - 2 核 8 GB 内存以上，推荐 4 核 16 GB。
 - Docker 29+ 和 Docker Compose v2。
-- 已开放 80/443、8080、5501、19090、13000、16686 等需要访问的端口。
+- 生产公网只需要开放 80/443；Gateway 的 8080 仅在确有运维需要时由防火墙限制来源。
 - 所有环境都使用真实认证；生产必须通过环境变量注入强随机 JWT secret、数据库密码和 MinIO 密钥。
 
 ## 启动步骤
@@ -15,24 +15,24 @@
 git clone https://github.com/wangyufanshuai/DevCircle.git
 cd DevCircle
 ./mvnw -B -DskipTests package
-docker compose --profile demo up -d --build
+docker compose --env-file .env.production -f docker-compose.prod.yml pull
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 ```
 
 访问入口：
 
-- 前端：`http://<server-ip>:5501`
-- Gateway：`http://<server-ip>:8080`
-- Prometheus：`http://<server-ip>:19090`
-- Grafana：`http://<server-ip>:13000`
-- Jaeger：`http://<server-ip>:16686`
+- 网站：`https://<domain>`
+- Gateway（如开放）：`http://<server-ip>:8080`
+
+本地演示仍使用 `docker-compose.yml` 的 `demo` profile；它会暴露开发端口，不得直接作为公网生产配置。
 
 ## 回滚
 
-如果使用 GHCR 镜像部署，把 compose 中的镜像 tag 回退到上一个 commit sha，然后执行：
+如果使用 GHCR 镜像部署，把 `.env.production` 中的 `IMAGE_TAG` 回退到上一个 commit SHA，然后执行：
 
 ```bash
-docker compose --profile demo pull
-docker compose --profile demo up -d
+docker compose --env-file .env.production -f docker-compose.prod.yml pull
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 ```
 
 ## 日志排查
@@ -48,4 +48,4 @@ docker compose logs -f dc-recommend
 
 - MySQL 首次启动慢：等待 healthcheck 通过后重启依赖服务。
 - Elasticsearch 内存不足：提高服务器内存或调低 `ES_JAVA_OPTS`。
-- 前端提示演示降级：说明对应后端接口不可用，先看 Gateway 和目标服务日志。
+- 前端提示依赖暂时不可用：先看 Gateway 和目标服务日志；不要在生产开启读取降级。
