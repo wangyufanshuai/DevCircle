@@ -19,7 +19,11 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers(disabledWithoutDocker = true)
-@SpringBootTest(properties = "devcircle.recommend.read-fallback-enabled=true")
+@SpringBootTest(properties = {
+        "devcircle.recommend.read-fallback-enabled=true",
+        "spring.kafka.listener.auto-startup=false",
+        "devcircle.kafka.topics.enabled=false"
+})
 @Sql(statements = {
         "CREATE TABLE IF NOT EXISTS recommend_write_idempotency (idempotency_key VARCHAR(128) PRIMARY KEY, user_id BIGINT NOT NULL, operation VARCHAR(48) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
         "CREATE TABLE IF NOT EXISTS recommendation_exposure (user_id BIGINT NOT NULL, post_id BIGINT NOT NULL, scene VARCHAR(64) NOT NULL, exposed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, post_id, scene))"

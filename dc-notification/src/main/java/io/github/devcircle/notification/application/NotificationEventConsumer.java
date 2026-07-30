@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.notification.infrastructure.NotificationRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
@@ -13,6 +14,7 @@ class NotificationEventConsumer {
     private final ObjectMapper objectMapper;
     private final NotificationTargetResolver targetResolver;
 
+    @Autowired
     NotificationEventConsumer(NotificationRepository notificationRepository, ObjectMapper objectMapper,
                               NotificationTargetResolver targetResolver) {
         this.notificationRepository = notificationRepository;
