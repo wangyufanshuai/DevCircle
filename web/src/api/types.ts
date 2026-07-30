@@ -140,6 +140,7 @@ export type Dashboard = {
   submissions: Array<{ postId: number; title: string; status: PostStatus; updatedAt: string; reviewReason?: string | null }>
   favorites: number[]
   unreadNotifications: number
+  deductionStats: { attempts: number; correctCount: number; revealedCount: number; totalPoints: number }
 }
 
 // Compatibility types for legacy presentation components retained during the router migration.

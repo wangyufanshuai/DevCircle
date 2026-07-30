@@ -3,6 +3,7 @@ package io.github.devcircle.content.application;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.content.api.DeductionAnswerResult;
+import io.github.devcircle.content.api.DeductionStatsView;
 import io.github.devcircle.content.api.LeaderboardEntry;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -104,6 +105,23 @@ public class DeductionService {
                 .query((rs, rowNum) -> new LeaderboardEntry(rs.getLong("user_id"), rs.getString("username"),
                         rs.getLong("correct_count"), rs.getLong("total_points")))
                 .list();
+    }
+
+    public DeductionStatsView stats(Long userId) {
+        if (userId == null || userId <= 0) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录");
+        }
+        return jdbcClient.sql("""
+                        SELECT COUNT(*) AS attempts,
+                               COALESCE(SUM(CASE WHEN correct = TRUE THEN 1 ELSE 0 END), 0) AS correct_count,
+                               COALESCE(SUM(CASE WHEN revealed = TRUE THEN 1 ELSE 0 END), 0) AS revealed_count,
+                               COALESCE(SUM(points), 0) AS total_points
+                        FROM deduction_attempt WHERE user_id = :userId
+                        """)
+                .param("userId", userId)
+                .query((rs, rowNum) -> new DeductionStatsView(rs.getLong("attempts"),
+                        rs.getLong("correct_count"), rs.getLong("revealed_count"), rs.getLong("total_points")))
+                .single();
     }
 
     private DeductionAnswerResult existingAttempt(Long userId, Long postId, boolean duplicated) {

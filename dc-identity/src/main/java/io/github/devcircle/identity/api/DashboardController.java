@@ -42,7 +42,8 @@ class DashboardController {
         Mono<JsonNode> submissions = get(contentUri, "/api/me/submissions", userId);
         Mono<JsonNode> favorites = get(interactionUri, "/api/me/favorites", userId);
         Mono<JsonNode> unread = get(notificationUri, "/api/notifications/unread-count", userId);
-        return Mono.zip(profile, progress, submissions, favorites, unread)
+        Mono<JsonNode> deductionStats = get(contentUri, "/api/deduction/me/stats", userId);
+        return Mono.zip(profile, progress, submissions, favorites, unread, deductionStats)
                 .map(values -> {
                     Map<String, JsonNode> data = new LinkedHashMap<>();
                     data.put("profile", values.getT1());
@@ -50,6 +51,7 @@ class DashboardController {
                     data.put("submissions", values.getT3());
                     data.put("favorites", values.getT4());
                     data.put("unreadNotifications", values.getT5());
+                    data.put("deductionStats", values.getT6());
                     return ApiResponse.ok(data);
                 });
     }

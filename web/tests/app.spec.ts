@@ -7,7 +7,7 @@ const post = {
   question: '谁制造了不在场证明？', worldbuilding: [], cosmicFacts: [], relatedPostIds: [], viewerState: { liked: false, favorited: false, readingProgress: 0 }, deductionState: { attempted: false, solved: false, revealed: false, points: 0, solutionUnlocked: false }, solution: null
 }
 const feed = Array.from({ length: 8 }, (_, index) => ({ post: { ...post, id: post.id + index, title: `${post.title} ${index + 1}` }, reason: '与你近期感兴趣的主题相关', score: 100 - index, liked: false, favorited: false, algorithm: 'EXPLAINABLE_RULE_V1', features: {} }))
-const dashboard = { profile: { id: 2, username: '观测者', bio: '追踪星图中的异常', followers: 3, following: 5, status: 'ACTIVE' }, readingProgress: [], submissions: [], favorites: [], unreadNotifications: 0 }
+const dashboard = { profile: { id: 2, username: '观测者', bio: '追踪星图中的异常', followers: 3, following: 5, status: 'ACTIVE' }, readingProgress: [], submissions: [], favorites: [], unreadNotifications: 0, deductionStats: { attempts: 6, correctCount: 4, revealedCount: 1, totalPoints: 80 } }
 
 async function authenticate(page: import('@playwright/test').Page, roles: string[] = ['USER']) {
   await page.context().addCookies([{ name: 'dc_csrf', value: 'test-csrf', domain: '127.0.0.1', path: '/' }])
@@ -171,6 +171,7 @@ test('logout clears the reactive session only after server confirmation', async 
   await page.route('**/api/auth/logout', route => route.fulfill({ json: { code: 'OK', message: 'success', data: null } }))
   await page.goto('/me')
   await expect(page.getByRole('heading', { name: '观测者' })).toBeVisible()
+  await expect(page.getByText('答对 4 / 尝试 6')).toBeVisible()
   await page.locator('.profile-page').getByRole('button', { name: '退出登录' }).click()
   await expect(page).toHaveURL(/\/$/)
   await page.locator('a[href="/write"]:visible').first().click()

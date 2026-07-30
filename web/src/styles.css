@@ -295,6 +295,7 @@ select { color-scheme: dark; }
 .dashboard-stat-grid svg { color: var(--gold); }
 .dashboard-stat-grid span { color: var(--muted); font-size: 11px; }
 .dashboard-stat-grid strong { font-family: Georgia, serif; font-size: 26px; }
+.dashboard-stat-grid small { color: var(--muted); font-size: 11px; }
 .progress-list, .submission-list { margin-top: 15px; border-top: 1px solid var(--line-soft); }
 .progress-row { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(100px, 240px); align-items: center; gap: 14px; padding: 16px 4px; border-bottom: 1px solid var(--line-soft); }
 .progress-row > svg { color: var(--gold); }

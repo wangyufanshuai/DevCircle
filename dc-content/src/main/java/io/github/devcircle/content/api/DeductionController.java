@@ -47,4 +47,9 @@ class DeductionController {
     ApiResponse<List<LeaderboardEntry>> leaderboard() {
         return ApiResponse.ok(deductionService.leaderboard());
     }
+
+    @GetMapping("/me/stats")
+    ApiResponse<DeductionStatsView> stats(@RequestHeader("X-User-Id") Long userId) {
+        return ApiResponse.ok(deductionService.stats(userId));
+    }
 }

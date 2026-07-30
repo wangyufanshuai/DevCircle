@@ -46,7 +46,7 @@ async function signOut() {
       <section class="dashboard-stat-grid">
         <RouterLink to="/write"><FilePenLine :size="19" /><span>投稿记录</span><strong>{{ dashboard.submissions.length }}</strong></RouterLink>
         <RouterLink to="/notifications"><Bell :size="19" /><span>未读信号</span><strong>{{ dashboard.unreadNotifications }}</strong></RouterLink>
-        <div><Trophy :size="19" /><span>继续解谜</span><strong>{{ dashboard.readingProgress.filter(item => !item.completed).length }}</strong></div>
+        <div><Trophy :size="19" /><span>解谜积分</span><strong>{{ dashboard.deductionStats.totalPoints }}</strong><small>答对 {{ dashboard.deductionStats.correctCount }} / 尝试 {{ dashboard.deductionStats.attempts }}</small></div>
         <div><Bookmark :size="19" /><span>收藏轨道</span><strong>{{ dashboard.favorites.length }}</strong></div>
       </section>
 
