@@ -50,7 +50,7 @@ flowchart LR
 
 - 开发环境使用一个 MySQL 实例、多个 schema。
 - 每个写服务使用 Flyway 管理 schema。
-- `ThemeContentLibrary` 只作为 seed 导入源和故障兜底；正常链路优先读 MySQL。
+- `ThemeContentLibrary` 只作为首次初始化数据和开发环境显式读取降级来源；生产正常链路只读 MySQL/ES，依赖故障不得伪造成功。
 - 写内容时同事务写 `post`、`post_content`、`post_tag`、`post_media`、`outbox_event`。
 - 审核通过真实更新 `post.status`，写 `post_audit_record`、`audit_log` 和 `audit.completed` Outbox。
 - 发帖后会生成 `moderation_task`，本地规则写入 `content_risk_signal` 和 `user_risk_profile`，高风险内容进入人工队列。
@@ -71,7 +71,7 @@ flowchart LR
 
 推荐系统保持 Java 本地轻量实现：
 
-- 候选来源：内容服务 MySQL 列表优先，空或失败时 seed fallback。
+- 候选来源：内容服务 MySQL 列表优先；生产依赖失败直接返回错误，开发环境只有显式开启读取降级时才允许 seed fallback。
 - 召回来源：主题召回、标签召回、热榜召回、关注作者召回、同系列召回、冷启动召回。
 - 实验能力：`recommend_experiment` 与 `recommend_experiment_bucket` 控制实验、分桶、流量比例和权重配置。
 - 排序特征：主题匹配、标签兴趣、热度、时效、关注作者、共同关注、曝光惩罚。
@@ -92,7 +92,7 @@ flowchart LR
 ## 部署与可观测
 
 - Compose profiles：`infra` 只启动基础设施，`app` 启动应用服务，`demo` 启动全栈。
-- Helm values：`values-dev.yaml` 和 `values-prod.yaml` 分离镜像、资源、Ingress 和 demo token 策略。
+- Helm values：`values-dev.yaml` 和 `values-prod.yaml` 分离镜像、资源、Ingress 和生产密钥策略；生产不启用 demo token 或 mock fallback。
 - CI：后端测试、前端构建、Playwright、Helm lint、Compose config、GHCR 镜像构建、Trivy 扫描。
 - 可观测：Actuator + Prometheus + Grafana + Jaeger；告警覆盖服务不可用、5xx、P95、JVM、连接池压力。
 
@@ -103,5 +103,5 @@ v1.2 是生产预备版，还不是大规模生产系统。后续应继续补：
 - 完整多环境 Secret 管理和灰度发布。
 - Kafka lag、Outbox backlog、ES 健康等更细指标。
 - 推荐实验离线评估、自动报表和审批流。
-- 更严格的 OAuth2 真实 provider 回调和账号绑定策略。
+- OAuth2 设备风控、已认证账号的显式绑定流程和密钥轮换自动化。
 - 云服务器或 Kubernetes 的真实压测数据和长期运行报告。

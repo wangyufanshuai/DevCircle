@@ -12,13 +12,13 @@ DevCircle 当前将前台产品定位为 MysticVerse，核心主题为推理、�
 
 ## 共享主题内容库
 
-`ThemeContentLibrary` 内置 120 条高质量示例内容：
+`ThemeContentLibrary` 内置 180 条高质量示例内容：
 
 - 推理馆 100 条：每条包含案件标题、摘要、线索、嫌疑人、时间线、问题、答案关键词和解析。
 - 科幻馆 40 条：每条包含世界观设定、势力、技术概念、章节摘要和系列线索。
 - 宇宙档案 40 条：每条包含天体类型、观测要点、科普解释、任务或探测器线索。
 
-这个内容库同时服务后端推荐 fallback、内容详情 fallback、搜索 fallback 和前端 mock，避免前后端字段漂移。
+这个内容库只作为开发环境显式 seed/读取降级来源，生产环境默认关闭；它不参与前端写入，也不作为真实数据持久化的替代品。
 
 ## 详情页数据流
 
@@ -42,7 +42,7 @@ v1.3 的推理内容覆盖密室、时间线、证词矛盾、物证误导、密
 
 推荐接口支持 `scene=deduction|sci_fi|cosmos|mixed`。排序信号包括主题匹配、标签兴趣、热度、新鲜度、关注作者、共同关注、曝光惩罚和解谜完成状态。
 
-搜索接口支持 `keyword`、`theme`、`contentKind`、`difficulty` 筛选。Elasticsearch 不可用时，服务会从共享主题内容库返回 fallback 结果，保证本地演示仍可查看。
+搜索接口支持 `keyword`、`theme`、`contentKind`、`difficulty` 筛选。只有在显式开启开发读取降级时，Elasticsearch 不可用才会使用共享主题内容库；生产依赖故障会返回明确错误和 traceId。
 
 ## 前端信息架构
 

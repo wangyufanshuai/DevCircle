@@ -19,7 +19,7 @@ Copy-Item .env.example .env
 - `S3_*`: MinIO / S3 兼容存储配置。
 - `DEVCIRCLE_JWT_SECRET`: JWT 签名密钥。
 - `VITE_API_BASE_URL`: 前端请求 Gateway 的地址。
-- `VITE_ENABLE_DEMO_FALLBACK`: 前端是否允许演示降级。
+- `DEVCIRCLE_READ_FALLBACK_ENABLED`: 仅开发环境可显式开启后端 seed 读取降级；生产必须为 `false`。
 
 真实 secret 不应提交到仓库。
 
@@ -49,11 +49,12 @@ Copy-Item .env.example .env
 - `POST /api/admin/ops/outbox/replay?topic=&batchSize=`
 - `GET /api/admin/ops/degradation`
 
-## 显式降级
+## 开发环境显式降级
 
-v1.2 保留演示降级，但不静默隐藏错误：
+本地演示可以显式开启读取降级，但它不是生产可用性策略：
 
 - 生产读写路径不返回 seed 或 mock 数据；依赖不可用时返回统一错误码和 `traceId`。
+- 生产 Compose 固定 `DEVCIRCLE_READ_FALLBACK_ENABLED=false`，推荐、搜索和内容服务均遵守该约束。
 - 页面只展示用户可理解的空状态和重试入口。
 - 管理端工程状态展示真实 Outbox backlog、推荐事件和依赖健康。
 
@@ -67,6 +68,6 @@ v1.2 保留演示降级，但不静默隐藏错误：
 
 - Docker 不可用：运行 `scripts/dev/doctor.ps1`，确认 Docker Desktop 已启动。
 - Kafka topic 缺失：运行 `deploy/kafka/create-topics.ps1`。
-- 前端一直降级：检查 `VITE_API_BASE_URL` 是否指向 Gateway。
+- 前端请求失败：检查 `VITE_API_BASE_URL` 是否指向 Gateway；不要通过增加本地 mock 绕过错误。
 - 管理端 403：确认真实 JWT 中包含 `ADMIN`。
 - Outbox 积压：查看 `/api/admin/ops/outbox`，必要时调用 replay 接口。
