@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 @Service
 public class AdminService {
@@ -101,6 +102,12 @@ public class AdminService {
         return auditPost(postId, auditorId, traceId, "APPROVE_POST", "PUBLISHED", "APPROVED", EventTopics.AUDIT_COMPLETED, reason);
     }
 
+    @Transactional
+    public AdminActionResult approve(Long postId, Long auditorId, String traceId, String reason, String idempotencyKey) {
+        return idempotent(auditorId, "ADMIN_APPROVE_POST:" + postId, idempotencyKey, postId, "APPROVE_POST",
+                () -> approve(postId, auditorId, traceId, reason));
+    }
+
     public AdminActionResult approve(Long postId) {
         return approve(postId, 1L, null, "审核通过");
     }
@@ -108,6 +115,12 @@ public class AdminService {
     @Transactional
     public AdminActionResult reject(Long postId, Long auditorId, String traceId, String reason) {
         return auditPost(postId, auditorId, traceId, "REJECT_POST", "REJECTED", "REJECTED", EventTopics.CONTENT_REJECTED, reason);
+    }
+
+    @Transactional
+    public AdminActionResult reject(Long postId, Long auditorId, String traceId, String reason, String idempotencyKey) {
+        return idempotent(auditorId, "ADMIN_REJECT_POST:" + postId, idempotencyKey, postId, "REJECT_POST",
+                () -> reject(postId, auditorId, traceId, reason));
     }
 
     public AdminActionResult reject(Long postId) {
@@ -121,9 +134,21 @@ public class AdminService {
     }
 
     @Transactional
+    public AdminActionResult approveModerationTask(Long taskId, Long auditorId, String traceId, String reason, String idempotencyKey) {
+        return idempotent(auditorId, "ADMIN_APPROVE_TASK:" + taskId, idempotencyKey, taskId, "APPROVE_POST",
+                () -> approveModerationTask(taskId, auditorId, traceId, reason));
+    }
+
+    @Transactional
     public AdminActionResult rejectModerationTask(Long taskId, Long auditorId, String traceId, String reason) {
         Long postId = postIdByTask(taskId);
         return auditPost(postId, auditorId, traceId, "REJECT_POST", "REJECTED", "REJECTED", EventTopics.CONTENT_REJECTED, reason);
+    }
+
+    @Transactional
+    public AdminActionResult rejectModerationTask(Long taskId, Long auditorId, String traceId, String reason, String idempotencyKey) {
+        return idempotent(auditorId, "ADMIN_REJECT_TASK:" + taskId, idempotencyKey, taskId, "REJECT_POST",
+                () -> rejectModerationTask(taskId, auditorId, traceId, reason));
     }
 
     @Transactional
@@ -135,11 +160,23 @@ public class AdminService {
     }
 
     @Transactional
+    public AdminActionResult escalateModerationTask(Long taskId, Long auditorId, String traceId, String reason, String idempotencyKey) {
+        return idempotent(auditorId, "ADMIN_ESCALATE_TASK:" + taskId, idempotencyKey, taskId, "ESCALATE_REVIEW",
+                () -> escalateModerationTask(taskId, auditorId, traceId, reason));
+    }
+
+    @Transactional
     public AdminActionResult requireChanges(Long taskId, Long auditorId, String traceId, String decisionReason) {
         if (decisionReason != null) {
             return updateModerationTask(taskId, auditorId, traceId, "REQUIRE_CHANGES", "CHANGES_REQUIRED", "NORMAL", decisionReason);
         }
         return updateModerationTask(taskId, auditorId, traceId, "REQUIRE_CHANGES", "CHANGES_REQUIRED", "NORMAL", "要求作者修改");
+    }
+
+    @Transactional
+    public AdminActionResult requireChanges(Long taskId, Long auditorId, String traceId, String reason, String idempotencyKey) {
+        return idempotent(auditorId, "ADMIN_REQUIRE_CHANGES:" + taskId, idempotencyKey, taskId, "REQUIRE_CHANGES",
+                () -> requireChanges(taskId, auditorId, traceId, reason));
     }
 
     public List<Map<String, Object>> appeals(String status, int page, int size) {
@@ -170,6 +207,86 @@ public class AdminService {
         } catch (DataAccessException ex) {
             throw dependencyUnavailable();
         }
+    }
+
+    @Transactional
+    public AdminActionResult resolveAppeal(Long appealId, Long auditorId, String traceId, String reason,
+                                           boolean approved, String idempotencyKey) {
+        String operation = approved ? "APPROVE_APPEAL" : "REJECT_APPEAL";
+        String resultAction = approved ? "APPEAL_APPROVED" : "APPEAL_REJECTED";
+        return idempotent(auditorId, "ADMIN_" + operation + ":" + appealId, idempotencyKey, appealId, resultAction,
+                () -> resolveAppeal(appealId, auditorId, traceId, reason, approved));
+    }
+
+    private AdminActionResult resolveAppeal(Long appealId, Long auditorId, String traceId, String reason,
+                                            boolean approved) {
+        requireDatabase();
+        requireReason(reason);
+        String normalizedReason = reason.trim();
+        AppealRow appeal = jdbcClient.sql("""
+                        SELECT ar.post_id, ar.user_id, ar.reason, p.status AS post_status
+                        FROM appeal_record ar
+                        JOIN post p ON p.id = ar.post_id
+                        WHERE ar.id = :appealId AND ar.status = 'PENDING'
+                        FOR UPDATE
+                        """)
+                .param("appealId", appealId)
+                .query((rs, rowNum) -> new AppealRow(rs.getLong("post_id"), rs.getLong("user_id"),
+                        rs.getString("reason"), rs.getString("post_status")))
+                .optional()
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "待处理申诉不存在或状态已变化"));
+        if (!List.of("REJECTED", "CHANGES_REQUIRED").contains(appeal.postStatus())) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "投稿当前状态不允许处理申诉");
+        }
+        String appealStatus = approved ? "APPROVED" : "REJECTED";
+        int updated = jdbcClient.sql("""
+                        UPDATE appeal_record
+                        SET status = :status, handler_id = :auditorId, handled_at = CURRENT_TIMESTAMP
+                        WHERE id = :appealId AND status = 'PENDING'
+                        """)
+                .param("status", appealStatus)
+                .param("auditorId", auditorId)
+                .param("appealId", appealId)
+                .update();
+        if (updated == 0) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "待处理申诉不存在或状态已变化");
+        }
+        if (approved) {
+            int postRows = jdbcClient.sql("""
+                            UPDATE post
+                            SET status = 'PENDING', version = version + 1, submitted_at = CURRENT_TIMESTAMP, review_reason = NULL
+                            WHERE id = :postId AND status IN ('REJECTED', 'CHANGES_REQUIRED')
+                            """)
+                    .param("postId", appeal.postId())
+                    .update();
+            if (postRows == 0) {
+                throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "申诉对应投稿状态已变化");
+            }
+            jdbcClient.sql("""
+                            INSERT INTO moderation_task(post_id, author_id, queue_name, machine_result, risk_level,
+                                                        risk_score, reason, status, review_level, sla_deadline)
+                            VALUES (:postId, :authorId, 'appeal-review', 'APPEAL_ACCEPTED', 'MEDIUM', 0,
+                                    :reason, 'PENDING', 'APPEAL', DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 48 HOUR))
+                            """)
+                    .param("postId", appeal.postId())
+                    .param("authorId", appeal.userId())
+                    .param("reason", appeal.reason())
+                    .update();
+        }
+        jdbcClient.sql("INSERT INTO post_audit_record(post_id, auditor_id, action, reason) VALUES (:postId, :auditorId, :action, :reason)")
+                .param("postId", appeal.postId())
+                .param("auditorId", auditorId)
+                .param("action", approved ? "APPEAL_APPROVED" : "APPEAL_REJECTED")
+                .param("reason", normalizedReason)
+                .update();
+        logAudit(auditorId, approved ? "APPEAL_APPROVED" : "APPEAL_REJECTED", "APPEAL",
+                String.valueOf(appealId), null, traceId,
+                Map.of("postId", appeal.postId(), "reason", normalizedReason));
+        writeOutbox(appeal.postId(), approved ? "APPEAL_APPROVED" : "APPEAL_REJECTED",
+                approved ? "PENDING" : appeal.postStatus(), EventTopics.APPEAL_RESOLVED);
+        return new AdminActionResult(approved ? "APPEAL_APPROVED" : "APPEAL_REJECTED",
+                Map.of("appealId", appealId, "postId", appeal.postId(), "status", appealStatus,
+                        "postStatus", approved ? "PENDING" : appeal.postStatus()));
     }
 
     public List<Map<String, Object>> riskUsers(String status, int page, int size) {
@@ -683,6 +800,51 @@ public class AdminService {
         }
     }
 
+    private AdminActionResult idempotent(Long actorId, String operation, String key, Long resourceId,
+                                         String action, Supplier<AdminActionResult> mutation) {
+        Long duplicateId = claimIdempotency(actorId, operation, key);
+        if (duplicateId != null) {
+            return new AdminActionResult(action, Map.of("resourceId", duplicateId, "duplicateRequest", true));
+        }
+        AdminActionResult result = mutation.get();
+        jdbcClient.sql("UPDATE content_idempotency_record SET resource_id = :resourceId WHERE idempotency_key = :key")
+                .param("resourceId", resourceId)
+                .param("key", key)
+                .update();
+        return result;
+    }
+
+    private Long claimIdempotency(Long actorId, String operation, String key) {
+        requireDatabase();
+        if (key == null || key.isBlank() || key.length() > 128) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "审核写操作必须提供有效的 Idempotency-Key");
+        }
+        int inserted = jdbcClient.sql("""
+                        INSERT IGNORE INTO content_idempotency_record(idempotency_key, user_id, operation)
+                        VALUES (:key, :actorId, :operation)
+                        """)
+                .param("key", key)
+                .param("actorId", actorId)
+                .param("operation", operation)
+                .update();
+        if (inserted == 1) return null;
+        IdempotencyRecord existing = jdbcClient.sql("""
+                        SELECT user_id, operation, resource_id
+                        FROM content_idempotency_record WHERE idempotency_key = :key
+                        """)
+                .param("key", key)
+                .query((rs, rowNum) -> new IdempotencyRecord(
+                        rs.getLong("user_id"), rs.getString("operation"), (Long) rs.getObject("resource_id")))
+                .single();
+        if (!existing.actorId().equals(actorId) || !existing.operation().equals(operation)) {
+            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已被其他审核操作使用");
+        }
+        if (existing.resourceId() == null) {
+            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "相同审核请求正在处理中");
+        }
+        return existing.resourceId();
+    }
+
     private void requireDatabase() {
         if (jdbcClient == null) {
             throw new BusinessException(ErrorCode.DEPENDENCY_UNAVAILABLE, "审核数据服务暂时不可用");
@@ -709,6 +871,12 @@ public class AdminService {
 
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
+    }
+
+    private record IdempotencyRecord(Long actorId, String operation, Long resourceId) {
+    }
+
+    private record AppealRow(Long postId, Long userId, String reason, String postStatus) {
     }
 
 }

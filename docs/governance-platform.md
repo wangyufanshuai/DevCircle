@@ -23,7 +23,9 @@ flowchart LR
   Decision --> Post["post.status"]
   Decision --> Outbox["audit.completed/content.rejected"]
   Post --> Appeal["用户申诉"]
-  Appeal --> Outbox2["appeal.created"]
+  Appeal --> AppealReview["运营受理或维持原决定"]
+  AppealReview -->|受理| Task
+  AppealReview --> Outbox2["appeal.resolved"]
 ```
 
 ## 管理接口
@@ -33,10 +35,15 @@ flowchart LR
 - `POST /api/admin/moderation/tasks/{id}/reject`
 - `POST /api/admin/moderation/tasks/{id}/escalate`
 - `POST /api/admin/moderation/tasks/{id}/require-changes`
+- `GET /api/admin/appeals?status=PENDING`
+- `POST /api/admin/appeals/{id}/approve`
+- `POST /api/admin/appeals/{id}/reject`
 - `GET /api/admin/risk/users`
 - `GET /api/admin/risk/users/{id}/profile`
 - `POST /api/admin/risk/users/{id}/restrict`
 - `POST /api/admin/risk/users/{id}/unrestrict`
+
+审核和申诉决定接口都要求理由与 `Idempotency-Key`。受理申诉会把投稿重新置为 `PENDING`，创建独立的 `appeal-review` 人工复审任务，并通过 Outbox 通知作者；维持原决定不会改变投稿状态。
 
 ## 当前边界
 

@@ -30,6 +30,7 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/deduction/cases/*/answers', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { postId: 1001, userId: 2, correct: true, duplicated: false, revealed: false, solutionUnlocked: true, points: 20, explanation: '推理成立', solution: '关键是怀表与时间线之间的矛盾。' } } }))
   await page.route('**/api/notifications', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [] } }))
   await page.route('**/api/posts/drafts?*', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [] } }))
+  await page.route('**/api/admin/appeals?*', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [] } }))
   await page.route('**/api/me/dashboard', route => route.fulfill({ json: { code: 'OK', message: 'success', data: dashboard } }))
 })
 
@@ -99,6 +100,27 @@ test('admin route keeps review reason visible', async ({ page }) => {
   await page.goto('/admin')
   await expect(page.getByRole('heading', { name: '内容审核台' })).toBeVisible()
   await expect(page.getByLabel('审核理由')).toBeVisible()
+})
+
+test('admin accepts an appeal with a reason and idempotency key', async ({ page }) => {
+  await authenticate(page, ['USER', 'ADMIN'])
+  await page.route('**/api/admin/moderation/tasks**', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [] } }))
+  await page.route('**/api/admin/appeals?*', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [{ appealId: 5, postId: 12, title: '需要补证的钟楼档案', userId: 2, reason: '附件已经包含来源说明，请重新核对。', status: 'PENDING', createdAt: '2026-07-30T02:00:00Z' }] } }))
+  let decisionReason = ''; let idempotencyKey = ''
+  await page.route('**/api/admin/appeals/5/approve', route => {
+    decisionReason = JSON.parse(route.request().postData() || '{}').reason
+    idempotencyKey = route.request().headers()['idempotency-key'] ?? ''
+    return route.fulfill({ json: { code: 'OK', message: 'success', data: { appealId: 5, status: 'APPROVED', postStatus: 'PENDING' } } })
+  })
+  await page.goto('/admin')
+  await expect(page.getByRole('heading', { name: '作者申诉' })).toBeVisible()
+  await page.getByRole('button', { name: '受理并复审' }).click()
+  await expect(page.getByRole('alert')).toContainText('必须填写决定理由')
+  await page.getByLabel('申诉决定理由').fill('附件证据有效，重新进入人工复审队列。')
+  await page.getByRole('button', { name: '受理并复审' }).click()
+  await expect(page.getByRole('heading', { name: '作者申诉' })).toHaveCount(0)
+  expect(decisionReason).toBe('附件证据有效，重新进入人工复审队列。')
+  expect(idempotencyKey).not.toBe('')
 })
 
 test('protected route signs in, returns to destination and updates the shell', async ({ page }) => {

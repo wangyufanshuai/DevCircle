@@ -1,5 +1,5 @@
 import type {
-  ApiResponse, CommentItem, CommentThread, CursorPage, Dashboard, DeductionAnswerResult, Draft, FeedItem, InteractionResult,
+  ApiResponse, AppealItem, CommentItem, CommentThread, CursorPage, Dashboard, DeductionAnswerResult, Draft, FeedItem, InteractionResult,
   LoginResponse, ModerationTask, NotificationItem, PageResponse, Post, SaveDraftRequest,
   PostAudit, PostDetail, ReadingProgress, Theme, UploadIntent, UploadResult, UserSession
 } from './types'
@@ -199,3 +199,5 @@ export function markNotificationRead(id: number) { return write<void>(`/api/noti
 export function markAllNotificationsRead() { return write<{ updated: number }>('/api/notifications/read-all', 'POST') }
 export function fetchModerationTasks() { return request<ModerationTask[]>('/api/admin/moderation/tasks?status=PENDING&page=1&size=20') }
 export function moderateTask(id: number, action: string, reason: string) { return write<void>(`/api/admin/moderation/tasks/${id}/${action}`, 'POST', { reason }) }
+export function fetchAppeals() { return request<AppealItem[]>('/api/admin/appeals?status=PENDING&page=1&size=20') }
+export function resolveAppeal(id: number, action: 'approve' | 'reject', reason: string) { return write<void>(`/api/admin/appeals/${id}/${action}`, 'POST', { reason }) }

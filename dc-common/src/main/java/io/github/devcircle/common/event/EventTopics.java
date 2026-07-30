@@ -11,6 +11,7 @@ public final class EventTopics {
     public static final String AUDIT_COMPLETED = "audit.completed";
     public static final String CONTENT_REJECTED = "content.rejected";
     public static final String APPEAL_CREATED = "appeal.created";
+    public static final String APPEAL_RESOLVED = "appeal.resolved";
     public static final String RISK_SIGNAL_CREATED = "risk.signal.created";
     public static final String RECOMMEND_EVENT_LOGGED = "recommend.event.logged";
 

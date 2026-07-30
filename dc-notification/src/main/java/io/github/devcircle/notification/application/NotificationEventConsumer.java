@@ -17,7 +17,8 @@ class NotificationEventConsumer {
         this.objectMapper = objectMapper;
     }
 
-    @KafkaListener(topics = {EventTopics.AUDIT_COMPLETED, EventTopics.CONTENT_REJECTED, EventTopics.INTERACTION_CHANGED}, groupId = "dc-notification")
+    @KafkaListener(topics = {EventTopics.AUDIT_COMPLETED, EventTopics.CONTENT_REJECTED,
+            EventTopics.APPEAL_RESOLVED, EventTopics.INTERACTION_CHANGED}, groupId = "dc-notification")
     void consume(String message) throws Exception {
         JsonNode envelope = objectMapper.readTree(message);
         String eventId = requiredText(envelope, "eventId");
@@ -31,11 +32,13 @@ class NotificationEventConsumer {
             throw new IllegalArgumentException("Notification event is missing receiverId");
         }
         boolean interaction = EventTopics.INTERACTION_CHANGED.equals(topic);
+        boolean appeal = EventTopics.APPEAL_RESOLVED.equals(topic);
         String type = interaction ? "INTERACTION" : "AUDIT";
-        String title = interaction ? "新的内容互动" : "投稿审核状态更新";
-        String content = interaction
-                ? "你的内容收到了一次新的互动"
-                : "你的投稿状态已更新为 " + payload.path("status").asText("UNKNOWN");
+        String title = interaction ? "新的内容互动" : appeal ? "申诉处理结果" : "投稿审核状态更新";
+        String status = payload.path("status").asText("UNKNOWN");
+        String content = interaction ? "你的内容收到了一次新的互动"
+                : appeal ? ("PENDING".equals(status) ? "你的申诉已受理，投稿已进入人工复审队列" : "你的申诉已处理，请查看审核时间线")
+                : "你的投稿状态已更新为 " + status;
         long actorId = payload.path("actorId").asLong(0);
         long targetIdValue = payload.path("targetId").asLong(payload.path("postId").asLong(0));
         Long targetId = targetIdValue > 0 ? targetIdValue : null;

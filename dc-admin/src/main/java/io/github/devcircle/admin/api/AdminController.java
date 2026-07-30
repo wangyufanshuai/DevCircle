@@ -32,17 +32,19 @@ class AdminController {
     @PostMapping("/audits/posts/{id}/approve")
     ApiResponse<AdminActionResult> approve(@PathVariable Long id,
                                            @RequestHeader("X-User-Id") Long userId,
+                                           @RequestHeader("Idempotency-Key") String idempotencyKey,
                                            @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
                                            @Valid @RequestBody ModerationDecisionRequest request) {
-        return ApiResponse.ok(adminService.approve(id, userId, traceId, request.reason()));
+        return ApiResponse.ok(adminService.approve(id, userId, traceId, request.reason(), idempotencyKey));
     }
 
     @PostMapping("/audits/posts/{id}/reject")
     ApiResponse<AdminActionResult> reject(@PathVariable Long id,
                                           @RequestHeader("X-User-Id") Long userId,
+                                          @RequestHeader("Idempotency-Key") String idempotencyKey,
                                           @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
                                           @Valid @RequestBody ModerationDecisionRequest request) {
-        return ApiResponse.ok(adminService.reject(id, userId, traceId, request.reason()));
+        return ApiResponse.ok(adminService.reject(id, userId, traceId, request.reason(), idempotencyKey));
     }
 
     @GetMapping("/moderation/tasks")
@@ -57,33 +59,37 @@ class AdminController {
     @PostMapping("/moderation/tasks/{id}/approve")
     ApiResponse<AdminActionResult> approveTask(@PathVariable Long id,
                                                @RequestHeader("X-User-Id") Long userId,
+                                               @RequestHeader("Idempotency-Key") String idempotencyKey,
                                                @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
                                                @Valid @RequestBody ModerationDecisionRequest request) {
-        return ApiResponse.ok(adminService.approveModerationTask(id, userId, traceId, request.reason()));
+        return ApiResponse.ok(adminService.approveModerationTask(id, userId, traceId, request.reason(), idempotencyKey));
     }
 
     @PostMapping("/moderation/tasks/{id}/reject")
     ApiResponse<AdminActionResult> rejectTask(@PathVariable Long id,
                                               @RequestHeader("X-User-Id") Long userId,
+                                              @RequestHeader("Idempotency-Key") String idempotencyKey,
                                               @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
                                               @Valid @RequestBody ModerationDecisionRequest request) {
-        return ApiResponse.ok(adminService.rejectModerationTask(id, userId, traceId, request.reason()));
+        return ApiResponse.ok(adminService.rejectModerationTask(id, userId, traceId, request.reason(), idempotencyKey));
     }
 
     @PostMapping("/moderation/tasks/{id}/escalate")
     ApiResponse<AdminActionResult> escalateTask(@PathVariable Long id,
                                                 @RequestHeader("X-User-Id") Long userId,
+                                                @RequestHeader("Idempotency-Key") String idempotencyKey,
                                                 @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
                                                 @Valid @RequestBody ModerationDecisionRequest request) {
-        return ApiResponse.ok(adminService.escalateModerationTask(id, userId, traceId, request.reason()));
+        return ApiResponse.ok(adminService.escalateModerationTask(id, userId, traceId, request.reason(), idempotencyKey));
     }
 
     @PostMapping("/moderation/tasks/{id}/require-changes")
     ApiResponse<AdminActionResult> requireChanges(@PathVariable Long id,
                                                   @RequestHeader("X-User-Id") Long userId,
+                                                  @RequestHeader("Idempotency-Key") String idempotencyKey,
                                                   @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
                                                   @Valid @RequestBody ModerationDecisionRequest request) {
-        return ApiResponse.ok(adminService.requireChanges(id, userId, traceId, request.reason()));
+        return ApiResponse.ok(adminService.requireChanges(id, userId, traceId, request.reason(), idempotencyKey));
     }
 
     @GetMapping("/appeals")
@@ -91,6 +97,24 @@ class AdminController {
                                                    @RequestParam(defaultValue = "1") int page,
                                                    @RequestParam(defaultValue = "20") int size) {
         return ApiResponse.ok(adminService.appeals(status, page, size));
+    }
+
+    @PostMapping("/appeals/{id}/approve")
+    ApiResponse<AdminActionResult> approveAppeal(@PathVariable Long id,
+                                                 @RequestHeader("X-User-Id") Long userId,
+                                                 @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                                 @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
+                                                 @Valid @RequestBody ModerationDecisionRequest request) {
+        return ApiResponse.ok(adminService.resolveAppeal(id, userId, traceId, request.reason(), true, idempotencyKey));
+    }
+
+    @PostMapping("/appeals/{id}/reject")
+    ApiResponse<AdminActionResult> rejectAppeal(@PathVariable Long id,
+                                                @RequestHeader("X-User-Id") Long userId,
+                                                @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                                @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
+                                                @Valid @RequestBody ModerationDecisionRequest request) {
+        return ApiResponse.ok(adminService.resolveAppeal(id, userId, traceId, request.reason(), false, idempotencyKey));
     }
 
     @PostMapping("/users/{id}/ban")

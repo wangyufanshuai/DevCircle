@@ -126,6 +126,7 @@ export type NotificationItem = { id: number; type: string; title: string; conten
 export type CommentItem = { id: number; postId: number; authorId: number; author: string; parentId?: number; rootId?: number; content: string; status: string; likes: number; createdAt: string; replies?: CommentItem[] }
 export type CommentThread = { root: CommentItem; replies: CommentItem[] }
 export type ModerationTask = { taskId: number; postId: number; title: string; authorId?: number; queue: string; machineResult?: string; riskLevel: string; riskScore: number; reason: string; status: string; reviewLevel?: string; slaDeadline?: string }
+export type AppealItem = { appealId: number; postId: number; title: string; userId: number; reason: string; status: string; createdAt: string }
 export type UploadIntent = { mediaId: number; objectKey: string; uploadUrl: string; requiredHeaders: Record<string, string>; expiresAt: string }
 export type UploadResult = { mediaId: number; objectKey: string; url: string; contentType: string; size: number; width?: number; height?: number; durationSeconds?: number; status: string }
 export type InteractionResult = { targetId: number; type: string; active: boolean; duplicated: boolean; idempotencyKey: string }

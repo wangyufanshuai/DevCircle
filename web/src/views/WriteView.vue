@@ -12,7 +12,7 @@ const form = reactive<SaveDraftRequest>({ title: '', content: '', tags: [], type
 const tagText = computed({ get: () => form.tags.join(', '), set: value => { form.tags = value.split(',').map(tag => tag.trim()).filter(Boolean).slice(0, 12) } })
 const preview = computed(() => renderSafeMarkdown(form.content || '*开始写下你的观测记录…*', form.media)); const wordCount = computed(() => form.content.trim().length)
 const canEdit = computed(() => ['DRAFT', 'CHANGES_REQUIRED', 'REJECTED'].includes(currentStatus.value))
-const auditLabels: Record<string, string> = { SUBMIT_POST: '提交审核', RESUBMIT_POST: '修改后重新提交', APPROVE_POST: '审核通过', REJECT_POST: '审核驳回', REQUIRE_CHANGES: '要求修改', APPEAL_CREATED: '提交申诉' }
+const auditLabels: Record<string, string> = { SUBMIT_POST: '提交审核', RESUBMIT_POST: '修改后重新提交', APPROVE_POST: '审核通过', REJECT_POST: '审核驳回', REQUIRE_CHANGES: '要求修改', APPEAL_CREATED: '提交申诉', APPEAL_APPROVED: '申诉已受理', APPEAL_REJECTED: '申诉未受理' }
 function auditLabel(action: string) { return auditLabels[action] ?? action }
 let saveTimer: number | undefined; let hydrating = false; let editRevision = 0; let skipNextRouteLoad = false; let activeSave: Promise<boolean> | null = null
 
