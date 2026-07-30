@@ -14,6 +14,9 @@ import java.util.Optional;
 public final class ThemeContentLibrary {
     private static final int DEDUCTION_COUNT = 100;
     private static final int OTHER_THEME_COUNT = 40;
+    private static final long SEED_AUTHOR_ID_BASE = 9_000_000_000L;
+    private static final List<String> AUTHORS = List.of(
+            "林墨", "顾白", "沈岚", "陈星", "许澜", "陆离", "王遥", "周望", "闻舟", "高远");
     private static final List<ThemeSeedPost> POSTS = buildPosts();
 
     private ThemeContentLibrary() {
@@ -25,6 +28,18 @@ public final class ThemeContentLibrary {
 
     public static List<PostSummary> summaries() {
         return POSTS.stream().map(ThemeSeedPost::toSummary).toList();
+    }
+
+    public static long authorId(String author) {
+        int index = AUTHORS.indexOf(author);
+        if (index < 0) throw new IllegalArgumentException("Unknown seed author: " + author);
+        return SEED_AUTHOR_ID_BASE + index + 1;
+    }
+
+    public static Map<Long, String> authors() {
+        java.util.LinkedHashMap<Long, String> result = new java.util.LinkedHashMap<>();
+        AUTHORS.forEach(author -> result.put(authorId(author), author));
+        return Map.copyOf(result);
     }
 
     public static Optional<ThemeSeedPost> find(Long id) {
@@ -206,8 +221,7 @@ public final class ThemeContentLibrary {
     }
 
     private static String author(int index) {
-        List<String> authors = List.of("林墨", "顾白", "沈岚", "陈星", "许澜", "陆离", "王遥", "周望", "闻舟", "高远");
-        return authors.get(index % authors.size());
+        return AUTHORS.get(index % AUTHORS.size());
     }
 
     private static String minute(int index, int seed) {

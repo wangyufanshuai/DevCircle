@@ -2,6 +2,7 @@ package io.github.devcircle.content.infrastructure;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.devcircle.common.seed.ThemeContentLibrary;
 import io.github.devcircle.common.seed.ThemeSeedPost;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
@@ -95,6 +96,7 @@ public class PostRepository {
                         rs.getString("title"),
                         rs.getString("excerpt"),
                         "user-" + rs.getLong("author_id"),
+                        rs.getLong("author_id"),
                         splitTags(rs.getString("tags")),
                         mediaAssets(rs.getLong("id")),
                         rs.getLong("like_count"),
@@ -141,6 +143,7 @@ public class PostRepository {
                         rs.getString("title"),
                         rs.getString("excerpt"),
                         "user-" + rs.getLong("author_id"),
+                        rs.getLong("author_id"),
                         splitTags(rs.getString("tags")),
                         mediaAssets(rs.getLong("id")),
                         rs.getLong("like_count"),
@@ -350,7 +353,7 @@ public class PostRepository {
                         rs.getLong("id"), rs.getString("type"), rs.getString("theme"), rs.getString("content_kind"),
                         rs.getString("difficulty"), rs.getBoolean("solvable"), rs.getLong("solved_count"),
                         rs.getString("title"), rs.getString("excerpt"), "user-" + rs.getLong("author_id"),
-                        splitTags(rs.getString("tags")), mediaAssets(rs.getLong("id")), rs.getLong("like_count"),
+                        rs.getLong("author_id"), splitTags(rs.getString("tags")), mediaAssets(rs.getLong("id")), rs.getLong("like_count"),
                         rs.getLong("comment_count"), rs.getLong("view_count"), rs.getString("status"),
                         rs.getTimestamp("created_at").toInstant()))
                 .list();
@@ -423,6 +426,7 @@ public class PostRepository {
                         rs.getString("title"),
                         rs.getString("excerpt"),
                         "user-" + rs.getLong("author_id"),
+                        rs.getLong("author_id"),
                         splitTags(rs.getString("tags")),
                         mediaAssets(rs.getLong("id")),
                         rs.getLong("like_count"),
@@ -499,7 +503,8 @@ public class PostRepository {
         attachIdempotencyResource(idempotencyKey, postId);
         return new PostSummary(postId, normalizeType(request.type()), normalizeTheme(request.theme()), normalizeContentKind(request.contentKind()),
                 normalizeDifficulty(request.difficulty()), Boolean.TRUE.equals(request.solvable()), 0,
-                request.title(), excerpt(request.content()), "user-" + authorId, safeTags(request.tags()), mediaAssets(postId), 0, 0, 0, "PENDING", Instant.now());
+                request.title(), excerpt(request.content()), "user-" + authorId, authorId,
+                safeTags(request.tags()), mediaAssets(postId), 0, 0, 0, "PENDING", Instant.now());
     }
 
     @Transactional
@@ -653,7 +658,7 @@ public class PostRepository {
                                     :title, 'PUBLISHED', :likes, :comments, :views, :createdAt)
                             """)
                     .param("id", seed.id())
-                    .param("authorId", Math.abs(seed.author().hashCode() % 10000) + 1)
+                    .param("authorId", ThemeContentLibrary.authorId(seed.author()))
                     .param("type", seed.type())
                     .param("theme", seed.theme())
                     .param("contentKind", seed.contentKind())

@@ -35,7 +35,8 @@ public record ThemeSeedPost(
         List<Long> relatedPostIds
 ) {
     public PostSummary toSummary() {
-        return new PostSummary(id, type, theme, contentKind, difficulty, solvable, solvedCount, title, excerpt, author, tags, mediaAssets,
+        return new PostSummary(id, type, theme, contentKind, difficulty, solvable, solvedCount, title, excerpt, author,
+                ThemeContentLibrary.authorId(author), tags, mediaAssets,
                 likes, comments, views, "PUBLISHED", createdAt, clues, suspects, timeline, question, answerKeywords, explanation,
                 worldbuilding, cosmicFacts, relatedPostIds);
     }

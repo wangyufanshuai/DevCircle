@@ -28,6 +28,7 @@ public class FeedService {
     private final LightweightMlRanker mlRanker;
     private final StringRedisTemplate redisTemplate;
     private final RecommendationImpressionRepository impressionRepository;
+    private final FollowSignalStore followSignalStore;
     private final RestClient contentClient;
     private final List<PostSummary> seedPosts = ThemeContentLibrary.summaries();
 
@@ -35,8 +36,16 @@ public class FeedService {
     private boolean readFallbackEnabled;
 
     public FeedService(RecommendationScorer scorer, LightweightMlRanker mlRanker, StringRedisTemplate redisTemplate) {
-        this(scorer, mlRanker, redisTemplate, null, "http://localhost:8103");
+        this(scorer, mlRanker, redisTemplate, null, "http://localhost:8103", null);
         this.readFallbackEnabled = true;
+    }
+
+    public FeedService(RecommendationScorer scorer,
+                       LightweightMlRanker mlRanker,
+                       StringRedisTemplate redisTemplate,
+                       RecommendationImpressionRepository impressionRepository,
+                       String contentBaseUrl) {
+        this(scorer, mlRanker, redisTemplate, impressionRepository, contentBaseUrl, null);
     }
 
     @Autowired
@@ -44,11 +53,13 @@ public class FeedService {
                        LightweightMlRanker mlRanker,
                        StringRedisTemplate redisTemplate,
                        RecommendationImpressionRepository impressionRepository,
-                       @Value("${devcircle.content.base-url:http://localhost:8103}") String contentBaseUrl) {
+                       @Value("${devcircle.content.base-url:http://localhost:8103}") String contentBaseUrl,
+                       FollowSignalStore followSignalStore) {
         this.scorer = scorer;
         this.mlRanker = mlRanker;
         this.redisTemplate = redisTemplate;
         this.impressionRepository = impressionRepository;
+        this.followSignalStore = followSignalStore;
         this.contentClient = RestClient.builder().baseUrl(contentBaseUrl).build();
     }
 
@@ -77,11 +88,12 @@ public class FeedService {
         int offset = parseCursor(cursor);
         String normalizedScene = normalizeScene(scene);
         Set<String> interests = interests(userId);
+        Set<Long> followedAuthors = followedAuthors(userId);
         Set<Long> exposed = exposed(userId);
         ExperimentContext experiment = experiment(userId, normalizedScene);
         List<FeedItem> ranked = candidates.stream()
                 .filter(post -> matchesScene(post, normalizedScene))
-                .map(post -> toFeedItem(userId, post, interests, exposed, normalizedScene, experiment))
+                .map(post -> toFeedItem(userId, post, interests, followedAuthors, exposed, normalizedScene, experiment))
                 .filter(item -> item.score() > -100)
                 .sorted(Comparator.comparingDouble(FeedItem::score).reversed())
                 .toList();
@@ -89,7 +101,7 @@ public class FeedService {
             degraded = true;
             ranked = candidates.stream()
                     .filter(post -> matchesScene(post, normalizedScene))
-                    .map(post -> toFeedItem(userId, post, interests, Set.of(), normalizedScene, experiment))
+                    .map(post -> toFeedItem(userId, post, interests, followedAuthors, Set.of(), normalizedScene, experiment))
                     .sorted(Comparator.comparingDouble(FeedItem::score).reversed())
                     .toList();
         }
@@ -176,9 +188,10 @@ public class FeedService {
                 : new CandidateSet(List.of(), "DB", false);
     }
 
-    private FeedItem toFeedItem(Long userId, PostSummary post, Set<String> interests, Set<Long> exposed, String scene, ExperimentContext experiment) {
+    private FeedItem toFeedItem(Long userId, PostSummary post, Set<String> interests, Set<Long> followedAuthors,
+                                Set<Long> exposed, String scene, ExperimentContext experiment) {
         double hotScore = hotScore(post.id());
-        boolean followedAuthor = followedAuthor(userId, post.author());
+        boolean followedAuthor = post.authorId() != null && followedAuthors.contains(post.authorId());
         boolean alreadyExposed = exposed.contains(post.id());
         RecommendationScorer.ScoreResult ranked = scorer.rank(post, interests, hotScore, followedAuthor, alreadyExposed);
         return new FeedItem(post, ranked.reason(), ranked.score(), false, false, "EXPLAINABLE_RULE_V1",
@@ -285,12 +298,13 @@ public class FeedService {
         return Set.of();
     }
 
-    private boolean followedAuthor(Long userId, String author) {
+    private Set<Long> followedAuthors(Long userId) {
+        if (followSignalStore == null) return Set.of();
         try {
-            return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember("user:" + userId + ":followees", author));
+            return followSignalStore.followedAuthorIds(userId);
         } catch (RuntimeException ex) {
             if (!readFallbackEnabled) throw dependency("关注图谱暂时不可用", ex);
-            return "林墨".equals(author) && userId == 1L;
+            return Set.of();
         }
     }
 

@@ -156,6 +156,7 @@ public class SearchService {
                         payload.path("contentKind").asText("CASE_FILE"), payload.path("difficulty").asText("MEDIUM"),
                         payload.path("solvable").asBoolean(false), 0, payload.path("title").asText(),
                         payload.path("excerpt").asText(payload.path("title").asText()), payload.path("author").asText("event"),
+                        payload.path("authorId").isNumber() ? payload.path("authorId").asLong() : null,
                         tags, List.of(), 0, 0, 0, "PUBLISHED", occurredAt);
             } else {
                 post = loadPost(postId);
@@ -242,6 +243,9 @@ public class SearchService {
         String author = authorNode.isObject()
                 ? authorNode.path("username").asText("")
                 : authorNode.asText("");
+        Long authorId = authorNode.isObject() && authorNode.path("id").isNumber()
+                ? authorNode.path("id").asLong()
+                : null;
         List<String> tags = objectMapper.convertValue(data.path("tags"),
                 objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
         return new PostSummary(postId,
@@ -254,6 +258,7 @@ public class SearchService {
                 requiredText(data, "title"),
                 data.path("excerpt").asText(""),
                 author,
+                authorId,
                 tags,
                 List.of(),
                 data.path("likes").asLong(0),
@@ -276,11 +281,12 @@ public class SearchService {
         String contentKind = document.getContentKind() == null ? inferContentKind(document.getTags()) : document.getContentKind();
         String difficulty = document.getDifficulty() == null ? "MEDIUM" : document.getDifficulty();
         return new PostSummary(document.getId(), "TEXT", theme, contentKind, difficulty, false, 0,
-                document.getTitle(), document.getExcerpt(), document.getAuthor(), document.getTags(), List.of(), 0, 0, 0, document.getStatus(), document.getCreatedAt());
+                document.getTitle(), document.getExcerpt(), document.getAuthor(), document.getAuthorId(),
+                document.getTags(), List.of(), 0, 0, 0, document.getStatus(), document.getCreatedAt());
     }
 
     private PostSearchDocument document(PostSummary post, Instant occurredAt) {
-        return new PostSearchDocument(post.id(), post.title(), post.excerpt(), post.author(), post.tags(), post.status(),
+        return new PostSearchDocument(post.id(), post.title(), post.excerpt(), post.author(), post.authorId(), post.tags(), post.status(),
                 post.theme(), post.contentKind(), post.difficulty(), post.createdAt(), occurredAt);
     }
 

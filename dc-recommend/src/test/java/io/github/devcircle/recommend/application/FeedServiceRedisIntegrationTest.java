@@ -26,7 +26,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 })
 @Sql(statements = {
         "CREATE TABLE IF NOT EXISTS recommend_write_idempotency (idempotency_key VARCHAR(128) PRIMARY KEY, user_id BIGINT NOT NULL, operation VARCHAR(48) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
-        "CREATE TABLE IF NOT EXISTS recommendation_exposure (user_id BIGINT NOT NULL, post_id BIGINT NOT NULL, scene VARCHAR(64) NOT NULL, exposed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, post_id, scene))"
+        "CREATE TABLE IF NOT EXISTS recommendation_exposure (user_id BIGINT NOT NULL, post_id BIGINT NOT NULL, scene VARCHAR(64) NOT NULL, exposed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, post_id, scene))",
+        "CREATE TABLE IF NOT EXISTS recommend_follow_projection (viewer_id BIGINT NOT NULL, author_id BIGINT NOT NULL, followed BOOLEAN NOT NULL, source_event_id VARCHAR(36) NOT NULL, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (viewer_id, author_id), UNIQUE (source_event_id))"
 })
 class FeedServiceRedisIntegrationTest {
     @Container
@@ -48,15 +49,20 @@ class FeedServiceRedisIntegrationTest {
     @Autowired
     StringRedisTemplate redisTemplate;
 
+    @Autowired
+    FollowSignalStore followSignals;
+
     @Test
     void redisSignalsAffectRankingAndExposureDownranksSeenPosts() {
         Long userId = 77L;
         redisTemplate.opsForSet().add("user:" + userId + ":interest-tags", "Kafka");
-        redisTemplate.opsForSet().add("user:" + userId + ":followees", "lin");
         redisTemplate.opsForHash().put("user:" + userId + ":graph-features", "mutual:lin", "3");
         redisTemplate.opsForZSet().incrementScore("feed:hot-posts", "2", 80.0);
+        followSignals.apply("evt-follow-integration", userId, 701L, "FOLLOWED");
 
-        var kafkaPost = new PostSummary(1L, "Kafka 可靠事件", "Outbox 和消费端幂等。", "lin", List.of("Kafka"), 1, 1, 100, "PUBLISHED", Instant.now());
+        var kafkaPost = new PostSummary(1L, "TEXT", "DEDUCTION", "CASE_FILE", "MEDIUM", false, 0,
+                "Kafka 可靠事件", "Outbox 和消费端幂等。", "lin", 701L, List.of("Kafka"), List.of(),
+                1, 1, 100, "PUBLISHED", Instant.now());
         var redisPost = new PostSummary(2L, "Redis 热点缓存", "缓存、限流和热度。", "zhou", List.of("Redis"), 1, 1, 100, "PUBLISHED", Instant.now());
 
         var firstPage = feedService.feedFromPosts(userId, List.of(redisPost, kafkaPost), null, 2);

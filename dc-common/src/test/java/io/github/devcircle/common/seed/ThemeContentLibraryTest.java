@@ -45,4 +45,14 @@ class ThemeContentLibraryTest {
                     assertThat(post.explanation()).isNotBlank();
                 });
     }
+
+    @Test
+    void seedAuthorsUseReservedStableIdentities() {
+        assertThat(ThemeContentLibrary.authors()).hasSize(10);
+        assertThat(ThemeContentLibrary.authors().keySet())
+                .allMatch(id -> id >= 9_000_000_001L && id <= 9_000_000_010L);
+        assertThat(ThemeContentLibrary.summaries())
+                .allSatisfy(post -> assertThat(post.authorId())
+                        .isEqualTo(ThemeContentLibrary.authorId(post.author())));
+    }
 }

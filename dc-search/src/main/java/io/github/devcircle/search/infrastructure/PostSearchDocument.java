@@ -18,6 +18,8 @@ public class PostSearchDocument {
     private String excerpt;
     @Field(type = FieldType.Keyword)
     private String author;
+    @Field(type = FieldType.Long)
+    private Long authorId;
     @Field(type = FieldType.Keyword)
     private List<String> tags;
     @Field(type = FieldType.Keyword)
@@ -37,20 +39,27 @@ public class PostSearchDocument {
     }
 
     public PostSearchDocument(Long id, String title, String excerpt, String author, List<String> tags, String status, Instant createdAt) {
-        this(id, title, excerpt, author, tags, status, null, null, null, createdAt, createdAt);
+        this(id, title, excerpt, author, null, tags, status, null, null, null, createdAt, createdAt);
     }
 
     public PostSearchDocument(Long id, String title, String excerpt, String author, List<String> tags, String status, Instant createdAt, Instant eventOccurredAt) {
-        this(id, title, excerpt, author, tags, status, null, null, null, createdAt, eventOccurredAt);
+        this(id, title, excerpt, author, null, tags, status, null, null, null, createdAt, eventOccurredAt);
     }
 
     public PostSearchDocument(Long id, String title, String excerpt, String author, List<String> tags, String status,
                               String theme, String contentKind, String difficulty,
                               Instant createdAt, Instant eventOccurredAt) {
+        this(id, title, excerpt, author, null, tags, status, theme, contentKind, difficulty, createdAt, eventOccurredAt);
+    }
+
+    public PostSearchDocument(Long id, String title, String excerpt, String author, Long authorId,
+                              List<String> tags, String status, String theme, String contentKind, String difficulty,
+                              Instant createdAt, Instant eventOccurredAt) {
         this.id = id;
         this.title = title;
         this.excerpt = excerpt;
         this.author = author;
+        this.authorId = authorId;
         this.tags = tags;
         this.status = status;
         this.theme = theme;
@@ -75,6 +84,8 @@ public class PostSearchDocument {
     public String getAuthor() {
         return author;
     }
+
+    public Long getAuthorId() { return authorId; }
 
     public List<String> getTags() {
         return tags;
