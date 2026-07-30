@@ -16,6 +16,15 @@ $env:Path="$env:JAVA_HOME\bin;$env:Path"
 .\mvnw.cmd -B test
 ```
 
+前端常规 Playwright 套件使用网络拦截验证页面状态与四档响应式布局；真实认证链路使用独立 Compose 数据卷，不使用 API Mock：
+
+```bash
+cd web && npm ci && npx playwright install chromium && cd ..
+bash scripts/e2e/run-real-auth.sh
+```
+
+真实链路会打包可执行的 Auth/Gateway Spring Boot JAR，启动 MySQL、Redis、Auth 和 Gateway，随后验证注册、Refresh Token 轮换、退出撤销、重复注册持久化冲突与再次登录。脚本退出时自动删除隔离容器和数据卷；失败时先输出服务日志。
+
 核心容器测试不静默跳过。Docker 不可用时测试应失败，避免把“没有跑容器”误认为“容器链路通过”。
 
 Windows Docker Desktop 29 如遇 named pipe 探测失败，可启用本地只绑定回环地址的 Docker socket 代理：
