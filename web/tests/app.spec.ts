@@ -42,6 +42,14 @@ test('desktop home has observatory hierarchy and theme links', async ({ page }) 
   await expect(page.getByRole('link', { name: /进入推理馆/ })).toBeVisible()
 })
 
+test('home explains dashboard failure instead of silently hiding reader state', async ({ page }) => {
+  await authenticate(page)
+  await page.route('**/api/me/dashboard', route => route.fulfill({ status: 503, json: { code: 'DEPENDENCY_UNAVAILABLE', message: '个人中心暂时无法加载，请稍后重试', data: null } }))
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: '继续解谜暂时无法加载' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '重试状态' })).toBeVisible()
+})
+
 test('formal post route opens case and submits deduction', async ({ page }) => {
   await authenticate(page)
   await page.goto('/posts/1001')

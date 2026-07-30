@@ -11,6 +11,8 @@ const feed = ref<FeedItem[]>([])
 const loading = ref(true)
 const error = ref('')
 const dashboard = ref<Dashboard | null>(null)
+const dashboardError = ref('')
+const dashboardLoading = ref(false)
 const hero = computed(() => feed.value[0]?.post)
 const channels = [
   { key: 'DEDUCTION', title: '推理馆', subtitle: '案件、线索与可验证的推理' },
@@ -23,8 +25,16 @@ async function load() {
     const result = await fetchFeed('home')
     feed.value = result.records
     if (result.records.length) void recordExposures(result.records.map(item => item.post.id), 'home').catch(reason => console.warn('exposure logging failed', reason))
-    if (currentSession()) dashboard.value = await fetchDashboard().catch(() => null)
+    await loadDashboard()
   } catch (reason) { error.value = reason instanceof Error ? reason.message : '内容暂时不可用' } finally { loading.value = false }
+}
+async function loadDashboard() {
+  dashboardError.value = ''
+  if (!currentSession()) { dashboard.value = null; return }
+  dashboardLoading.value = true
+  try { dashboard.value = await fetchDashboard() }
+  catch (reason) { dashboard.value = null; dashboardError.value = reason instanceof Error ? reason.message : '继续解谜暂时无法加载' }
+  finally { dashboardLoading.value = false }
 }
 async function onInteract(item: FeedItem, type: 'like' | 'favorite') {
   try { await interact(item.post.id, type) } catch (reason) { error.value = reason instanceof Error ? reason.message : '互动暂时不可用' }
@@ -51,6 +61,10 @@ onMounted(load)
     <section v-if="dashboard?.readingProgress.length" class="continue-orbit">
       <div class="section-heading"><div><span class="eyebrow">CONTINUE ORBIT</span><h2>继续上次的观测</h2><p>阅读进度已经保存，可以从离开的地方继续。</p></div><RouterLink class="text-button" to="/me">查看全部 <ArrowRight :size="16" /></RouterLink></div>
       <div class="orbit-row"><RouterLink v-for="item in dashboard.readingProgress.slice(0, 4)" :key="item.postId" :to="`/posts/${item.postId}`"><span>{{ item.theme }}</span><strong>{{ item.title }}</strong><small>{{ item.completed ? '已完成' : `阅读 ${item.progressPercent}%` }}</small><i><b :style="{ width: `${item.progressPercent}%` }" /></i></RouterLink></div>
+    </section>
+    <section v-else-if="dashboardError || dashboardLoading" class="continue-orbit">
+      <StatusPanel v-if="dashboardError" title="继续解谜暂时无法加载" :detail="dashboardError" action-label="重试状态" @retry="loadDashboard" />
+      <div v-else class="loading-line" aria-live="polite">正在同步你的观测进度…</div>
     </section>
 
     <section class="section-heading"><div><span class="eyebrow">EDITOR'S DESK</span><h2>今日精选</h2><p>少一点噪声，多一点值得读完的内容。</p></div><RouterLink class="text-button" to="/discover">查看全部 <ArrowRight :size="16" /></RouterLink></section>

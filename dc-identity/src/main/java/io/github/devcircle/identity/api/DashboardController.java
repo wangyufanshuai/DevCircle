@@ -1,15 +1,19 @@
 package io.github.devcircle.identity.api;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import io.github.devcircle.common.api.ApiResponse;
+import io.github.devcircle.common.error.BusinessException;
+import io.github.devcircle.common.error.ErrorCode;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.JsonNodeFactory;
 
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -68,10 +72,32 @@ class DashboardController {
     private Mono<JsonNode> get(String baseUri, String path, Long userId) {
         return webClientBuilder.baseUrl(baseUri).build().get().uri(path)
                 .header("X-User-Id", userId.toString())
-                .retrieve().bodyToMono(JsonNode.class)
+                .exchangeToMono(response -> decode(response))
                 .timeout(Duration.ofSeconds(2))
-                .flatMap(body -> "OK".equals(body.path("code").asText())
-                        ? Mono.just(body.path("data"))
-                        : Mono.error(new IllegalStateException("required dashboard source failed")));
+                .onErrorMap(error -> !(error instanceof BusinessException),
+                        error -> dependency("个人中心暂时无法加载，请稍后重试", error));
+    }
+
+    private Mono<JsonNode> decode(ClientResponse response) {
+        HttpStatusCode status = response.statusCode();
+        return response.bodyToMono(JsonNode.class)
+                .flatMap(body -> {
+                    if (status.is2xxSuccessful() && "OK".equals(body.path("code").asText())
+                            && !body.path("data").isMissingNode() && !body.path("data").isNull()) {
+                        return Mono.just(body.path("data"));
+                    }
+                    return Mono.error(dependency("个人中心暂时无法加载，请稍后重试"));
+                })
+                .switchIfEmpty(Mono.error(dependency("个人中心暂时无法加载，请稍后重试")));
+    }
+
+    private BusinessException dependency(String message) {
+        return new BusinessException(ErrorCode.DEPENDENCY_UNAVAILABLE, message);
+    }
+
+    private BusinessException dependency(String message, Throwable cause) {
+        BusinessException failure = dependency(message);
+        failure.initCause(cause);
+        return failure;
     }
 }
