@@ -180,18 +180,16 @@ public class AuthTokenRepository {
                 .update();
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = BusinessException.class)
     public Account rotateRefreshToken(String rawToken,
                                       String rawCsrf,
                                       String replacementToken,
                                       String replacementCsrf,
                                       Instant replacementExpiresAt) {
         RefreshSession session = jdbcClient.sql("""
-                        SELECT id, user_id, csrf_hash, family_id
+                        SELECT id, user_id, csrf_hash, family_id, revoked, expires_at
                         FROM refresh_token
                         WHERE token_hash = :tokenHash
-                          AND revoked = false
-                          AND expires_at > CURRENT_TIMESTAMP
                         FOR UPDATE
                         """)
                 .param("tokenHash", hash(rawToken))
@@ -199,17 +197,23 @@ public class AuthTokenRepository {
                         rs.getLong("id"),
                         rs.getLong("user_id"),
                         rs.getString("csrf_hash"),
-                        rs.getString("family_id")))
+                        rs.getString("family_id"),
+                        rs.getBoolean("revoked"),
+                        rs.getTimestamp("expires_at").toInstant()))
                 .optional()
                 .orElseThrow(() -> new BusinessException(ErrorCode.TOKEN_REVOKED, "登录状态已失效，请重新登录"));
         if (!constantTimeEquals(session.csrfHash(), hash(rawCsrf))) {
             revokeFamily(session.familyId());
             throw new BusinessException(ErrorCode.TOKEN_REVOKED, "安全校验失败，请重新登录");
         }
+        if (session.revoked() || !session.expiresAt().isAfter(Instant.now())) {
+            revokeFamily(session.familyId());
+            throw new BusinessException(ErrorCode.TOKEN_REVOKED, "检测到刷新令牌重复使用，请重新登录");
+        }
         int revoked = jdbcClient.sql("""
                         UPDATE refresh_token
                         SET revoked = true, used_at = CURRENT_TIMESTAMP, replaced_by_hash = :replacementHash
-                        WHERE id = :id AND revoked = false
+                        WHERE id = :id AND revoked = false AND expires_at > CURRENT_TIMESTAMP
                         """)
                 .param("replacementHash", hash(replacementToken))
                 .param("id", session.id())
@@ -220,20 +224,21 @@ public class AuthTokenRepository {
         }
         saveRefreshToken(session.userId(), replacementToken, replacementCsrf, session.familyId(), replacementExpiresAt);
         return findAccountById(session.userId())
-                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED, "用户不存在"));
+                .orElseThrow(() -> new IllegalStateException("Refresh token account no longer exists"));
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = BusinessException.class)
     public void revokeRefreshToken(String rawToken, String rawCsrf) {
         Optional<RefreshSession> session = jdbcClient.sql("""
-                        SELECT id, user_id, csrf_hash, family_id
+                        SELECT id, user_id, csrf_hash, family_id, revoked, expires_at
                         FROM refresh_token
                         WHERE token_hash = :tokenHash AND revoked = false
                         FOR UPDATE
                         """)
                 .param("tokenHash", hash(rawToken))
                 .query((rs, rowNum) -> new RefreshSession(
-                        rs.getLong("id"), rs.getLong("user_id"), rs.getString("csrf_hash"), rs.getString("family_id")))
+                        rs.getLong("id"), rs.getLong("user_id"), rs.getString("csrf_hash"), rs.getString("family_id"),
+                        rs.getBoolean("revoked"), rs.getTimestamp("expires_at").toInstant()))
                 .optional();
         if (session.isEmpty()) {
             return;
@@ -306,7 +311,8 @@ public class AuthTokenRepository {
                           List<String> roles) {
     }
 
-    private record RefreshSession(Long id, Long userId, String csrfHash, String familyId) {
+    private record RefreshSession(Long id, Long userId, String csrfHash, String familyId,
+                                  boolean revoked, Instant expiresAt) {
     }
 
     private record OAuthState(Long id, String verifier) {
