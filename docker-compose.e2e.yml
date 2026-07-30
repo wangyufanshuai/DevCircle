@@ -70,6 +70,28 @@ services:
       timeout: 5s
       retries: 24
 
+  dc-content:
+    <<: *app-defaults
+    profiles: ["content"]
+    build:
+      <<: *service-build
+      args: { JAR_FILE: dc-content/target/dc-content-0.1.0-SNAPSHOT.jar }
+    environment:
+      <<: *app-env
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: devcircle
+      MYSQL_PASSWORD: e2e-database-password
+      DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
+    mem_limit: 384m
+    depends_on:
+      mysql: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8103/actuator/health/readiness"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
   dc-gateway:
     <<: *app-defaults
     build:
@@ -78,10 +100,12 @@ services:
     environment:
       <<: *app-env
       DC_AUTH_URI: http://dc-auth:8101
+      DC_CONTENT_URI: http://dc-content:8103
     ports: ["28080:8080"]
     mem_limit: 384m
     depends_on:
       dc-auth: { condition: service_healthy }
+      dc-content: { condition: service_healthy, required: false }
       redis: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"]

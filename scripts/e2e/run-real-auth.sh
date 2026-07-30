@@ -31,4 +31,4 @@ else
 fi
 "${COMPOSE[@]}" up -d --build --wait --wait-timeout "${WAIT_TIMEOUT}"
 
-(cd "${ROOT_DIR}/web" && npm run test:e2e:real)
+(cd "${ROOT_DIR}/web" && npx playwright test -c playwright.real.config.ts tests-real/auth.spec.ts)
