@@ -121,6 +121,16 @@ services:
       retries: 20
     networks: [devcircle]
 
+  minio-maintenance:
+    image: alpine:3.22.2
+    profiles: ["ops"]
+    command: ["true"]
+    volumes: [minio-data:/minio-data]
+    networks: [devcircle]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+
   dc-auth:
     <<: *app-defaults
     image: ghcr.io/wangyufanshuai/devcircle/dc-auth:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}

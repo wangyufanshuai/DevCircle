@@ -6,6 +6,7 @@
 - 正式域名的 A/AAAA 记录已指向主机，80/443 可入站；Caddy 自动申请 TLS。
 - 已准备隐私政策、用户协议及适用的备案/合规材料。
 - 从 `.env.production.example` 创建权限为 `0600` 的 `.env.production`，所有占位值都必须替换；`IMAGE_TAG` 必须是 40 位提交 SHA。
+- 密钥使用 Base64URL 等不含 `$` 的字符集；Compose 会把未转义的 `$变量` 当作插值并可能静默截断密码。
 
 ## 首次发布
 
@@ -46,6 +47,10 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 CONFIRM_RESTORE=RESTORE scripts/ops/restore.sh /srv/backups/devcircle/<timestamp>
 EXPECTED_POST_COUNT=180 scripts/ops/verify-migration.sh
 ```
+
+在隔离恢复主机上没有应用容器时，使用 `RESTORE_MANAGE_APPLICATIONS=false`；生产主机保持默认值，让脚本在恢复前停止应用并在成功后重新启动。
+
+本地隔离演练证据记录在 [`recovery-rehearsal.md`](recovery-rehearsal.md)。
 
 记录恢复开始/结束时间、内容数量、校验和、媒体抽查和 RTO。
 

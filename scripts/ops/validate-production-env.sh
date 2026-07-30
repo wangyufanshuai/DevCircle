@@ -38,6 +38,7 @@ placeholder() {
 secret_quality() {
   local key="$1" minimum="$2" diversity="$3" value="${values[$1]:-}" unique
   placeholder "${key}"
+  [[ "${value}" != *'$'* ]] || fail "${key} must not contain dollar signs because Compose interpolates them"
   (( ${#value} >= minimum )) || fail "${key} must contain at least ${minimum} characters"
   unique="$(printf '%s' "${value}" | fold -w1 | LC_ALL=C sort -u | wc -l | tr -d '[:space:]')"
   (( unique >= diversity )) || fail "${key} does not contain enough character diversity"

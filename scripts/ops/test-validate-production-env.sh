@@ -17,16 +17,24 @@ DOMAIN=mysticverse.test
 PUBLIC_ORIGIN=https://mysticverse.test
 TLS_EMAIL=ops@mysticverse.test
 MYSQL_USER=mv_prod_operator
-MYSQL_PASSWORD=MySQL-7u!pR2#xV9@cK4$zN8qL
-MYSQL_ROOT_PASSWORD=RootDB-3m@T8!wQ5#jH7$xP2vC
-REDIS_PASSWORD=Redis-6k#Y1@bN9!sF4$xU8qW
+MYSQL_PASSWORD=MySQL-7u!pR2#xV9@cK4~zN8qL
+MYSQL_ROOT_PASSWORD=RootDB-3m@T8!wQ5#jH7~xP2vC
+REDIS_PASSWORD=Redis-6k#Y1@bN9!sF4~xU8qW
 MINIO_ROOT_USER=mv_object_admin
-MINIO_ROOT_PASSWORD=Object-9z!D2@rM7#pL4$xC6vB
-DEVCIRCLE_JWT_SECRET=Aa1!Bb2@Cc3#Dd4$Ee5%Ff6^Gg7&Hh8*Ii9(Jj0)Kk1_Ll2+Mm3-Nn4=Oo5?Pp6Qq7~
+MINIO_ROOT_PASSWORD=Object-9z!D2@rM7#pL4~xC6vB
+DEVCIRCLE_JWT_SECRET=Aa1!Bb2@Cc3#Dd4~Ee5%Ff6^Gg7&Hh8*Ii9(Jj0)Kk1_Ll2+Mm3-Nn4=Oo5?Pp6Qq7~
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
 TRACING_SAMPLE_RATE=0.1
 EOF
 
 bash "${VALIDATOR}" "${TEMP_ENV}" >/dev/null
+
+# The literal dollar sign is the unsafe Compose input under test.
+# shellcheck disable=SC2016
+printf '%s\n' 'MYSQL_PASSWORD=Unsafe-Compose-$PASSWORD-Interpolation-Value' >> "${TEMP_ENV}"
+if bash "${VALIDATOR}" "${TEMP_ENV}" >/dev/null 2>&1; then
+  echo "Expected a dollar sign in a Compose secret to be rejected" >&2
+  exit 1
+fi
 echo "Production environment validator tests passed"
