@@ -73,6 +73,24 @@ test('write route exposes draft editor and safe preview', async ({ page }) => {
   await expect(page.getByRole('heading', { name: '把你的观测记录放上来。' })).toBeVisible()
   await expect(page.getByLabel('正文 Markdown')).toBeVisible()
   await expect(page.getByText('实时预览')).toBeVisible()
+  await page.getByLabel('正文 Markdown').fill('![远程跟踪图](https://tracker.example/pixel.png)\n\n<img src=x onerror=alert(1)>')
+  await expect(page.locator('.inline-media-unavailable')).toContainText('外部图片已阻止')
+  await expect(page.locator('.markdown-preview img')).toHaveCount(0)
+})
+
+test('detail resolves attached inline media without duplicating it in the gallery', async ({ page }) => {
+  const mediaPost = {
+    ...post,
+    markdown: '# 雾港钟楼\n\n![停摆的怀表](media://8)\n\n![远程图片](https://tracker.example/pixel.png)',
+    media: [{ mediaId: 8, objectKey: 'private/8.png', url: '', contentType: 'image/png', size: 12, status: 'APPROVED', role: 'INLINE', altText: '证物桌上停摆的怀表', sortOrder: 0 }]
+  }
+  await page.route('**/api/posts/1001', route => route.fulfill({ json: { code: 'OK', message: 'success', data: mediaPost } }))
+  await page.route('**/api/files/8/access', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { mediaId: 8, url: `${new URL(route.request().url()).origin}/media/evidence.png`, expiresAt: '2099-01-01T00:00:00Z' } } }))
+  await page.route('**/media/evidence.png', route => route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from([0x89, 0x50, 0x4e, 0x47]) }))
+  await page.goto('/posts/1001')
+  await expect(page.locator('.inline-media img')).toHaveAttribute('alt', '证物桌上停摆的怀表')
+  await expect(page.locator('.detail-media-grid')).toHaveCount(0)
+  await expect(page.locator('.inline-media-unavailable')).toContainText('外部图片已阻止')
 })
 
 test('admin route keeps review reason visible', async ({ page }) => {
@@ -279,10 +297,13 @@ test('creator persists media role alt text and canonical order', async ({ page }
   await page.getByLabel('媒体 #202 角色').selectOption('COVER')
   await expect(page.getByLabel('媒体 #201 角色')).toHaveValue('INLINE')
   await page.getByLabel('媒体 #202 替代文本').fill('证物桌上的停摆怀表')
+  await page.getByRole('button', { name: '插入正文媒体 #201' }).click()
+  await expect(page.getByLabel('正文 Markdown')).toHaveValue(/!\[station cover]\(media:\/\/201\)/)
   await page.getByRole('button', { name: '上移媒体 #202' }).click()
   await page.getByRole('button', { name: '保存草稿' }).click()
   await expect(page).toHaveURL(/\/write\/77$/)
   expect(savedBody.mediaIds).toEqual([202, 201])
+  expect(savedBody.content).toContain('![station cover](media://201)')
   expect(savedBody.media).toEqual([
     { mediaId: 202, role: 'COVER', altText: '证物桌上的停摆怀表', sortOrder: 0 },
     { mediaId: 201, role: 'INLINE', altText: 'station cover', sortOrder: 1 }

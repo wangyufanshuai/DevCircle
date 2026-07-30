@@ -116,7 +116,7 @@ export type Draft = {
   submittedAt?: string
   reviewReason?: string | null
 }
-export type DraftMedia = { mediaId: number; role: 'COVER' | 'INLINE'; altText: string; sortOrder: number }
+export type DraftMedia = { mediaId: number; role: 'COVER' | 'INLINE'; altText: string; sortOrder: number; contentType?: string }
 export type PostAudit = { id: number; postId: number; auditorId?: number | null; action: string; reason: string; createdAt: string }
 
 export type SaveDraftRequest = Omit<Draft, 'id' | 'authorId' | 'status' | 'version' | 'lastSavedAt' | 'submittedAt' | 'reviewReason'> & { version?: number }

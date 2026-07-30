@@ -230,7 +230,7 @@ select { color-scheme: dark; }
 .upload-field { width: fit-content; display: inline-flex !important; align-items: center; gap: 8px; padding: 10px 13px; border: 1px dashed rgba(226,183,95,.38); border-radius: 8px; cursor: pointer; }
 .upload-field input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .media-queue { display: grid; margin-top: 12px; border-top: 1px solid var(--line-soft); }
-.media-queue-row { display: grid; grid-template-columns: minmax(85px, .6fr) 120px minmax(140px, 1fr) auto repeat(3, 32px); align-items: center; gap: 7px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
+.media-queue-row { display: grid; grid-template-columns: minmax(85px, .6fr) 120px minmax(140px, 1fr) auto repeat(4, 32px); align-items: center; gap: 7px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
 .media-queue-row select, .media-queue-row input { min-width: 0; width: 100%; }
 .media-queue-row small { color: var(--muted); }
 .media-queue-row button { width: 30px; height: 30px; display: grid; place-items: center; border: 0; color: var(--muted); background: transparent; cursor: pointer; }
@@ -253,6 +253,10 @@ select { color-scheme: dark; }
 .markdown-preview { min-height: 320px; padding: 5px 4px 28px; color: #d6dbe1; font-family: "Songti SC", serif; font-size: 16px; line-height: 1.9; }
 .markdown-preview h1, .markdown-preview h2, .markdown-preview h3 { color: #f0d49c; }
 .markdown-preview pre { overflow: auto; padding: 12px; background: #05090f; }
+.inline-media { margin: 24px 0; }
+.inline-media img, .inline-media video, .detail-media-grid video { display: block; width: 100%; max-height: 680px; object-fit: contain; border-radius: 8px; background: #05090f; }
+.inline-media figcaption { margin-top: 8px; color: var(--muted); font-size: 13px; }
+.inline-media-placeholder, .inline-media-unavailable { display: block; margin: 18px 0; padding: 14px 16px; border-left: 2px solid var(--cyan); color: var(--muted); background: rgba(101,201,208,.045); }
 .draft-rail { padding-top: 20px; border-top: 1px solid var(--line-soft); }
 .draft-rail h2 { font-size: 19px; }
 .draft-rail a { display: flex; justify-content: space-between; gap: 12px; padding: 10px; border-radius: 7px; color: #b5bec9; }

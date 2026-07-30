@@ -18,6 +18,7 @@ import io.github.devcircle.content.api.PostCursorPage;
 import io.github.devcircle.content.api.ReadingProgressRequest;
 import io.github.devcircle.content.api.ReadingProgressView;
 import io.github.devcircle.content.api.SaveDraftRequest;
+import io.github.devcircle.content.domain.DraftSubmissionValidator;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -554,9 +555,8 @@ public class PostRepository {
             return getDraft(authorId, duplicateId);
         }
         DraftView draft = getDraft(authorId, draftId);
-        if (draft.title().isBlank() || draft.content().isBlank()) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "标题和正文填写完整后才能投稿");
-        }
+        DraftSubmissionValidator.validate(draft);
+        requireSubmittableMedia(authorId, draftId);
         int updated = jdbcClient.sql("""
                         UPDATE post
                         SET status = 'PENDING', version = version + 1, submitted_at = CURRENT_TIMESTAMP, review_reason = NULL
@@ -821,14 +821,17 @@ public class PostRepository {
         if (drafts.isEmpty()) return drafts;
         List<Long> postIds = drafts.stream().map(DraftView::id).toList();
         List<DraftMediaRow> rows = jdbcClient.sql("""
-                        SELECT post_id, media_id, role, alt_text, sort_order
-                        FROM post_media WHERE post_id IN (:postIds)
-                        ORDER BY post_id, sort_order, media_id
+                        SELECT pm.post_id, pm.media_id, pm.role, pm.alt_text, pm.sort_order, m.content_type
+                        FROM post_media pm
+                        JOIN media_asset m ON m.id = pm.media_id
+                        WHERE pm.post_id IN (:postIds)
+                        ORDER BY pm.post_id, pm.sort_order, pm.media_id
                         """)
                 .param("postIds", postIds)
                 .query((rs, rowNum) -> new DraftMediaRow(rs.getLong("post_id"),
                         new DraftMediaView(rs.getLong("media_id"), rs.getString("role"),
-                                safeText(rs.getString("alt_text")), rs.getInt("sort_order"))))
+                                safeText(rs.getString("alt_text")), rs.getInt("sort_order"),
+                                rs.getString("content_type"))))
                 .list();
         Map<Long, List<DraftMediaView>> mediaByPost = new LinkedHashMap<>();
         for (DraftMediaRow row : rows) {
@@ -848,7 +851,40 @@ public class PostRepository {
         }
     }
 
+    private void requireSubmittableMedia(Long authorId, Long draftId) {
+        SubmissionMediaState state = jdbcClient.sql("""
+                        SELECT COUNT(*) AS attachment_count,
+                               COALESCE(SUM(CASE WHEN m.id IS NOT NULL AND m.uploader_id = :authorId
+                                                   AND m.upload_status = 'COMPLETED' THEN 1 ELSE 0 END), 0) AS valid_count,
+                               COALESCE(SUM(CASE WHEN pm.alt_text IS NULL OR TRIM(pm.alt_text) = '' THEN 1 ELSE 0 END), 0) AS missing_alt,
+                               COALESCE(SUM(CASE WHEN pm.role NOT IN ('COVER', 'INLINE') THEN 1 ELSE 0 END), 0) AS invalid_role,
+                               COALESCE(SUM(CASE WHEN pm.role = 'COVER' THEN 1 ELSE 0 END), 0) AS cover_count
+                        FROM post_media pm
+                        LEFT JOIN media_asset m ON m.id = pm.media_id
+                        WHERE pm.post_id = :draftId
+                        """)
+                .param("authorId", authorId)
+                .param("draftId", draftId)
+                .query((rs, rowNum) -> new SubmissionMediaState(
+                        rs.getLong("attachment_count"), rs.getLong("valid_count"),
+                        rs.getLong("missing_alt"), rs.getLong("invalid_role"), rs.getLong("cover_count")))
+                .single();
+        if (state.attachmentCount() != state.validCount()) {
+            throw new BusinessException(ErrorCode.UPLOAD_REJECTED, "投稿包含未完成上传或不属于当前作者的媒体");
+        }
+        if (state.missingAlt() > 0) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "请为每个媒体填写替代文本后再投稿");
+        }
+        if (state.invalidRole() > 0 || state.coverCount() > 1) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "媒体角色无效，请重新设置后再投稿");
+        }
+    }
+
     private record DraftMediaRow(Long postId, DraftMediaView media) {
+    }
+
+    private record SubmissionMediaState(long attachmentCount, long validCount, long missingAlt,
+                                        long invalidRole, long coverCount) {
     }
 
     private Long claimIdempotency(Long userId, String operation, String idempotencyKey) {

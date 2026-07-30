@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ArrowLeft, Bookmark, CheckCircle2, Eye, Heart, LoaderCircle, MessageCircle, Reply, Send, ShieldAlert, UserPlus } from 'lucide-vue-next'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   answerCase, createComment, currentSession, deleteComment, fetchComments, fetchFollowState,
@@ -12,6 +10,7 @@ import {
 import type { CommentItem, CommentThread, Post, PostDetail } from '../api/types'
 import PostCard from '../components/PostCard.vue'
 import StatusPanel from '../components/StatusPanel.vue'
+import { markdownMediaIds, renderSafeMarkdown } from '../utils/markdown'
 
 const route = useRoute()
 const router = useRouter()
@@ -43,13 +42,9 @@ const themeName: Record<string, string> = { DEDUCTION: '推理馆', SCI_FI: '科
 
 const renderedMarkdown = computed(() => {
   if (!post.value?.markdown) return ''
-  const html = marked.parse(post.value.markdown, { async: false }) as string
-  return DOMPurify.sanitize(html, {
-    USE_PROFILES: { html: true },
-    FORBID_TAGS: ['style', 'script', 'iframe', 'object', 'embed'],
-    FORBID_ATTR: ['style', 'onerror', 'onclick']
-  })
+  return renderSafeMarkdown(post.value.markdown, post.value.media)
 })
+const standaloneMedia = computed(() => { if (!post.value) return []; const placed = markdownMediaIds(post.value.markdown); return post.value.media.filter(media => media.role === 'COVER' || !placed.has(media.mediaId)) })
 
 async function load() {
   loading.value = true
@@ -299,8 +294,8 @@ onBeforeUnmount(() => {
 
       <section class="detail-body">
         <div class="reading-column">
-          <div v-if="post.media.length" class="detail-media-grid">
-            <img v-for="media in post.media" :key="media.mediaId" :src="media.url" :alt="media.altText || post.title" loading="lazy" />
+          <div v-if="standaloneMedia.length" class="detail-media-grid">
+            <template v-for="media in standaloneMedia" :key="media.mediaId"><video v-if="media.contentType.startsWith('video/')" :src="media.url" :aria-label="media.altText || post.title" controls preload="metadata" /><img v-else :src="media.url" :alt="media.altText || post.title" loading="lazy" decoding="async" /></template>
           </div>
           <div class="reading-copy markdown-body" v-html="renderedMarkdown" />
           <section v-if="post.question" class="case-question"><span class="eyebrow">CASE QUESTION</span><h2>案件问题</h2><p>{{ post.question }}</p></section>
