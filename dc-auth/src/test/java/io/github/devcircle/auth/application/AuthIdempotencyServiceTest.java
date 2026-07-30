@@ -1,6 +1,5 @@
 package io.github.devcircle.auth.application;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import org.h2.jdbcx.JdbcDataSource;
@@ -30,30 +29,29 @@ class AuthIdempotencyServiceTest {
                     operation VARCHAR(32) NOT NULL,
                     request_fingerprint CHAR(64) NOT NULL,
                     status VARCHAR(16) NOT NULL DEFAULT 'PROCESSING',
-                    response_payload TEXT,
                     user_id BIGINT,
                     expires_at TIMESTAMP NOT NULL,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """).update();
-        service = new AuthIdempotencyService(jdbcClient, new ObjectMapper().findAndRegisterModules(),
+        service = new AuthIdempotencyService(jdbcClient,
                 "test-signing-secret-that-is-long-enough-for-auth-idempotency-123456");
     }
 
     @Test
-    void repeatedSessionRequestReturnsTheEncryptedOriginalResponseWithoutRunningTheActionAgain() {
+    void repeatedSessionRequestReplaysWithoutRunningTheMutationAgain() {
         AtomicInteger executions = new AtomicInteger();
         AuthService.SessionTokens original = tokens("refresh-1");
 
         AuthService.SessionTokens first = service.executeSession("auth-key-1", "LOGIN", "reader\u0000password", () -> {
             executions.incrementAndGet();
             return original;
-        });
+        }, () -> original);
         AuthService.SessionTokens duplicate = service.executeSession("auth-key-1", "LOGIN", "reader\u0000password", () -> {
             executions.incrementAndGet();
             return tokens("refresh-should-not-be-created");
-        });
+        }, () -> original);
 
         assertThat(first).isEqualTo(original);
         assertThat(duplicate).isEqualTo(original);
@@ -62,9 +60,10 @@ class AuthIdempotencyServiceTest {
 
     @Test
     void reusingAKeyForDifferentAuthInputIsRejected() {
-        service.executeSession("auth-key-2", "LOGIN", "reader\u0000password", () -> tokens("refresh-2"));
+        service.executeSession("auth-key-2", "LOGIN", "reader\u0000password", () -> tokens("refresh-2"), () -> tokens("refresh-2"));
 
-        assertThatThrownBy(() -> service.executeSession("auth-key-2", "LOGIN", "reader\u0000other", () -> tokens("refresh-3")))
+        assertThatThrownBy(() -> service.executeSession("auth-key-2", "LOGIN", "reader\u0000other",
+                () -> tokens("refresh-3"), () -> tokens("refresh-3")))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.code()).isEqualTo(ErrorCode.DUPLICATE_OPERATION));
     }

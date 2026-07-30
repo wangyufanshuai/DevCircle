@@ -49,17 +49,19 @@ public class AuthService {
         validatePassword(password);
         String normalizedName = normalizeDisplayName(displayName);
         if (idempotency == null) {
-            return registerInternal(normalizedEmail, password, normalizedName, traceId);
+            return registerInternal(normalizedEmail, password, normalizedName, traceId, null);
         }
         return idempotency.executeSession(idempotencyKey, "REGISTER",
                 normalizedEmail + "\u0000" + password + "\u0000" + normalizedName,
-                () -> registerInternal(normalizedEmail, password, normalizedName, traceId));
+                () -> registerInternal(normalizedEmail, password, normalizedName, traceId, idempotencyKey),
+                () -> replaySession(normalizedEmail, idempotencyKey));
     }
 
-    private SessionTokens registerInternal(String normalizedEmail, String password, String normalizedName, String traceId) {
+    private SessionTokens registerInternal(String normalizedEmail, String password, String normalizedName,
+                                           String traceId, String idempotencyKey) {
         AuthTokenRepository.Account account = repository.createAccount(normalizedEmail, normalizedName, passwordEncoder.encode(password));
         repository.audit(account.id(), "REGISTER", "USER", String.valueOf(account.id()), traceId, Map.of());
-        return newSession(account, UUID.randomUUID().toString());
+        return newSession(account, idempotencyKey);
     }
 
     public SessionTokens login(String email, String password, String traceId) {
@@ -69,20 +71,21 @@ public class AuthService {
     public SessionTokens login(String email, String password, String idempotencyKey, String traceId) {
         String normalizedEmail = normalizeEmail(email);
         if (idempotency == null) {
-            return loginInternal(normalizedEmail, password, traceId);
+            return loginInternal(normalizedEmail, password, traceId, null);
         }
         return idempotency.executeSession(idempotencyKey, "LOGIN", normalizedEmail + "\u0000" + password,
-                () -> loginInternal(normalizedEmail, password, traceId));
+                () -> loginInternal(normalizedEmail, password, traceId, idempotencyKey),
+                () -> replaySession(normalizedEmail, idempotencyKey));
     }
 
-    private SessionTokens loginInternal(String normalizedEmail, String password, String traceId) {
+    private SessionTokens loginInternal(String normalizedEmail, String password, String traceId, String idempotencyKey) {
         AuthTokenRepository.Account account = repository.findAccountByEmail(normalizedEmail)
                 .orElseThrow(() -> new BusinessException(ErrorCode.AUTHENTICATION_FAILED, "邮箱或密码不正确"));
         if (!"ACTIVE".equals(account.status()) || !passwordEncoder.matches(password, account.passwordHash())) {
             throw new BusinessException(ErrorCode.AUTHENTICATION_FAILED, "邮箱或密码不正确");
         }
         repository.audit(account.id(), "LOGIN", "USER", String.valueOf(account.id()), traceId, Map.of());
-        return newSession(account, UUID.randomUUID().toString());
+        return newSession(account, idempotencyKey);
     }
 
     public SessionTokens refresh(String refreshToken, String csrfToken, String traceId) {
@@ -96,12 +99,17 @@ public class AuthService {
         }
         return idempotency.executeSession(idempotencyKey, "REFRESH",
                 refreshToken + "\u0000" + csrfToken,
-                () -> refreshInternal(refreshToken, csrfToken, traceId));
+                () -> refreshInternal(refreshToken, csrfToken, traceId, idempotencyKey),
+                () -> replayRefresh(refreshToken, csrfToken, idempotencyKey));
     }
 
     private SessionTokens refreshInternal(String refreshToken, String csrfToken, String traceId) {
-        String replacement = randomToken();
-        String replacementCsrf = randomToken();
+        return refreshInternal(refreshToken, csrfToken, traceId, null);
+    }
+
+    private SessionTokens refreshInternal(String refreshToken, String csrfToken, String traceId, String idempotencyKey) {
+        String replacement = idempotencyKey == null ? randomToken() : idempotency.deriveOpaqueToken("refresh", idempotencyKey + "\u0000" + refreshToken);
+        String replacementCsrf = idempotencyKey == null ? randomToken() : idempotency.deriveOpaqueToken("csrf", idempotencyKey + "\u0000" + refreshToken);
         Instant refreshExpiresAt = Instant.now().plus(REFRESH_DAYS, ChronoUnit.DAYS);
         AuthTokenRepository.Account account = repository.rotateRefreshToken(
                 refreshToken, csrfToken, replacement, replacementCsrf, refreshExpiresAt);
@@ -109,12 +117,28 @@ public class AuthService {
         return accessFor(account, replacement, replacementCsrf, refreshExpiresAt);
     }
 
+    private SessionTokens replaySession(String normalizedEmail, String idempotencyKey) {
+        AuthTokenRepository.Account account = repository.findAccountByEmail(normalizedEmail)
+                .orElseThrow(() -> new BusinessException(ErrorCode.AUTHENTICATION_FAILED, "账号已不可用，请重新登录"));
+        return newSession(account, idempotencyKey);
+    }
+
+    private SessionTokens replayRefresh(String refreshToken, String csrfToken, String idempotencyKey) {
+        String replacement = idempotency.deriveOpaqueToken("refresh", idempotencyKey + "\u0000" + refreshToken);
+        String replacementCsrf = idempotency.deriveOpaqueToken("csrf", idempotencyKey + "\u0000" + refreshToken);
+        AuthTokenRepository.RefreshTokenView view = repository.findRefreshToken(replacement)
+                .orElseThrow(() -> new BusinessException(ErrorCode.TOKEN_REVOKED, "刷新请求已失效，请重新登录"));
+        AuthTokenRepository.Account account = repository.findAccountById(view.userId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED, "用户不存在"));
+        return accessFor(account, replacement, replacementCsrf, view.expiresAt());
+    }
+
     public SessionTokens oauthLogin(AuthTokenRepository.Account account, String traceId) {
         if (!"ACTIVE".equals(account.status())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "账号当前不可用");
         }
         repository.audit(account.id(), "OAUTH2_LOGIN", "USER", String.valueOf(account.id()), traceId, Map.of("provider", "github"));
-        return newSession(account, UUID.randomUUID().toString());
+        return newSession(account, null);
     }
 
     public void logout(String refreshToken, String csrfToken, String traceId) {
@@ -155,11 +179,19 @@ public class AuthService {
         }
     }
 
-    private SessionTokens newSession(AuthTokenRepository.Account account, String familyId) {
-        String refreshToken = randomToken();
-        String csrfToken = randomToken();
+    private SessionTokens newSession(AuthTokenRepository.Account account, String idempotencyKey) {
+        boolean deterministic = idempotencyKey != null;
+        String refreshToken = deterministic ? idempotency.deriveOpaqueToken("refresh", idempotencyKey) : randomToken();
+        String csrfToken = deterministic ? idempotency.deriveOpaqueToken("csrf", idempotencyKey) : randomToken();
+        String familyId = deterministic
+                ? UUID.nameUUIDFromBytes(("family\u0000" + idempotencyKey).getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString()
+                : UUID.randomUUID().toString();
         Instant refreshExpiresAt = Instant.now().plus(REFRESH_DAYS, ChronoUnit.DAYS);
-        repository.saveRefreshToken(account.id(), refreshToken, csrfToken, familyId, refreshExpiresAt);
+        if (deterministic) {
+            repository.saveRefreshTokenIfAbsent(account.id(), refreshToken, csrfToken, familyId, refreshExpiresAt);
+        } else {
+            repository.saveRefreshToken(account.id(), refreshToken, csrfToken, familyId, refreshExpiresAt);
+        }
         return accessFor(account, refreshToken, csrfToken, refreshExpiresAt);
     }
 

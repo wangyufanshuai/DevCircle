@@ -180,6 +180,32 @@ public class AuthTokenRepository {
                 .update();
     }
 
+    public void saveRefreshTokenIfAbsent(Long userId,
+                                         String rawToken,
+                                         String rawCsrf,
+                                         String familyId,
+                                         Instant expiresAt) {
+        jdbcClient.sql("""
+                        INSERT IGNORE INTO refresh_token(user_id, token_hash, csrf_hash, family_id, revoked, expires_at)
+                        VALUES (:userId, :tokenHash, :csrfHash, :familyId, false, :expiresAt)
+                        """)
+                .param("userId", userId)
+                .param("tokenHash", hash(rawToken))
+                .param("csrfHash", hash(rawCsrf))
+                .param("familyId", familyId)
+                .param("expiresAt", java.sql.Timestamp.from(expiresAt))
+                .update();
+    }
+
+    public Optional<RefreshTokenView> findRefreshToken(String rawToken) {
+        return jdbcClient.sql("""
+                        SELECT user_id, expires_at FROM refresh_token WHERE token_hash = :tokenHash
+                        """)
+                .param("tokenHash", hash(rawToken))
+                .query((rs, rowNum) -> new RefreshTokenView(rs.getLong("user_id"), rs.getTimestamp("expires_at").toInstant()))
+                .optional();
+    }
+
     @Transactional(noRollbackFor = BusinessException.class)
     public Account rotateRefreshToken(String rawToken,
                                       String rawCsrf,
@@ -309,6 +335,9 @@ public class AuthTokenRepository {
                           String passwordHash,
                           String status,
                           List<String> roles) {
+    }
+
+    public record RefreshTokenView(Long userId, Instant expiresAt) {
     }
 
     private record RefreshSession(Long id, Long userId, String csrfHash, String familyId,
