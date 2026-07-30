@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { Bell, Compass, FilePenLine, LogIn, Search, Telescope, UserRound } from 'lucide-vue-next'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { currentSession, logout } from '../api/client'
+import { logout, sessionState } from '../api/client'
 
 const route = useRoute()
 const router = useRouter()
 const query = ref(typeof route.query.q === 'string' ? route.query.q : '')
-const session = computed(() => currentSession())
+const session = sessionState
+const logoutError = ref('')
 const navItems = [
   { to: '/', label: '首页', icon: Compass },
   { to: '/discover', label: '发现', icon: Search },
@@ -20,7 +21,13 @@ async function search() {
   if (query.value.trim()) await router.push({ path: '/discover', query: { q: query.value.trim() } })
 }
 async function signOut() {
-  try { await logout() } finally { await router.push('/') }
+  logoutError.value = ''
+  try {
+    await logout()
+    await router.push('/')
+  } catch (reason) {
+    logoutError.value = reason instanceof Error ? reason.message : '退出登录失败，请重试'
+  }
 }
 </script>
 
@@ -55,6 +62,7 @@ async function signOut() {
       <RouterLink class="button button-primary create-link" to="/write"><FilePenLine :size="16" /> 开始创作</RouterLink>
       <RouterLink v-if="session?.roles.includes('ADMIN')" class="nav-link admin-link" to="/admin">运营后台</RouterLink>
       <button v-if="session" class="logout-link" type="button" @click="signOut">退出登录</button>
+      <p v-if="logoutError" class="form-error sidebar-error" role="alert">{{ logoutError }}</p>
     </aside>
 
     <main id="main-content" class="main-content"><slot /></main>

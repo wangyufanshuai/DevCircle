@@ -3,10 +3,12 @@ import type {
   LoginResponse, ModerationTask, NotificationItem, PageResponse, Post, SaveDraftRequest,
   PostAudit, PostDetail, ReadingProgress, Theme, UploadIntent, UserSession
 } from './types'
+import { readonly, shallowRef } from 'vue'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 let accessToken = ''
-let session: UserSession | null = null
+const mutableSession = shallowRef<UserSession | null>(null)
+const mutableAuthState = shallowRef<'unknown' | 'authenticated' | 'anonymous'>('unknown')
 let refreshPromise: Promise<LoginResponse | null> | null = null
 
 export class ApiError extends Error {
@@ -15,10 +17,19 @@ export class ApiError extends Error {
   }
 }
 
-export function currentSession() { return session }
-export function hasRole(role: string) { return session?.roles.includes(role) ?? false }
-export function clearSession() { accessToken = ''; session = null }
+export const sessionState = readonly(mutableSession)
+export const authState = readonly(mutableAuthState)
+export function currentSession() { return mutableSession.value }
+export function hasRole(role: string) { return mutableSession.value?.roles.includes(role) ?? false }
+export function clearSession() { accessToken = ''; mutableSession.value = null; mutableAuthState.value = 'anonymous' }
 export function idempotencyKey() { return crypto.randomUUID() }
+
+function establishSession(data: LoginResponse) {
+  accessToken = data.accessToken
+  mutableSession.value = data.user
+  mutableAuthState.value = 'authenticated'
+  return data
+}
 
 function cookie(name: string): string {
   const prefix = `${encodeURIComponent(name)}=`
@@ -40,15 +51,13 @@ async function refresh(): Promise<LoginResponse | null> {
   if (refreshPromise) return refreshPromise
   refreshPromise = (async () => {
     const csrf = cookie('dc_csrf')
-    if (!csrf) return null
+    if (!csrf) { clearSession(); return null }
     const response = await fetch(`${API_BASE}/api/auth/refresh`, {
       method: 'POST', credentials: 'include', headers: { 'X-CSRF-Token': csrf }
     })
     if (!response.ok) { clearSession(); return null }
     const data = await parse<LoginResponse>(response)
-    accessToken = data.accessToken
-    session = data.user
-    return data
+    return establishSession(data)
   })().finally(() => { refreshPromise = null })
   return refreshPromise
 }
@@ -85,18 +94,21 @@ function write<T>(path: string, method: 'POST' | 'PUT' | 'DELETE', payload?: unk
   return request<T>(path, { method, headers: { 'Idempotency-Key': key }, body: payload === undefined ? undefined : JSON.stringify(payload) })
 }
 
-export async function restoreSession() { try { return await refresh() } catch { clearSession(); return null } }
+export async function restoreSession(): Promise<UserSession | null> {
+  if (mutableAuthState.value !== 'unknown') return mutableSession.value
+  try { return (await refresh())?.user ?? null } catch { clearSession(); return null }
+}
 export async function register(email: string, password: string, displayName: string) {
-  const data = await request<LoginResponse>('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, displayName }) }, false)
-  accessToken = data.accessToken; session = data.user; return data
+  const data = await request<LoginResponse>('/api/auth/register', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey() }, body: JSON.stringify({ email, password, displayName }) }, false)
+  return establishSession(data)
 }
 export async function login(email: string, password: string) {
-  const data = await request<LoginResponse>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }, false)
-  accessToken = data.accessToken; session = data.user; return data
+  const data = await request<LoginResponse>('/api/auth/login', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey() }, body: JSON.stringify({ email, password }) }, false)
+  return establishSession(data)
 }
 export async function logout() {
   const csrf = cookie('dc_csrf')
-  await request<void>('/api/auth/logout', { method: 'POST', headers: { 'X-CSRF-Token': csrf } }, false)
+  await request<void>('/api/auth/logout', { method: 'POST', headers: { 'X-CSRF-Token': csrf, 'Idempotency-Key': idempotencyKey() } }, false)
   clearSession()
 }
 export async function startGitHubLogin() {

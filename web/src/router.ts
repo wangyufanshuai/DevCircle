@@ -9,6 +9,12 @@ import ProfileView from './views/ProfileView.vue'
 import AuthView from './views/AuthView.vue'
 import AuthCallbackView from './views/AuthCallbackView.vue'
 import AdminView from './views/AdminView.vue'
+import { currentSession, hasRole, restoreSession } from './api/client'
+
+function safeRedirect(value: unknown, fallback = '/me') {
+  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || value.startsWith('/auth')) return fallback
+  return value
+}
 
 const router = createRouter({
   history: createWebHistory(),
@@ -28,10 +34,18 @@ const router = createRouter({
   ]
 })
 
-router.beforeEach((to) => {
-  if (to.meta.requiresAuth) {
-    // The backend remains the authority. The shell lets the page render and the API
-    // client performs refresh, so an expired session can recover without a redirect loop.
+router.beforeEach(async (to) => {
+  await restoreSession()
+
+  const requiresAuthentication = to.meta.requiresAuth === true || to.meta.requiresAdmin === true
+  if (requiresAuthentication && !currentSession()) {
+    return { path: '/auth', query: { redirect: to.fullPath } }
+  }
+  if (to.meta.requiresAdmin === true && !hasRole('ADMIN')) {
+    return { path: '/me', query: { access: 'denied' }, replace: true }
+  }
+  if (to.path === '/auth' && currentSession()) {
+    return { path: safeRedirect(to.query.redirect), replace: true }
   }
   return true
 })

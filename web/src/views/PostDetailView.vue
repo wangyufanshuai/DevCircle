@@ -7,7 +7,7 @@ import { RouterLink, useRoute } from 'vue-router'
 import {
   answerCase, createComment, currentSession, deleteComment, fetchComments, fetchFollowState,
   fetchInteractionState, fetchMediaAccess, fetchPost, fetchRelated, fetchUserProfile, followUser, interact, revealAnswer,
-  saveReadingProgress, unfollowUser
+  saveReadingProgress, sessionState, unfollowUser
 } from '../api/client'
 import type { CommentItem, CommentThread, Post, PostDetail } from '../api/types'
 import PostCard from '../components/PostCard.vue'
@@ -29,7 +29,7 @@ const following = ref(false)
 const savingProgress = ref(false)
 let progressTimer: ReturnType<typeof setTimeout> | undefined
 const id = computed(() => Number(route.params.id))
-const session = computed(() => currentSession())
+const session = sessionState
 const themeName: Record<string, string> = { DEDUCTION: '推理馆', SCI_FI: '科幻馆', COSMOS: '宇宙档案' }
 
 const renderedMarkdown = computed(() => {

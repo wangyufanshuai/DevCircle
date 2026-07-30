@@ -7,6 +7,12 @@ const post = {
   question: '谁制造了不在场证明？', worldbuilding: [], cosmicFacts: [], relatedPostIds: [], viewerState: { liked: false, favorited: false, readingProgress: 0 }, deductionState: { attempted: false, solved: false, revealed: false, points: 0, solutionUnlocked: false }, solution: null
 }
 const feed = Array.from({ length: 8 }, (_, index) => ({ post: { ...post, id: post.id + index, title: `${post.title} ${index + 1}` }, reason: '与你近期感兴趣的主题相关', score: 100 - index, liked: false, favorited: false, algorithm: 'EXPLAINABLE_RULE_V1', features: {} }))
+const dashboard = { profile: { id: 2, username: '观测者', bio: '追踪星图中的异常', followers: 3, following: 5, status: 'ACTIVE' }, readingProgress: [], submissions: [], favorites: [], unreadNotifications: 0 }
+
+async function authenticate(page: import('@playwright/test').Page, roles: string[] = ['USER']) {
+  await page.context().addCookies([{ name: 'dc_csrf', value: 'test-csrf', domain: '127.0.0.1', path: '/' }])
+  await page.route('**/api/auth/refresh', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { accessToken: 'access-token', expiresAt: '2099-01-01T00:00:00Z', user: { userId: 2, displayName: '观测者', roles } } } }))
+}
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/recommend/feed**', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { records: feed, nextCursor: '8', hasMore: false }, traceId: 'test' } }))
@@ -21,6 +27,7 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/deduction/cases/*/answers', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { postId: 1001, userId: 2, correct: true, duplicated: false, revealed: false, solutionUnlocked: true, points: 20, explanation: '推理成立', solution: '关键是怀表与时间线之间的矛盾。' } } }))
   await page.route('**/api/notifications', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [] } }))
   await page.route('**/api/posts/drafts?*', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [] } }))
+  await page.route('**/api/me/dashboard', route => route.fulfill({ json: { code: 'OK', message: 'success', data: dashboard } }))
 })
 
 test('desktop home has observatory hierarchy and theme links', async ({ page }) => {
@@ -39,6 +46,7 @@ test('formal post route opens case and submits deduction', async ({ page }) => {
 })
 
 test('write route exposes draft editor and safe preview', async ({ page }) => {
+  await authenticate(page)
   await page.goto('/write')
   await expect(page.getByRole('heading', { name: '把你的观测记录放上来。' })).toBeVisible()
   await expect(page.getByLabel('正文 Markdown')).toBeVisible()
@@ -46,10 +54,50 @@ test('write route exposes draft editor and safe preview', async ({ page }) => {
 })
 
 test('admin route keeps review reason visible', async ({ page }) => {
+  await authenticate(page, ['USER', 'ADMIN'])
   await page.route('**/api/admin/moderation/tasks**', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [{ taskId: 1, postId: 1001, title: '雾港钟楼失踪案', queue: 'manual-review', riskLevel: 'MEDIUM', riskScore: 42, reason: '需要人工确认', status: 'PENDING' }] } }))
   await page.goto('/admin')
   await expect(page.getByRole('heading', { name: '内容审核台' })).toBeVisible()
   await expect(page.getByLabel('审核理由')).toBeVisible()
+})
+
+test('protected route signs in, returns to destination and updates the shell', async ({ page }) => {
+  await page.route('**/api/auth/login', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { accessToken: 'access-token', expiresAt: '2099-01-01T00:00:00Z', user: { userId: 2, displayName: '观测者', roles: ['USER'] } } } }))
+  await page.goto('/write')
+  await expect(page).toHaveURL(/\/auth\?redirect=\/write$/)
+  await page.getByLabel('邮箱').fill('reader@example.com')
+  await page.getByLabel('密码').fill('correct-horse-battery-staple')
+  await page.locator('.auth-card button[type="submit"]').click()
+  await expect(page).toHaveURL(/\/write$/)
+  await expect(page.getByRole('heading', { name: '把你的观测记录放上来。' })).toBeVisible()
+})
+
+test('non-admin session cannot open the operations console', async ({ page }) => {
+  await authenticate(page)
+  await page.goto('/admin')
+  await expect(page).toHaveURL(/\/me\?access=denied$/)
+  await expect(page.getByRole('status')).toContainText('没有访问运营后台的权限')
+})
+
+test('logout clears the reactive session only after server confirmation', async ({ page }) => {
+  await authenticate(page)
+  await page.route('**/api/auth/logout', route => route.fulfill({ json: { code: 'OK', message: 'success', data: null } }))
+  await page.goto('/me')
+  await expect(page.getByRole('heading', { name: '观测者' })).toBeVisible()
+  await page.locator('.profile-page').getByRole('button', { name: '退出登录' }).click()
+  await expect(page).toHaveURL(/\/$/)
+  await page.locator('a[href="/write"]:visible').first().click()
+  await expect(page).toHaveURL(/\/auth\?redirect=\/write$/)
+})
+
+test('failed logout keeps the session visible and explains the failure', async ({ page }) => {
+  await authenticate(page)
+  await page.route('**/api/auth/logout', route => route.fulfill({ status: 503, json: { code: 'SERVICE_UNAVAILABLE', message: '退出服务暂时不可用', data: null, traceId: 'logout-test' } }))
+  await page.goto('/me')
+  await page.locator('.profile-page').getByRole('button', { name: '退出登录' }).click()
+  await expect(page).toHaveURL(/\/me$/)
+  await expect(page.getByRole('alert')).toContainText('退出服务暂时不可用')
+  await expect(page.getByRole('heading', { name: '观测者' })).toBeVisible()
 })
 
 test('responsive shell has no horizontal overflow and uses the correct navigation', async ({ page }, testInfo) => {

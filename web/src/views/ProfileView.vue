@@ -1,15 +1,19 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { Bell, BookOpen, Bookmark, FilePenLine, ShieldCheck, Trophy } from 'lucide-vue-next'
-import { RouterLink } from 'vue-router'
-import { currentSession, fetchDashboard } from '../api/client'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { fetchDashboard, logout, sessionState } from '../api/client'
 import type { Dashboard } from '../api/types'
 import StatusPanel from '../components/StatusPanel.vue'
 
-const session = computed(() => currentSession())
+const session = sessionState
+const route = useRoute()
+const router = useRouter()
 const dashboard = ref<Dashboard | null>(null)
 const loading = ref(true)
 const error = ref('')
+const logoutError = ref('')
+const signingOut = ref(false)
 
 async function load() {
   loading.value = true; error.value = ''
@@ -18,10 +22,18 @@ async function load() {
   finally { loading.value = false }
 }
 onMounted(load)
+
+async function signOut() {
+  signingOut.value = true; logoutError.value = ''
+  try { await logout(); await router.replace('/') }
+  catch (reason) { logoutError.value = reason instanceof Error ? reason.message : '退出登录失败，请重试' }
+  finally { signingOut.value = false }
+}
 </script>
 
 <template>
   <div class="page-stack profile-page">
+    <p v-if="route.query.access === 'denied'" class="form-error" role="status">你的账号没有访问运营后台的权限。</p>
     <StatusPanel v-if="error && !dashboard" title="个人档案暂时无法加载" :detail="error" action-label="重试" @retry="load" />
     <div v-else-if="loading" class="loading-line">正在整理观测记录…</div>
     <template v-else-if="dashboard">
@@ -53,6 +65,11 @@ onMounted(load)
       </section>
 
       <RouterLink v-if="session?.roles.includes('ADMIN')" class="admin-dashboard-link" to="/admin"><ShieldCheck :size="19" /><span><strong>运营后台</strong><small>审核、风险和事件重放</small></span></RouterLink>
+      <section class="profile-account-actions" aria-labelledby="account-actions-title">
+        <div><h2 id="account-actions-title">账号安全</h2><p class="muted">退出后，本机内存中的访问令牌会立即清除。</p></div>
+        <button class="button button-quiet" type="button" :disabled="signingOut" @click="signOut">{{ signingOut ? '正在退出…' : '退出登录' }}</button>
+      </section>
+      <p v-if="logoutError" class="form-error" role="alert">{{ logoutError }}</p>
     </template>
   </div>
 </template>
