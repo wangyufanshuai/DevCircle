@@ -59,6 +59,12 @@ async function signOut() {
       </section>
 
       <section>
+        <div class="section-heading"><div><span class="eyebrow">SAVED ORBIT</span><h2>收藏轨道</h2></div><RouterLink class="text-button" to="/discover">继续发现</RouterLink></div>
+        <div v-if="dashboard.favorites.length" class="submission-list favorite-list"><RouterLink v-for="item in dashboard.favorites" :key="item.id" :to="`/posts/${item.id}`"><span><strong>{{ item.title }}</strong><small>{{ item.theme }} · {{ item.difficulty }} · {{ item.excerpt }}</small></span><em>打开</em></RouterLink></div>
+        <p v-else class="empty-copy muted">还没有收藏内容。</p>
+      </section>
+
+      <section>
         <div class="section-heading"><div><span class="eyebrow">SUBMISSIONS</span><h2>创作与审核</h2></div><RouterLink class="button button-quiet" to="/write">进入创作台</RouterLink></div>
         <div v-if="dashboard.submissions.length" class="submission-list"><RouterLink v-for="item in dashboard.submissions" :key="item.postId" :to="`/write/${item.postId}`"><span><strong>{{ item.title }}</strong><small>{{ item.reviewReason || '等待下一步处理' }}</small></span><em>{{ item.status }}</em></RouterLink></div>
         <p v-else class="empty-copy muted">还没有草稿或投稿。</p>

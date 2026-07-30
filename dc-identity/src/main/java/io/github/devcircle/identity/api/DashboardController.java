@@ -1,6 +1,7 @@
 package io.github.devcircle.identity.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import io.github.devcircle.common.api.ApiResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -40,7 +41,15 @@ class DashboardController {
         Mono<JsonNode> profile = get(userUri, "/api/users/" + userId, userId);
         Mono<JsonNode> progress = get(contentUri, "/api/me/reading-progress", userId);
         Mono<JsonNode> submissions = get(contentUri, "/api/me/submissions", userId);
-        Mono<JsonNode> favorites = get(interactionUri, "/api/me/favorites", userId);
+        Mono<JsonNode> favorites = get(interactionUri, "/api/me/favorites", userId)
+                .flatMap(ids -> {
+                    String joined = java.util.stream.StreamSupport.stream(ids.spliterator(), false)
+                            .map(JsonNode::asText).filter(value -> !value.isBlank()).limit(30)
+                            .collect(java.util.stream.Collectors.joining(","));
+                    return joined.isBlank()
+                            ? Mono.just(JsonNodeFactory.instance.arrayNode())
+                            : get(contentUri, "/api/posts/summaries?ids=" + joined, userId);
+                });
         Mono<JsonNode> unread = get(notificationUri, "/api/notifications/unread-count", userId);
         Mono<JsonNode> deductionStats = get(contentUri, "/api/deduction/me/stats", userId);
         return Mono.zip(profile, progress, submissions, favorites, unread, deductionStats)

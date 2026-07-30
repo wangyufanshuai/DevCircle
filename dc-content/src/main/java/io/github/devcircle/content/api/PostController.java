@@ -48,6 +48,11 @@ class PostController {
         return ApiResponse.ok(postService.publicDetail(id, viewerId));
     }
 
+    @GetMapping("/summaries")
+    ApiResponse<List<FavoritePostView>> summaries(@RequestParam List<Long> ids) {
+        return ApiResponse.ok(postService.publicSummaries(ids));
+    }
+
     @GetMapping("/{id}/related")
     ApiResponse<List<PostSummary>> related(@PathVariable Long id,
                                            @RequestParam(defaultValue = "6") int size) {

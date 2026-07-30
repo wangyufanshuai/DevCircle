@@ -138,7 +138,7 @@ export type Dashboard = {
   profile: { id: number; username: string; bio?: string | null; followers: number; following: number; status: string }
   readingProgress: Array<{ postId: number; title: string; theme: Theme; progressPercent: number; completed: boolean; lastReadAt: string }>
   submissions: Array<{ postId: number; title: string; status: PostStatus; updatedAt: string; reviewReason?: string | null }>
-  favorites: number[]
+  favorites: Array<{ id: number; title: string; excerpt: string; theme: Theme; contentKind: ContentKind; difficulty: 'EASY' | 'MEDIUM' | 'HARD'; createdAt: string }>
   unreadNotifications: number
   deductionStats: { attempts: number; correctCount: number; revealedCount: number; totalPoints: number }
 }

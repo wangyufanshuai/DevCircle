@@ -8,6 +8,7 @@ import io.github.devcircle.common.seed.ThemeContentLibrary;
 import io.github.devcircle.content.api.CreatePostRequest;
 import io.github.devcircle.content.api.DraftMediaInput;
 import io.github.devcircle.content.api.DraftView;
+import io.github.devcircle.content.api.FavoritePostView;
 import io.github.devcircle.content.api.PostDetailView;
 import io.github.devcircle.content.api.PostCursorPage;
 import io.github.devcircle.content.api.PostAuditView;
@@ -79,6 +80,10 @@ public class PostService {
 
     public PostDetailView publicDetail(Long id, Long viewerId) {
         return postRepository.publicDetail(id, viewerId);
+    }
+
+    public List<FavoritePostView> publicSummaries(List<Long> postIds) {
+        return postRepository.publicSummaries(postIds);
     }
 
     public ReadingProgressView saveReadingProgress(Long userId, Long postId, ReadingProgressRequest request,

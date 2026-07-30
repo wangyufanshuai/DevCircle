@@ -13,6 +13,7 @@ import io.github.devcircle.content.api.CreatePostRequest;
 import io.github.devcircle.content.api.DraftMediaInput;
 import io.github.devcircle.content.api.DraftMediaView;
 import io.github.devcircle.content.api.DraftView;
+import io.github.devcircle.content.api.FavoritePostView;
 import io.github.devcircle.content.api.PostDetailView;
 import io.github.devcircle.content.api.PostCursorPage;
 import io.github.devcircle.content.api.ReadingProgressRequest;
@@ -207,6 +208,25 @@ public class PostRepository {
                 })
                 .optional()
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "内容不存在或尚未发布"));
+    }
+
+    public List<FavoritePostView> publicSummaries(List<Long> postIds) {
+        if (postIds == null || postIds.isEmpty()) return List.of();
+        List<Long> safeIds = postIds.stream().filter(id -> id != null && id > 0).distinct().limit(50).toList();
+        if (safeIds.isEmpty()) return List.of();
+        return jdbcClient.sql("""
+                        SELECT p.id, p.title, LEFT(pc.markdown, 180) AS excerpt, p.theme, p.content_kind,
+                               p.difficulty, p.created_at
+                        FROM post p
+                        JOIN post_content pc ON pc.post_id = p.id
+                        WHERE p.id IN (:postIds) AND p.status = 'PUBLISHED'
+                        ORDER BY p.updated_at DESC, p.id DESC
+                        """)
+                .param("postIds", safeIds)
+                .query((rs, rowNum) -> new FavoritePostView(rs.getLong("id"), rs.getString("title"),
+                        safeText(rs.getString("excerpt")), rs.getString("theme"), rs.getString("content_kind"),
+                        rs.getString("difficulty"), rs.getTimestamp("created_at").toInstant()))
+                .list();
     }
 
     @Transactional
