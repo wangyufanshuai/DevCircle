@@ -1,10 +1,7 @@
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:21-jre@sha256:273396ed5998598ed1091e8d72711c2d36980a0e65103859c55a4e977a41ffd3
 ARG JAR_FILE
 WORKDIR /app
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system devcircle \
+RUN groupadd --system devcircle \
     && useradd --system --gid devcircle --home-dir /app devcircle
 COPY ${JAR_FILE} app.jar
 RUN chown -R devcircle:devcircle /app
