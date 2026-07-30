@@ -18,7 +18,13 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers(disabledWithoutDocker = true)
-@SpringBootTest(properties = "spring.kafka.bootstrap-servers=localhost:65535")
+@SpringBootTest(properties = {
+        "spring.kafka.bootstrap-servers=localhost:65535",
+        "spring.datasource.url=jdbc:h2:mem:search-index;MODE=MySQL;DB_CLOSE_DELAY=-1",
+        "spring.datasource.username=sa",
+        "spring.datasource.password=",
+        "spring.flyway.locations=classpath:db/migration"
+})
 class SearchIndexIntegrationTest {
     @Container
     static final ElasticsearchContainer elasticsearch = new ElasticsearchContainer("docker.elastic.co/elasticsearch/elasticsearch:9.2.2")

@@ -6,6 +6,10 @@ spring:
     name: dc-search
   lifecycle:
     timeout-per-shutdown-phase: 30s
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${SEARCH_MYSQL_DATABASE:dc_search}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: ${MYSQL_USER:devcircle}
+    password: ${MYSQL_PASSWORD:devcircle}
   elasticsearch:
     uris: ${ELASTICSEARCH_URIS:http://localhost:9200}
   kafka:
