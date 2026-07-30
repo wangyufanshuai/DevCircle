@@ -10,6 +10,8 @@ replicaCount: 2
 env:
   DEVCIRCLE_PRODUCTION_MODE: "true"
   DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
+  SPRINGDOC_API_DOCS_ENABLED: "false"
+  SPRINGDOC_SWAGGER_UI_ENABLED: "false"
   SPRING_PROFILES_ACTIVE: aggregate
   DC_IDENTITY_URI: http://dc-identity:8201
   DC_CONTENT_AGGREGATE_URI: http://dc-content-aggregate:8202

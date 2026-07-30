@@ -20,7 +20,8 @@ public class SecurityConfig {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(registry -> registry
-                        .requestMatchers("/api/auth/**", "/actuator/health", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
+                        .requestMatchers("/api/auth/**", "/actuator/health", "/actuator/health/**",
+                                "/v3/api-docs/**", "/swagger-ui/**").permitAll()
                         .anyRequest().denyAll())
                 .build();
     }
