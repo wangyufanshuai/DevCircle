@@ -77,6 +77,10 @@ class PostDetailFacade {
     private ObjectNode merge(ObjectNode rawDetail, JsonNode profile, JsonNode interaction, JsonNode follow,
                              JsonNode mediaAccess, List<Long> expectedMediaIds) {
         ObjectNode detail = rawDetail.deepCopy();
+        detail.remove("answerKeywords");
+        if (!detail.path("deductionState").path("solutionUnlocked").asBoolean(false)) {
+            detail.putNull("solution");
+        }
         ObjectNode author = detail.path("author") instanceof ObjectNode value
                 ? value : objectMapper.createObjectNode();
         author.put("username", profile.path("username").asText(""));

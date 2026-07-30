@@ -31,6 +31,8 @@ class PostDetailFacadeTest {
             String path = request.url().getRawPath();
             if (host.equals("content.test")) return ok("""
                     {"id":1001,"author":{"id":7,"username":"user-7"},
+                     "answerKeywords":["林墨"],"solution":"secret solution",
+                     "deductionState":{"solutionUnlocked":false},
                      "media":[{"mediaId":8,"url":"","contentType":"image/webp","status":"APPROVED"}],
                      "viewerState":{"liked":false,"favorited":false,"readingProgress":42}}
                     """);
@@ -58,6 +60,8 @@ class PostDetailFacadeTest {
         assertThat(detail.at("/viewerState/liked").asBoolean()).isTrue();
         assertThat(detail.at("/viewerState/favorited").asBoolean()).isTrue();
         assertThat(detail.at("/viewerState/readingProgress").asInt()).isEqualTo(42);
+        assertThat(detail.has("answerKeywords")).isFalse();
+        assertThat(detail.get("solution").isNull()).isTrue();
         assertThat(detail.at("/media/0/url").asText()).isEqualTo("https://signed.example/evidence.webp");
         assertThat(requests).hasSize(5).allSatisfy(request ->
                 assertThat(request.headers().getFirst("X-User-Id")).isEqualTo("2"));
@@ -84,6 +88,26 @@ class PostDetailFacadeTest {
         assertThat(detail.at("/author/followedByViewer").asBoolean()).isFalse();
         assertThat(detail.at("/viewerState/liked").asBoolean()).isFalse();
         assertThat(hosts).containsExactlyInAnyOrder("content.test", "user.test");
+    }
+
+    @Test
+    void unlockedSolutionRemainsAvailableAfterDeductionSuccess() {
+        PostDetailFacade facade = facade(request -> {
+            if (request.url().getHost().equals("content.test")) return ok("""
+                    {"id":1001,"author":{"id":7},"media":[],
+                     "deductionState":{"solutionUnlocked":true},"solution":"已验证的解析",
+                     "viewerState":{"liked":false,"favorited":false,"readingProgress":0}}
+                    """);
+            if (request.url().getHost().equals("user.test")) return ok("""
+                    {"id":7,"username":"林墨","avatarUrl":null,"bio":"记录异常信号","followers":18,"following":4}
+                    """);
+            return failure(HttpStatus.INTERNAL_SERVER_ERROR, "SYSTEM_ERROR");
+        });
+
+        var detail = facade.load(1001L, 0L).block();
+
+        assertThat(detail).isNotNull();
+        assertThat(detail.at("/solution").asText()).isEqualTo("已验证的解析");
     }
 
     @Test
