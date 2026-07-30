@@ -253,12 +253,16 @@ async function toggleFollow() {
   if (!post.value || !await requireSession()) return
   const active = !following.value
   following.value = active
+  const previousFollowerCount = post.value.author.followerCount ?? 0
+  post.value.author.followerCount = Math.max(0, previousFollowerCount + (active ? 1 : -1))
   error.value = ''
   try {
-    if (!active) await unfollowUser(post.value.author.id)
-    else await followUser(post.value.author.id)
+    const result = !active ? await unfollowUser(post.value.author.id) : await followUser(post.value.author.id)
+    following.value = result.followed
+    if (result.duplicated) post.value.author.followerCount = previousFollowerCount
   } catch (reason) {
     following.value = !active
+    post.value.author.followerCount = previousFollowerCount
     error.value = reason instanceof Error ? reason.message : '关注暂时不可用'
   }
 }
@@ -402,8 +406,8 @@ onBeforeUnmount(() => {
 
       <section class="author-strip">
         <div class="profile-avatar">{{ post.author.username.slice(0, 1).toUpperCase() }}</div>
-        <div><strong>{{ post.author.username }}</strong><p>{{ post.author.bio || '正在记录宇宙中的异常信号。' }}</p></div>
-        <button class="button button-quiet" type="button" @click="toggleFollow"><UserPlus :size="16" /> {{ following ? '已关注' : '关注作者' }}</button>
+        <div><strong>{{ post.author.username }}</strong><p>{{ post.author.bio || '正在记录宇宙中的异常信号。' }}</p><small>{{ post.author.followerCount }} 位关注者</small></div>
+        <button class="button button-quiet" type="button" :aria-pressed="following" @click="toggleFollow"><UserPlus :size="16" /> {{ following ? '已关注' : '关注作者' }}</button>
       </section>
 
       <section class="detail-body">

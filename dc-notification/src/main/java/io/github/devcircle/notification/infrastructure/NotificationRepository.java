@@ -82,6 +82,13 @@ public class NotificationRepository {
         return true;
     }
 
+    public boolean acknowledgeOnce(String eventId, String topic) {
+        return jdbcClient.sql("INSERT IGNORE INTO consumer_dedup(event_id, topic) VALUES (:eventId, :topic)")
+                .param("eventId", eventId)
+                .param("topic", topic)
+                .update() == 1;
+    }
+
     @Transactional
     public long markAllRead(Long receiverId, String idempotencyKey) {
         int claimed = jdbcClient.sql("""

@@ -153,6 +153,7 @@ services:
     depends_on:
       mysql: { condition: service_healthy }
       redis: { condition: service_healthy }
+      kafka: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8102/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
   dc-content:
@@ -183,6 +184,7 @@ services:
     depends_on:
       mysql: { condition: service_healthy }
       redis: { condition: service_healthy }
+      kafka: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8105/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
   dc-search:
@@ -203,6 +205,7 @@ services:
     expose: ["8107"]
     depends_on:
       redis: { condition: service_healthy }
+      kafka: { condition: service_healthy }
       dc-content: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8107/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 

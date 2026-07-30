@@ -1,9 +1,14 @@
 package io.github.devcircle.user.infrastructure;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
+import io.github.devcircle.common.event.EventEnvelope;
+import io.github.devcircle.common.event.EventTopics;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
@@ -11,27 +16,24 @@ import java.util.Optional;
 @Repository
 public class UserGraphRepository {
     private final JdbcClient jdbcClient;
+    private final ObjectMapper objectMapper;
 
-    public UserGraphRepository(JdbcClient jdbcClient) {
+    public UserGraphRepository(JdbcClient jdbcClient, ObjectMapper objectMapper) {
         this.jdbcClient = jdbcClient;
+        this.objectMapper = objectMapper;
     }
 
     public boolean follow(Long userId, Long targetUserId) {
-        if (userId.equals(targetUserId)) {
-            return false;
-        }
         int rows = jdbcClient.sql("INSERT IGNORE INTO user_follow(follower_id, followee_id) VALUES (:userId, :targetUserId)")
                 .param("userId", userId)
                 .param("targetUserId", targetUserId)
                 .update();
         if (rows > 0) {
-            jdbcClient.sql("INSERT INTO user_profile(user_id, username, following_count) VALUES (:userId, :username, 1) ON DUPLICATE KEY UPDATE following_count = following_count + 1")
+            jdbcClient.sql("UPDATE user_profile SET following_count = following_count + 1 WHERE user_id = :userId")
                     .param("userId", userId)
-                    .param("username", "user-" + userId)
                     .update();
-            jdbcClient.sql("INSERT INTO user_profile(user_id, username, follower_count) VALUES (:targetUserId, :username, 1) ON DUPLICATE KEY UPDATE follower_count = follower_count + 1")
+            jdbcClient.sql("UPDATE user_profile SET follower_count = follower_count + 1 WHERE user_id = :targetUserId")
                     .param("targetUserId", targetUserId)
-                    .param("username", "user-" + targetUserId)
                     .update();
         }
         return rows > 0;
@@ -88,7 +90,7 @@ public class UserGraphRepository {
                 .list();
     }
 
-    public void unfollow(Long userId, Long targetUserId) {
+    public boolean unfollow(Long userId, Long targetUserId) {
         int rows = jdbcClient.sql("DELETE FROM user_follow WHERE follower_id = :userId AND followee_id = :targetUserId")
                 .param("userId", userId)
                 .param("targetUserId", targetUserId)
@@ -100,6 +102,46 @@ public class UserGraphRepository {
             jdbcClient.sql("UPDATE user_profile SET follower_count = GREATEST(follower_count - 1, 0) WHERE user_id = :targetUserId")
                     .param("targetUserId", targetUserId)
                     .update();
+        }
+        return rows > 0;
+    }
+
+    public UserProfile requireProfile(Long userId) {
+        return profile(userId).orElseThrow(() ->
+                new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "用户不存在或资料尚未完成同步"));
+    }
+
+    @Transactional
+    public boolean synchronizeProfile(String eventId, String topic, Long userId, String displayName) {
+        int claimed = jdbcClient.sql("INSERT IGNORE INTO consumer_dedup(event_id, topic) VALUES (:eventId, :topic)")
+                .param("eventId", eventId).param("topic", topic).update();
+        if (claimed == 0) return false;
+        jdbcClient.sql("""
+                        INSERT INTO user_profile(user_id, username)
+                        VALUES (:userId, :username)
+                        ON DUPLICATE KEY UPDATE username = VALUES(username)
+                        """)
+                .param("userId", userId).param("username", displayName).update();
+        return true;
+    }
+
+    public void writeFollowChanged(Long actorId, UserProfile actor, Long receiverId, UserProfile receiver,
+                                   boolean followed) {
+        String status = followed ? "FOLLOWED" : "UNFOLLOWED";
+        EventEnvelope event = EventEnvelope.now(EventTopics.FOLLOW_CHANGED, "dc-user", receiverId.toString(),
+                java.util.Map.of("actorId", actorId, "actorUsername", actor.username(),
+                        "receiverId", receiverId, "receiverUsername", receiver.username(),
+                        "targetType", "USER", "targetId", actorId, "targetRoute", "/me", "status", status));
+        try {
+            jdbcClient.sql("""
+                            INSERT INTO outbox_event(event_id, topic, aggregate_type, aggregate_id, payload)
+                            VALUES (:eventId, :topic, 'USER', :aggregateId, CAST(:payload AS JSON))
+                            """)
+                    .param("eventId", event.eventId().toString()).param("topic", event.type())
+                    .param("aggregateId", event.aggregateId())
+                    .param("payload", objectMapper.writeValueAsString(event)).update();
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Failed to serialize follow event", ex);
         }
     }
 

@@ -78,7 +78,7 @@ class NotificationKafkaReliabilityIntegrationTest {
     @BeforeEach
     void waitForListenerAndCleanDatabase() {
         listenerRegistry.getListenerContainers()
-                .forEach(container -> ContainerTestUtils.waitForAssignment(container, 4));
+                .forEach(container -> ContainerTestUtils.waitForAssignment(container, 5));
         jdbcClient.sql("DELETE FROM notification").update();
         jdbcClient.sql("DELETE FROM consumer_dedup").update();
     }

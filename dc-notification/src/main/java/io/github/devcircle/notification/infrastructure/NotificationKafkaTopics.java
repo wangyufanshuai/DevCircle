@@ -17,7 +17,8 @@ class NotificationKafkaTopics {
                 topic(EventTopics.AUDIT_COMPLETED), deadLetter(EventTopics.AUDIT_COMPLETED),
                 topic(EventTopics.CONTENT_REJECTED), deadLetter(EventTopics.CONTENT_REJECTED),
                 topic(EventTopics.APPEAL_RESOLVED), deadLetter(EventTopics.APPEAL_RESOLVED),
-                topic(EventTopics.INTERACTION_CHANGED), deadLetter(EventTopics.INTERACTION_CHANGED));
+                topic(EventTopics.INTERACTION_CHANGED), deadLetter(EventTopics.INTERACTION_CHANGED),
+                topic(EventTopics.FOLLOW_CHANGED), deadLetter(EventTopics.FOLLOW_CHANGED));
     }
 
     private NewTopic topic(String name) {

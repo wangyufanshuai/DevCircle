@@ -153,6 +153,7 @@ services:
     depends_on:
       mysql: { condition: service_healthy }
       redis: { condition: service_healthy }
+      kafka: { condition: service_healthy }
 
   dc-content:
     profiles: ["app", "demo"]
@@ -176,6 +177,7 @@ services:
     ports: ["8104:8104"]
     depends_on:
       mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
 
   dc-interaction:
     profiles: ["app", "demo"]
@@ -187,6 +189,7 @@ services:
     depends_on:
       mysql: { condition: service_healthy }
       redis: { condition: service_healthy }
+      kafka: { condition: service_healthy }
 
   dc-search:
     profiles: ["app", "demo"]
@@ -210,6 +213,7 @@ services:
     ports: ["8107:8107"]
     depends_on:
       redis: { condition: service_healthy }
+      kafka: { condition: service_healthy }
       dc-content: { condition: service_started }
 
   dc-notification:

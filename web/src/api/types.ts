@@ -41,6 +41,7 @@ export type Post = {
   title: string
   excerpt: string
   author: string
+  authorId?: number | null
   tags: string[]
   mediaAssets: MediaAsset[]
   likes: number
@@ -138,6 +139,7 @@ export type AppealItem = { appealId: number; postId: number; title: string; user
 export type UploadIntent = { mediaId: number; objectKey: string; uploadUrl: string; requiredHeaders: Record<string, string>; expiresAt: string }
 export type UploadResult = { mediaId: number; objectKey: string; url: string; contentType: string; size: number; width?: number; height?: number; durationSeconds?: number; status: string }
 export type InteractionResult = { targetId: number; type: string; active: boolean; duplicated: boolean; idempotencyKey: string }
+export type FollowResult = { targetUserId: number; followed: boolean; duplicated: boolean }
 export type DeductionAnswerResult = { postId: number; userId: number; correct: boolean; duplicated: boolean; revealed: boolean; solutionUnlocked: boolean; points: number; explanation: string; solution?: string | null }
 export type ReadingProgress = { postId: number; progressPercent: number; anchor?: string | null; completed: boolean; lastReadAt?: string | null }
 export type ReadingTrackState = 'IN_PROGRESS' | 'COMPLETED' | 'SOLVED' | 'REVEALED' | 'UNAVAILABLE'

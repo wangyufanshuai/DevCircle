@@ -207,8 +207,26 @@ test('detail consumes composed follow and interaction state without extra browse
 
   await expect(page.getByRole('button', { name: /已喜欢/ })).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByRole('button', { name: /已收藏/ })).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByRole('button', { name: '已关注' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '已关注' })).toHaveAttribute('aria-pressed', 'true')
   expect(redundantRequests).toEqual([])
+})
+
+test('following an author updates the visible follower count and rolls back on failure', async ({ page }) => {
+  await authenticate(page)
+  let attempts = 0
+  await page.route('**/api/users/7/follow', route => {
+    attempts += 1
+    if (attempts === 1) return route.fulfill({ json: { code: 'OK', message: 'success', data: { targetUserId: 7, followed: true, duplicated: false } } })
+    return route.fulfill({ status: 503, json: { code: 'DEPENDENCY_UNAVAILABLE', message: '关注状态暂时无法同步' } })
+  })
+  await page.goto('/posts/1001')
+  await expect(page.getByText('18 位关注者')).toBeVisible()
+
+  await page.getByRole('button', { name: '关注作者' }).click()
+  await expect(page.getByText('19 位关注者')).toBeVisible()
+  await page.getByRole('button', { name: '已关注' }).click()
+  await expect(page.getByText('19 位关注者')).toBeVisible()
+  await expect(page.getByRole('alert')).toContainText('关注状态暂时无法同步')
 })
 
 test('admin route keeps review reason visible', async ({ page }) => {

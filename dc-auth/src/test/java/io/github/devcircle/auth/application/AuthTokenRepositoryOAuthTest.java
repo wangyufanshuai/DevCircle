@@ -42,8 +42,21 @@ class AuthTokenRepositoryOAuthTest {
                     UNIQUE(provider, provider_user_id)
                 )
                 """).update();
+        jdbcClient.sql("""
+                CREATE TABLE outbox_event (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    event_id CHAR(36) NOT NULL UNIQUE,
+                    topic VARCHAR(128) NOT NULL,
+                    aggregate_type VARCHAR(64) NOT NULL,
+                    aggregate_id VARCHAR(64) NOT NULL,
+                    payload JSON NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'NEW',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    published_at TIMESTAMP NULL
+                )
+                """).update();
         jdbcClient.sql("INSERT INTO role(code, name) VALUES ('USER', 'User')").update();
-        repository = new AuthTokenRepository(jdbcClient, new ObjectMapper());
+        repository = new AuthTokenRepository(jdbcClient, new ObjectMapper().findAndRegisterModules());
     }
 
     @Test
@@ -74,5 +87,8 @@ class AuthTokenRepositoryOAuthTest {
                 .query(Integer.class)
                 .single();
         assertThat(bindings).isEqualTo(1);
+        String event = jdbcClient.sql("SELECT CAST(payload AS VARCHAR) FROM outbox_event WHERE topic = 'user.registered'")
+                .query(String.class).single();
+        assertThat(event).contains("user.registered", account.id().toString(), "New Reader");
     }
 }

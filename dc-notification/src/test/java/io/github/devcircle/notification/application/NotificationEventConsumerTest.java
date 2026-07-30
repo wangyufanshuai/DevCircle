@@ -42,4 +42,25 @@ class NotificationEventConsumerTest {
         verify(repository).createOnce(event.eventId().toString(), EventTopics.INTERACTION_CHANGED, 7L, 2L,
                 "INTERACTION", "新的内容互动", "你的内容收到了一次新的互动", "POST", 9001L, "/posts/9001");
     }
+
+    @Test
+    void newFollowCreatesOneTargetedNotificationWhileUnfollowStaysSilent() throws Exception {
+        NotificationRepository repository = mock(NotificationRepository.class);
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+        NotificationEventConsumer consumer = new NotificationEventConsumer(repository, objectMapper);
+        EventEnvelope followed = EventEnvelope.now(EventTopics.FOLLOW_CHANGED, "dc-user", "7",
+                Map.of("actorId", 2L, "actorUsername", "观测者", "receiverId", 7L,
+                        "targetType", "USER", "targetId", 2L, "targetRoute", "/me", "status", "FOLLOWED"));
+        EventEnvelope unfollowed = EventEnvelope.now(EventTopics.FOLLOW_CHANGED, "dc-user", "7",
+                Map.of("actorId", 2L, "actorUsername", "观测者", "receiverId", 7L,
+                        "targetType", "USER", "targetId", 2L, "targetRoute", "/me", "status", "UNFOLLOWED"));
+
+        consumer.consume(objectMapper.writeValueAsString(followed));
+        consumer.consume(objectMapper.writeValueAsString(unfollowed));
+
+        verify(repository).createOnce(followed.eventId().toString(), EventTopics.FOLLOW_CHANGED, 7L, 2L,
+                "FOLLOW", "新的关注者", "观测者 关注了你", "USER", 2L, "/me");
+        verify(repository).acknowledgeOnce(unfollowed.eventId().toString(), EventTopics.FOLLOW_CHANGED);
+        org.mockito.Mockito.verifyNoMoreInteractions(repository);
+    }
 }

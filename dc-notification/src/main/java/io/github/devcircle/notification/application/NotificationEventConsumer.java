@@ -27,7 +27,8 @@ class NotificationEventConsumer {
     }
 
     @KafkaListener(topics = {EventTopics.AUDIT_COMPLETED, EventTopics.CONTENT_REJECTED,
-            EventTopics.APPEAL_RESOLVED, EventTopics.INTERACTION_CHANGED}, groupId = "dc-notification")
+            EventTopics.APPEAL_RESOLVED, EventTopics.INTERACTION_CHANGED,
+            EventTopics.FOLLOW_CHANGED}, groupId = "dc-notification")
     void consume(String message) throws Exception {
         JsonNode envelope = objectMapper.readTree(message);
         String eventId = requiredText(envelope, "eventId");
@@ -38,6 +39,7 @@ class NotificationEventConsumer {
         }
         boolean interaction = EventTopics.INTERACTION_CHANGED.equals(topic);
         boolean appeal = EventTopics.APPEAL_RESOLVED.equals(topic);
+        boolean follow = EventTopics.FOLLOW_CHANGED.equals(topic);
         long receiverId = payload.path("receiverId").asLong(0);
         long targetIdValue = payload.path("targetId").asLong(payload.path("postId").asLong(0));
         if (interaction && receiverId <= 0 && targetResolver != null && targetIdValue > 0) {
@@ -46,16 +48,22 @@ class NotificationEventConsumer {
         if (receiverId <= 0) {
             throw new IllegalArgumentException("Notification event is missing receiverId");
         }
-        String type = interaction ? "INTERACTION" : "AUDIT";
-        String title = interaction ? "新的内容互动" : appeal ? "申诉处理结果" : "投稿审核状态更新";
         String status = payload.path("status").asText("UNKNOWN");
-        String content = interaction ? "你的内容收到了一次新的互动"
+        if (follow && !"FOLLOWED".equals(status)) {
+            notificationRepository.acknowledgeOnce(eventId, topic);
+            return;
+        }
+        String type = follow ? "FOLLOW" : interaction ? "INTERACTION" : "AUDIT";
+        String title = follow ? "新的关注者" : interaction ? "新的内容互动" : appeal ? "申诉处理结果" : "投稿审核状态更新";
+        String actorUsername = payload.path("actorUsername").asText("一位读者");
+        String content = follow ? actorUsername + " 关注了你"
+                : interaction ? "你的内容收到了一次新的互动"
                 : appeal ? ("PENDING".equals(status) ? "你的申诉已受理，投稿已进入人工复审队列" : "你的申诉已处理，请查看审核时间线")
                 : "你的投稿状态已更新为 " + status;
         long actorId = payload.path("actorId").asLong(0);
         Long targetId = targetIdValue > 0 ? targetIdValue : null;
-        String targetType = payload.path("targetType").asText(targetId == null ? "" : "POST");
-        String targetRoute = payload.path("targetRoute").asText(targetId == null ? "" : "/posts/" + targetId);
+        String targetType = payload.path("targetType").asText(targetId == null ? "" : follow ? "USER" : "POST");
+        String targetRoute = payload.path("targetRoute").asText(targetId == null ? "" : follow ? "/me" : "/posts/" + targetId);
         notificationRepository.createOnce(eventId, topic, receiverId, actorId > 0 ? actorId : null, type, title,
                 content, targetType, targetId, targetRoute);
     }

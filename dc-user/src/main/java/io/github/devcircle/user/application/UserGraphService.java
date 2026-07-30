@@ -6,6 +6,7 @@ import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.user.infrastructure.UserGraphRepository;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -15,33 +16,41 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class UserGraphService {
     private final UserGraphRepository repository;
-    private final StringRedisTemplate redisTemplate;
 
-    public UserGraphService(UserGraphRepository repository, StringRedisTemplate redisTemplate) {
+    @Autowired
+    public UserGraphService(UserGraphRepository repository) {
         this.repository = repository;
-        this.redisTemplate = redisTemplate;
+    }
+
+    /** Compatibility constructor for isolated tests and older embedders. */
+    public UserGraphService(UserGraphRepository repository, StringRedisTemplate ignoredRedisTemplate) {
+        this(repository);
     }
 
     @Transactional
     public FollowResult follow(Long userId, Long targetUserId, String idempotencyKey) {
         validate(userId, targetUserId, idempotencyKey);
+        UserGraphRepository.UserProfile actor = repository.requireProfile(userId);
+        UserGraphRepository.UserProfile receiver = repository.requireProfile(targetUserId);
         if (!repository.claimOperation(userId, targetUserId, "FOLLOW", idempotencyKey)) {
             return new FollowResult(targetUserId, repository.isFollowing(userId, targetUserId), true);
         }
         boolean inserted = repository.follow(userId, targetUserId);
-        cacheFollow(userId, targetUserId);
+        if (inserted) repository.writeFollowChanged(userId, actor, targetUserId, receiver, true);
         return new FollowResult(targetUserId, true, !inserted);
     }
 
     @Transactional
     public FollowResult unfollow(Long userId, Long targetUserId, String idempotencyKey) {
         validate(userId, targetUserId, idempotencyKey);
+        UserGraphRepository.UserProfile actor = repository.requireProfile(userId);
+        UserGraphRepository.UserProfile receiver = repository.requireProfile(targetUserId);
         if (!repository.claimOperation(userId, targetUserId, "UNFOLLOW", idempotencyKey)) {
             return new FollowResult(targetUserId, repository.isFollowing(userId, targetUserId), true);
         }
-        repository.unfollow(userId, targetUserId);
-        redisTemplate.opsForSet().remove("user:" + userId + ":followees", targetUserId.toString());
-        return new FollowResult(targetUserId, false, false);
+        boolean removed = repository.unfollow(userId, targetUserId);
+        if (removed) repository.writeFollowChanged(userId, actor, targetUserId, receiver, false);
+        return new FollowResult(targetUserId, false, !removed);
     }
 
     public Optional<UserGraphRepository.UserProfile> profile(Long userId) {
@@ -66,16 +75,17 @@ public class UserGraphService {
                 .toList();
     }
 
-    private void cacheFollow(Long userId, Long targetUserId) {
-        redisTemplate.opsForSet().add("user:" + userId + ":followees", targetUserId.toString());
-        redisTemplate.opsForHash().put("user:" + userId + ":graph-features", "followee:" + targetUserId, "1");
-    }
-
     public boolean isFollowing(Long userId, Long targetUserId) {
         return repository.isFollowing(userId, targetUserId);
     }
 
     private void validate(Long userId, Long targetUserId, String idempotencyKey) {
+        if (userId == null || userId <= 0) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录");
+        }
+        if (targetUserId == null || targetUserId <= 0) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "用户 ID 无效");
+        }
         if (userId.equals(targetUserId)) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "不能关注自己");
         }

@@ -1,5 +1,5 @@
 import type {
-  ApiResponse, AppealItem, CommentItem, CommentThread, CursorPage, Dashboard, DeductionAnswerResult, Draft, FeedItem, InteractionResult,
+  ApiResponse, AppealItem, CommentItem, CommentThread, CursorPage, Dashboard, DeductionAnswerResult, Draft, FeedItem, FollowResult, InteractionResult,
   LoginResponse, ModerationTask, NotificationItem, PageResponse, Post, SaveDraftRequest,
   PostAudit, PostDetail, ReadingProgress, Theme, UploadIntent, UploadResult, UserProfile, UserSession
 } from './types'
@@ -133,8 +133,8 @@ export async function fetchPostsCursor(cursor = '', filters: { theme?: Theme; co
 export function fetchPost(id: number) { return request<PostDetail>(`/api/posts/${id}`) }
 export function fetchRelated(id: number) { return request<Post[]>(`/api/posts/${id}/related?size=6`) }
 export function fetchDashboard() { return request<Dashboard>('/api/me/dashboard') }
-export function followUser(userId: number) { return write<{ following: boolean }>(`/api/users/${userId}/follow`, 'POST') }
-export function unfollowUser(userId: number) { return write<{ following: boolean }>(`/api/users/${userId}/follow`, 'DELETE') }
+export function followUser(userId: number) { return write<FollowResult>(`/api/users/${userId}/follow`, 'POST') }
+export function unfollowUser(userId: number) { return write<FollowResult>(`/api/users/${userId}/follow`, 'DELETE') }
 export function fetchUserProfiles(userIds: number[]) { const ids = [...new Set(userIds)].filter(id => id > 0).slice(0, 50); return ids.length ? request<UserProfile[]>(`/api/users/batch?ids=${ids.join(',')}`) : Promise.resolve([]) }
 export function searchPosts(keyword: string, theme?: Theme) {
   return request<PageResponse<Post>>(`/api/search/posts?keyword=${encodeURIComponent(keyword)}${theme ? `&theme=${theme}` : ''}`)

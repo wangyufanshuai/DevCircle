@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
+import io.github.devcircle.common.event.EventEnvelope;
+import io.github.devcircle.common.event.EventTopics;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -100,7 +102,27 @@ public class AuthTokenRepository {
                         """)
                 .param("userId", account.id())
                 .update();
-        return findAccountById(account.id()).orElseThrow();
+        Account created = findAccountById(account.id()).orElseThrow();
+        writeUserRegistered(created);
+        return created;
+    }
+
+    private void writeUserRegistered(Account account) {
+        EventEnvelope event = EventEnvelope.now(EventTopics.USER_REGISTERED, "dc-auth", account.id().toString(),
+                Map.of("userId", account.id(), "displayName", account.displayName(), "status", account.status()));
+        try {
+            jdbcClient.sql("""
+                            INSERT INTO outbox_event(event_id, topic, aggregate_type, aggregate_id, payload)
+                            VALUES (:eventId, :topic, 'USER', :aggregateId, CAST(:payload AS JSON))
+                            """)
+                    .param("eventId", event.eventId().toString())
+                    .param("topic", event.type())
+                    .param("aggregateId", event.aggregateId())
+                    .param("payload", objectMapper.writeValueAsString(event))
+                    .update();
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Failed to serialize user registration event", ex);
+        }
     }
 
     @Transactional

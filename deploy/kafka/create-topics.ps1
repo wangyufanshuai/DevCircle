@@ -4,6 +4,8 @@ $topics = @(
   "post.deleted",
   "comment.created",
   "interaction.changed",
+  "user.registered",
+  "follow.changed",
   "notification.created",
   "audit.completed",
   "content.rejected",
