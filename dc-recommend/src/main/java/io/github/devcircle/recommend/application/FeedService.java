@@ -118,7 +118,8 @@ public class FeedService {
             String[] ids = request.postIds().stream().map(String::valueOf).toArray(String[]::new);
             redisTemplate.opsForSet().add(key, ids);
             redisTemplate.expire(key, Duration.ofDays(7));
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException ex) {
+            failIfStrict("推荐曝光缓存暂时不可用", ex);
         }
         return recorded;
     }
@@ -136,7 +137,8 @@ public class FeedService {
         impressionRepository.saveRecommendEvent(userId, postId, normalizedEvent, normalizedScene, finalExperimentId, finalBucket, requestId);
         try {
             redisTemplate.opsForHash().increment("recommend:event:" + normalizedScene, normalizedEvent, 1);
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException ex) {
+            failIfStrict("推荐事件缓存暂时不可用", ex);
         }
         return Map.of(
                 "eventId", UUID.randomUUID().toString(),
@@ -164,9 +166,9 @@ public class FeedService {
             if (response != null && response.data() != null && !response.data().records().isEmpty()) {
                 return new CandidateSet(response.data().records(), "DB", false);
             }
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException ex) {
             if (!readFallbackEnabled) {
-                throw ignored;
+                throw dependency("内容服务暂时不可用", ex);
             }
         }
         return readFallbackEnabled
@@ -225,10 +227,13 @@ public class FeedService {
                 redisTemplate.opsForList().leftPush(key, item.post().id() + "|" + item.algorithm() + "|" + item.score());
                 redisTemplate.opsForList().trim(key, 0, 199);
                 redisTemplate.expire(key, Duration.ofDays(7));
-                if (impressionRepository != null) {
-                    impressionRepository.save(userId, scene, item);
-                }
-            } catch (RuntimeException ignored) {
+            } catch (RuntimeException ex) {
+                failIfStrict("推荐曝光缓存暂时不可用", ex);
+            }
+            try {
+                if (impressionRepository != null) impressionRepository.save(userId, scene, item);
+            } catch (RuntimeException ex) {
+                failIfStrict("推荐曝光记录暂时不可用", ex);
             }
         }
     }
@@ -263,7 +268,8 @@ public class FeedService {
         try {
             Set<String> values = redisTemplate.opsForSet().members("user:" + userId + ":interest-tags");
             if (values != null && !values.isEmpty()) return values;
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException ex) {
+            failIfStrict("推荐兴趣数据暂时不可用", ex);
         }
         if (!readFallbackEnabled) return Set.of();
         return Set.of("密室", "世界观", "星云");
@@ -273,7 +279,8 @@ public class FeedService {
         try {
             Set<String> values = redisTemplate.opsForSet().members("user:" + userId + ":exposed-posts");
             if (values != null) return values.stream().map(Long::valueOf).collect(java.util.stream.Collectors.toSet());
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException ex) {
+            failIfStrict("推荐曝光数据暂时不可用", ex);
         }
         return Set.of();
     }
@@ -281,8 +288,8 @@ public class FeedService {
     private boolean followedAuthor(Long userId, String author) {
         try {
             return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember("user:" + userId + ":followees", author));
-        } catch (RuntimeException ignored) {
-            if (!readFallbackEnabled) return false;
+        } catch (RuntimeException ex) {
+            if (!readFallbackEnabled) throw dependency("关注图谱暂时不可用", ex);
             return "林墨".equals(author) && userId == 1L;
         }
     }
@@ -291,7 +298,8 @@ public class FeedService {
         try {
             String value = (String) redisTemplate.opsForHash().get("user:" + userId + ":graph-features", "mutual:" + author);
             return value == null ? 0L : Long.parseLong(value);
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException ex) {
+            if (!readFallbackEnabled) throw dependency("关注图谱暂时不可用", ex);
             return 0L;
         }
     }
@@ -300,7 +308,8 @@ public class FeedService {
         try {
             Double score = redisTemplate.opsForZSet().score("feed:hot-posts", postId.toString());
             return score == null ? 0.0 : score;
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException ex) {
+            if (!readFallbackEnabled) throw dependency("推荐热度暂时不可用", ex);
             return 0.0;
         }
     }
@@ -323,6 +332,17 @@ public class FeedService {
             throw new io.github.devcircle.common.error.BusinessException(
                     io.github.devcircle.common.error.ErrorCode.VALIDATION_FAILED, "写操作必须提供有效的 Idempotency-Key");
         }
+    }
+
+    private void failIfStrict(String message, RuntimeException cause) {
+        if (!readFallbackEnabled) throw dependency(message, cause);
+    }
+
+    private io.github.devcircle.common.error.BusinessException dependency(String message, RuntimeException cause) {
+        var failure = new io.github.devcircle.common.error.BusinessException(
+                io.github.devcircle.common.error.ErrorCode.DEPENDENCY_UNAVAILABLE, message);
+        failure.initCause(cause);
+        return failure;
     }
 
     private String normalizeEventType(String eventType) {
