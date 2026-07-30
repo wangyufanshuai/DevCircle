@@ -280,6 +280,28 @@ test('keyword discovery keeps every filter in the URL and paginates search resul
   expect(requests.at(-1)?.searchParams.get('contentKind')).toBe('CASE_FILE')
 })
 
+test('discovery restores the loaded cursor after browser back navigation', async ({ page }) => {
+  const cursors: string[] = []
+  await page.route('**/api/posts?*', route => {
+    const url = new URL(route.request().url())
+    const cursor = url.searchParams.get('cursor') ?? ''
+    cursors.push(cursor)
+    const records = cursor === ''
+      ? [{ ...post, id: 1001, title: '第一页档案' }]
+      : cursor === 'c1'
+        ? [{ ...post, id: 1002, title: '第二页档案' }]
+        : [{ ...post, id: 1003, title: '第三页档案' }]
+    const nextCursor = cursor === '' ? 'c1' : cursor === 'c1' ? 'c2' : ''
+    return route.fulfill({ json: { code: 'OK', message: 'success', data: records, meta: { nextCursor, hasMore: Boolean(nextCursor) } } })
+  })
+  await page.goto('/discover')
+  await page.getByRole('button', { name: '加载更多' }).click()
+  await page.getByRole('link', { name: /第一页档案/ }).click()
+  await page.goBack()
+  await expect(page.getByRole('link', { name: /第二页档案/ })).toBeVisible()
+  expect(cursors).toEqual(['', 'c1', '', 'c1'])
+})
+
 test('reader comments paginate, reply once and preserve deleted thread structure', async ({ page }) => {
   await authenticate(page)
   const root = { id: 30, postId: 1001, authorId: 7, author: '用户 7', content: '第一条线索', status: 'VISIBLE', likes: 0, createdAt: '2026-07-30T01:00:00Z' }

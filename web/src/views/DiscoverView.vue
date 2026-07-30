@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { LoaderCircle, Search } from 'lucide-vue-next'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import PostCard from '../components/PostCard.vue'
 import StatusPanel from '../components/StatusPanel.vue'
 import { fetchPostsCursor, searchPostsCursor } from '../api/client'
@@ -14,28 +14,38 @@ const difficulty = ref(typeof route.query.difficulty === 'string' ? route.query.
 const contentKind = ref(typeof route.query.contentKind === 'string' ? route.query.contentKind : '')
 const cursor = ref(''); const hasMore = ref(false); const loading = ref(false); const loadingMore = ref(false); const error = ref('')
 
-async function load(reset = true) {
+async function load(reset = true, restoreCursor = '') {
   if (reset) { loading.value = true; posts.value = []; cursor.value = ''; error.value = '' } else loadingMore.value = true
   try {
-    if (keyword.value.trim()) {
-      const result = await searchPostsCursor(keyword.value.trim(), reset ? '' : cursor.value, { theme: theme.value || undefined, contentKind: contentKind.value || undefined, difficulty: difficulty.value || undefined })
-      posts.value = reset ? result.records : [...posts.value, ...result.records]
+    let nextCursor = reset ? '' : cursor.value
+    let result: { records: Post[]; nextCursor: string; hasMore: boolean }
+    do {
+      if (keyword.value.trim()) {
+        result = await searchPostsCursor(keyword.value.trim(), nextCursor, { theme: theme.value || undefined, contentKind: contentKind.value || undefined, difficulty: difficulty.value || undefined })
+      } else {
+        result = await fetchPostsCursor(nextCursor, { theme: theme.value || undefined, contentKind: contentKind.value || undefined, difficulty: difficulty.value || undefined })
+      }
+      posts.value = reset && nextCursor === '' ? result.records : [...posts.value, ...result.records]
+      nextCursor = result.nextCursor
       cursor.value = result.nextCursor; hasMore.value = result.hasMore
-    } else {
-      const result = await fetchPostsCursor(reset ? '' : cursor.value, { theme: theme.value || undefined, contentKind: contentKind.value || undefined, difficulty: difficulty.value || undefined })
-      posts.value = reset ? result.records : [...posts.value, ...result.records]
-      cursor.value = result.nextCursor; hasMore.value = result.hasMore
-    }
+      if (!restoreCursor || nextCursor === restoreCursor || !result.hasMore) break
+    } while (true)
   } catch (reason) { error.value = reason instanceof Error ? reason.message : '发现内容暂时不可用' }
   finally { loading.value = false; loadingMore.value = false }
 }
 
 async function submit() {
   await router.replace({ query: { ...(keyword.value.trim() && { q: keyword.value.trim() }), ...(theme.value && { theme: theme.value }), ...(contentKind.value && { contentKind: contentKind.value }), ...(difficulty.value && { difficulty: difficulty.value }) } })
+  history.replaceState({ ...history.state, discoverCursor: '', discoverScroll: 0 }, '')
   await load(true)
 }
-function saveScroll() { history.replaceState({ ...history.state, discoverScroll: window.scrollY }, '') }
-onMounted(async () => { await load(true); requestAnimationFrame(() => window.scrollTo({ top: Number(history.state?.discoverScroll ?? 0) })) })
+function saveScroll() { history.replaceState({ ...history.state, discoverCursor: cursor.value, discoverScroll: window.scrollY }, '') }
+onBeforeRouteLeave(() => saveScroll())
+onMounted(async () => {
+  const restoreCursor = typeof history.state?.discoverCursor === 'string' ? history.state.discoverCursor : ''
+  await load(true, restoreCursor)
+  requestAnimationFrame(() => window.scrollTo({ top: Number(history.state?.discoverScroll ?? 0), behavior: 'auto' }))
+})
 onBeforeUnmount(saveScroll)
 </script>
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ArrowRight, LoaderCircle } from 'lucide-vue-next'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { RouterLink, onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import PostCard from '../components/PostCard.vue'
 import StatusPanel from '../components/StatusPanel.vue'
 import { fetchPostsCursor } from '../api/client'
@@ -17,20 +17,33 @@ const configs: Record<Theme, { title: string; subtitle: string }> = {
   COSMOS: { title: '宇宙档案', subtitle: '观测远方，也重新观测我们自己。' }
 }
 
-async function load(reset = true) {
+async function load(reset = true, restoreCursor = '') {
   if (reset) { loading.value = true; posts.value = []; cursor.value = ''; error.value = '' } else loadingMore.value = true
   try {
-    const result = await fetchPostsCursor(reset ? '' : cursor.value, { theme: theme.value })
-    posts.value = reset ? result.records : [...posts.value, ...result.records]
-    cursor.value = result.nextCursor; hasMore.value = result.hasMore
+    let nextCursor = reset ? '' : cursor.value
+    do {
+      const result = await fetchPostsCursor(nextCursor, { theme: theme.value })
+      posts.value = reset && nextCursor === '' ? result.records : [...posts.value, ...result.records]
+      nextCursor = result.nextCursor
+      cursor.value = result.nextCursor; hasMore.value = result.hasMore
+      if (!restoreCursor || nextCursor === restoreCursor || !result.hasMore) break
+    } while (true)
     await router.replace({ query: cursor.value ? { cursor: cursor.value } : {} })
   } catch (reason) { error.value = reason instanceof Error ? reason.message : '频道暂时不可用' }
   finally { loading.value = false; loadingMore.value = false }
 }
 
-function saveScroll() { history.replaceState({ ...history.state, channelScroll: window.scrollY }, '') }
-watch(theme, () => void load(true))
-onMounted(async () => { await load(true); requestAnimationFrame(() => window.scrollTo({ top: Number(history.state?.channelScroll ?? 0) })) })
+function saveScroll() { history.replaceState({ ...history.state, channelCursor: cursor.value, channelScroll: window.scrollY }, '') }
+onBeforeRouteLeave(() => saveScroll())
+watch(theme, () => {
+  history.replaceState({ ...history.state, channelCursor: '', channelScroll: 0 }, '')
+  void load(true)
+})
+onMounted(async () => {
+  const restoreCursor = typeof history.state?.channelCursor === 'string' ? history.state.channelCursor : ''
+  await load(true, restoreCursor)
+  requestAnimationFrame(() => window.scrollTo({ top: Number(history.state?.channelScroll ?? 0), behavior: 'auto' }))
+})
 onBeforeUnmount(saveScroll)
 </script>
 
