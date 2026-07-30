@@ -575,11 +575,13 @@ public class AdminService {
     private AdminActionResult updateModerationTask(Long taskId, Long auditorId, String traceId, String action, String status, String reviewLevel, String reason) {
         requireDatabase();
         requireReason(reason);
+        String normalizedReason = reason.trim();
         try {
             Long postId = jdbcClient.sql("SELECT post_id FROM moderation_task WHERE id = :taskId")
                     .param("taskId", taskId)
                     .query(Long.class)
-                    .single();
+                    .optional()
+                    .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "审核任务不存在"));
             int updated = jdbcClient.sql("""
                             UPDATE moderation_task
                             SET status = :status, review_level = :reviewLevel, reviewer_id = :auditorId, reviewed_at = CURRENT_TIMESTAMP
@@ -598,16 +600,26 @@ public class AdminService {
                     .param("postId", postId)
                     .param("auditorId", auditorId)
                     .param("action", action)
-                    .param("reason", reason)
+                    .param("reason", normalizedReason)
                     .update();
             if ("CHANGES_REQUIRED".equals(status)) {
-                jdbcClient.sql("UPDATE post SET status = 'CHANGES_REQUIRED', review_reason = :reason WHERE id = :postId AND status = 'PENDING'")
-                        .param("reason", reason.trim())
+                int postRows = jdbcClient.sql("UPDATE post SET status = 'CHANGES_REQUIRED', review_reason = :reason WHERE id = :postId AND status = 'PENDING'")
+                        .param("reason", normalizedReason)
                         .param("postId", postId)
+                        .update();
+                if (postRows == 0) {
+                    throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "待审核内容不存在或状态已变化");
+                }
+                jdbcClient.sql("INSERT INTO post_audit_record(post_id, auditor_id, action, reason) VALUES (:postId, :auditorId, :action, :reason)")
+                        .param("postId", postId)
+                        .param("auditorId", auditorId)
+                        .param("action", action)
+                        .param("reason", normalizedReason)
                         .update();
                 writeOutbox(postId, action, "CHANGES_REQUIRED", EventTopics.CONTENT_REJECTED);
             }
-            logAudit(auditorId, action, "MODERATION_TASK", String.valueOf(taskId), null, traceId, Map.of("postId", postId, "status", status));
+            logAudit(auditorId, action, "MODERATION_TASK", String.valueOf(taskId), null, traceId,
+                    Map.of("postId", postId, "status", status, "reason", normalizedReason));
             return new AdminActionResult(action, Map.of("taskId", taskId, "postId", postId, "status", status));
         } catch (DataAccessException ex) {
             throw ex;

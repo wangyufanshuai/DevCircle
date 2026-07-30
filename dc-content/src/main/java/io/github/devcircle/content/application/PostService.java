@@ -140,6 +140,9 @@ public class PostService {
 
     public Map<String, Object> createAppeal(Long userId, Long postId, String reason, String idempotencyKey) {
         requireWriteHeaders(userId, idempotencyKey);
+        if (reason == null || reason.trim().length() < 4 || reason.trim().length() > 512) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "申诉理由必须为 4 至 512 个字符");
+        }
         return postRepository.createAppeal(userId, postId, reason, idempotencyKey);
     }
 

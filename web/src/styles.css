@@ -184,7 +184,7 @@ select { color-scheme: dark; }
 .clue-list ul { padding-left: 22px; }
 .clue-list li { margin: 10px 0; }
 .solve-box { margin-top: 40px; padding: 28px; border-left: 2px solid var(--gold); background: rgba(226,183,95,.05); }
-.solve-box label, .comment-form label, .editor-panel > label, .admin-page label, .auth-card label { display: block; margin: 14px 0 7px; color: #b8c0ca; font-size: 12px; }
+.solve-box label, .comment-form label, .editor-panel > label, .editor-fields > label, .admin-page label, .auth-card label { display: block; margin: 14px 0 7px; color: #b8c0ca; font-size: 12px; }
 .inline-feedback { display: flex; align-items: center; gap: 7px; margin-top: 15px; color: var(--cyan); }
 .solve-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 10px; }
 .solution-unlocked { display: flex; align-items: center; gap: 8px; color: var(--cyan); }
@@ -222,6 +222,8 @@ select { color-scheme: dark; }
 
 .write-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(330px, .75fr); gap: 26px; align-items: start; }
 .editor-panel, .preview-panel { min-width: 0; padding: clamp(20px, 3vw, 32px); border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--surface); }
+.editor-fields { display: contents; min-inline-size: 0; margin: 0; padding: 0; border: 0; }
+.status-note { margin: 14px 0; padding: 12px 14px; border-left: 2px solid var(--gold); color: var(--muted); background: rgba(226,183,95,.05); }
 .editor-toolbar { min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: 11px; }
 .editor-toolbar span { display: inline-flex; align-items: center; gap: 6px; }
 .field-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; }
@@ -244,6 +246,7 @@ select { color-scheme: dark; }
 .audit-timeline span.complete { color: var(--cyan); }
 .audit-timeline span.current { color: var(--gold-bright); }
 .appeal-box { display: grid; gap: 9px; margin: 18px 0; padding: 16px; border: 1px solid var(--line-soft); }
+.appeal-box small { color: var(--muted); line-height: 1.6; }
 .audit-records { margin: 20px 0; border-top: 1px solid var(--line-soft); }
 .audit-records h2 { margin-top: 18px; font-size: 19px; }
 .audit-records > div { padding: 12px 0; border-bottom: 1px solid var(--line-soft); }

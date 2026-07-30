@@ -274,6 +274,47 @@ test('version conflict keeps local draft and blocks stale submission', async ({ 
   await expect(page.getByRole('button', { name: '提交审核' })).toBeEnabled()
 })
 
+test('author can appeal, revise and resubmit a changes-required draft', async ({ page }) => {
+  await authenticate(page)
+  let draft = { id: 12, authorId: 2, title: '需要补证的钟楼档案', content: '原始正文', tags: ['推理'], type: 'TEXT', mediaIds: [], media: [], theme: 'DEDUCTION', contentKind: 'CASE_FILE', difficulty: 'MEDIUM', solvable: true, clues: '', suspects: '', timeline: '', question: '', answerKeywords: '', solution: '', status: 'CHANGES_REQUIRED', version: 3, lastSavedAt: '2026-07-30T01:00:00Z', reviewReason: '请补充怀表来源并说明时间线矛盾' }
+  const audits = [{ id: 1, postId: 12, auditorId: 9, action: 'REQUIRE_CHANGES', reason: draft.reviewReason, createdAt: '2026-07-30T01:30:00Z' }]
+  let savedContent = ''; let submitCalls = 0
+  await page.route('**/api/posts/drafts?size=50', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [draft] } }))
+  await page.route('**/api/posts/drafts/12/audits', route => route.fulfill({ json: { code: 'OK', message: 'success', data: audits } }))
+  await page.route('**/api/posts/12/appeals', route => {
+    const reason = JSON.parse(route.request().postData() || '{}').reason
+    audits.push({ id: 2, postId: 12, auditorId: 2, action: 'APPEAL_CREATED', reason, createdAt: '2026-07-30T02:00:00Z' })
+    return route.fulfill({ json: { code: 'OK', message: 'success', data: { appealId: 5, postId: 12, status: 'PENDING' } } })
+  })
+  await page.route('**/api/posts/drafts/12/submit?*', route => {
+    submitCalls += 1; draft = { ...draft, status: 'PENDING', version: draft.version + 1, reviewReason: null }
+    return route.fulfill({ json: { code: 'OK', message: 'success', data: draft } })
+  })
+  await page.route('**/api/posts/drafts/12', route => {
+    if (route.request().method() === 'PUT') {
+      const body = JSON.parse(route.request().postData() || '{}'); savedContent = body.content
+      draft = { ...draft, ...body, version: draft.version + 1 }
+    }
+    return route.fulfill({ json: { code: 'OK', message: 'success', data: draft } })
+  })
+  await page.goto('/write/12')
+  await expect(page.getByText('审核意见：请补充怀表来源并说明时间线矛盾')).toBeVisible()
+  await expect(page.getByText('要求修改', { exact: true })).toBeVisible()
+  await page.getByLabel('申诉理由').fill('短')
+  await page.getByRole('button', { name: '提交申诉' }).click()
+  await expect(page.getByRole('alert')).toContainText('至少 4 个字符')
+  await page.getByLabel('申诉理由').fill('审核意见遗漏了附件中的来源说明，请重新核对。')
+  await page.getByRole('button', { name: '提交申诉' }).click()
+  await expect(page.getByRole('button', { name: '申诉已提交' })).toBeDisabled()
+  await expect(page.getByText('提交申诉', { exact: true })).toBeVisible()
+  await page.getByLabel('正文 Markdown').fill('补充后的正文：怀表来自失踪者的储物柜。')
+  await page.getByRole('button', { name: '重新提交审核' }).click()
+  await expect(page.getByText('等待审核', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('正文 Markdown')).toBeDisabled()
+  expect(savedContent).toContain('怀表来自失踪者的储物柜')
+  expect(submitCalls).toBe(1)
+})
+
 test('creator persists media role alt text and canonical order', async ({ page }) => {
   await authenticate(page)
   let nextMediaId = 200; let savedBody: any = null

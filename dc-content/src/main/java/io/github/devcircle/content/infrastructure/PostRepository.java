@@ -19,6 +19,7 @@ import io.github.devcircle.content.api.ReadingProgressRequest;
 import io.github.devcircle.content.api.ReadingProgressView;
 import io.github.devcircle.content.api.SaveDraftRequest;
 import io.github.devcircle.content.domain.DraftSubmissionValidator;
+import io.github.devcircle.content.domain.DraftWorkflowPolicy;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -526,7 +527,7 @@ public class PostRepository {
                             difficulty = :difficulty, solvable = :solvable, version = version + 1,
                             last_saved_at = CURRENT_TIMESTAMP
                         WHERE id = :draftId AND author_id = :authorId
-                          AND status IN ('DRAFT', 'CHANGES_REQUIRED') AND version = :version
+                          AND status IN ('DRAFT', 'CHANGES_REQUIRED', 'REJECTED') AND version = :version
                         """)
                 .param("title", safeText(request.title()))
                 .param("type", normalizeType(request.type()))
@@ -561,7 +562,7 @@ public class PostRepository {
                         UPDATE post
                         SET status = 'PENDING', version = version + 1, submitted_at = CURRENT_TIMESTAMP, review_reason = NULL
                         WHERE id = :draftId AND author_id = :authorId
-                          AND status IN ('DRAFT', 'CHANGES_REQUIRED') AND version = :version
+                          AND status IN ('DRAFT', 'CHANGES_REQUIRED', 'REJECTED') AND version = :version
                         """)
                 .param("draftId", draftId)
                 .param("authorId", authorId)
@@ -571,6 +572,12 @@ public class PostRepository {
             assertDraftWritable(authorId, draftId);
             throw new BusinessException(ErrorCode.VERSION_CONFLICT, "草稿版本已变化，请刷新后重新提交");
         }
+        String submissionAction = DraftWorkflowPolicy.submissionAuditAction(draft.status());
+        jdbcClient.sql("INSERT INTO post_audit_record(post_id, auditor_id, action, reason) VALUES (:postId, NULL, :action, :reason)")
+                .param("postId", draftId)
+                .param("action", submissionAction)
+                .param("reason", "SUBMIT_POST".equals(submissionAction) ? "作者提交审核" : "作者修改后重新提交审核")
+                .update();
         CreatePostRequest submitted = new CreatePostRequest(
                 draft.title(), draft.content(), draft.tags(), draft.type(), draft.mediaIds(), draft.theme(),
                 draft.contentKind(), draft.difficulty(), draft.solvable(), draft.clues(), draft.solution());
@@ -652,9 +659,14 @@ public class PostRepository {
 
     @Transactional
     public Map<String, Object> createAppeal(Long userId, Long postId, String reason, String idempotencyKey) {
-        Long existingId = claimIdempotency(userId, "CREATE_APPEAL", idempotencyKey);
+        Long existingId = claimIdempotency(userId, "CREATE_APPEAL:" + postId, idempotencyKey);
         if (existingId != null) {
-            return Map.of("appealId", existingId, "postId", postId, "status", "PENDING", "duplicateRequest", true);
+            AppealState existing = jdbcClient.sql("SELECT post_id, status FROM appeal_record WHERE id = :appealId")
+                    .param("appealId", existingId)
+                    .query((rs, rowNum) -> new AppealState(rs.getLong("post_id"), rs.getString("status")))
+                    .optional()
+                    .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "申诉记录不存在"));
+            return Map.of("appealId", existingId, "postId", existing.postId(), "status", existing.status(), "duplicateRequest", true);
         }
         Long owned = jdbcClient.sql("""
                         SELECT COUNT(*) FROM post
@@ -675,11 +687,16 @@ public class PostRepository {
             );
             statement.setLong(1, postId);
             statement.setLong(2, userId);
-            statement.setString(3, reason == null || reason.isBlank() ? "用户申请复审" : reason);
+            statement.setString(3, reason.trim());
             return statement;
         }, keyHolder);
         Number key = keyHolder.getKey();
         Long appealId = key == null ? 0L : key.longValue();
+        jdbcClient.sql("INSERT INTO post_audit_record(post_id, auditor_id, action, reason) VALUES (:postId, :userId, 'APPEAL_CREATED', :reason)")
+                .param("postId", postId)
+                .param("userId", userId)
+                .param("reason", reason.trim())
+                .update();
         writeOutbox(EventTopics.APPEAL_CREATED, "APPEAL", appealId.toString(), Map.of("appealId", appealId, "postId", postId, "userId", userId));
         attachIdempotencyResource(idempotencyKey, appealId);
         return Map.of("appealId", appealId, "postId", postId, "status", "PENDING");
@@ -887,6 +904,9 @@ public class PostRepository {
                                         long invalidRole, long coverCount) {
     }
 
+    private record AppealState(long postId, String status) {
+    }
+
     private Long claimIdempotency(Long userId, String operation, String idempotencyKey) {
         int inserted = jdbcClient.sql("""
                         INSERT IGNORE INTO content_idempotency_record(idempotency_key, user_id, operation)
@@ -932,7 +952,7 @@ public class PostRepository {
         if (statuses.isEmpty()) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "草稿不存在");
         }
-        if (!List.of("DRAFT", "CHANGES_REQUIRED").contains(statuses.getFirst())) {
+        if (!DraftWorkflowPolicy.isAuthorEditable(statuses.getFirst())) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "当前状态不允许编辑或重复提交");
         }
     }
