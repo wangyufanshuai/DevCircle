@@ -118,6 +118,30 @@ class ContentOutboxIntegrationTest {
                 + event.eventId() + "'")).isEqualTo(1);
     }
 
+    @Test
+    void commentLifecycleEventsUpdateContentCounterExactlyOnce() throws Exception {
+        jdbcClient.sql("""
+                        INSERT INTO post(id, author_id, title, status, comment_count)
+                        VALUES (91002, 7, 'Comment projection case', 'PUBLISHED', 0)
+                        """).update();
+        EventEnvelope created = EventEnvelope.now(EventTopics.COMMENT_CREATED, "dc-comment", "91002",
+                Map.of("commentId", 91L, "postId", 91002L, "actorId", 42L,
+                        "parentId", 0L, "changeType", "CREATED"));
+        String createdPayload = objectMapper.writeValueAsString(created);
+        kafkaTemplate.send(EventTopics.COMMENT_CREATED, "91002", createdPayload).get();
+        kafkaTemplate.send(EventTopics.COMMENT_CREATED, "91002", createdPayload).get();
+        awaitCommentCount(91002L, 1);
+
+        EventEnvelope deleted = EventEnvelope.now(EventTopics.COMMENT_CHANGED, "dc-comment", "91",
+                Map.of("commentId", 91L, "postId", 91002L, "actorId", 42L,
+                        "parentId", 0L, "changeType", "DELETED"));
+        kafkaTemplate.send(EventTopics.COMMENT_CHANGED, "91002", objectMapper.writeValueAsString(deleted)).get();
+        awaitCommentCount(91002L, 0);
+
+        assertThat(count("SELECT COUNT(*) FROM comment_projection_dedup WHERE event_id IN ('"
+                + created.eventId() + "','" + deleted.eventId() + "')")).isEqualTo(2);
+    }
+
     private JsonNode readSinglePostCreatedEvent() throws Exception {
         try (var consumer = new KafkaConsumer<String, String>(consumerProperties())) {
             consumer.subscribe(List.of(EventTopics.POST_SUBMITTED));
@@ -155,6 +179,20 @@ class ContentOutboxIntegrationTest {
 
     private long postLikeCount(Long postId) {
         Long value = jdbcClient.sql("SELECT like_count FROM post WHERE id = :postId")
+                .param("postId", postId).query(Long.class).single();
+        return value == null ? 0 : value;
+    }
+
+    private void awaitCommentCount(Long postId, long expected) throws InterruptedException {
+        long deadline = System.nanoTime() + Duration.ofSeconds(15).toNanos();
+        while (System.nanoTime() < deadline && commentCount(postId) != expected) {
+            Thread.sleep(100);
+        }
+        assertThat(commentCount(postId)).isEqualTo(expected);
+    }
+
+    private long commentCount(Long postId) {
+        Long value = jdbcClient.sql("SELECT comment_count FROM post WHERE id = :postId")
                 .param("postId", postId).query(Long.class).single();
         return value == null ? 0 : value;
     }

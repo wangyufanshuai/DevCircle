@@ -7,6 +7,7 @@ import io.github.devcircle.comment.infrastructure.CommentRepository;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.Arrays;
 import java.util.List;
@@ -14,9 +15,17 @@ import java.util.List;
 @Service
 public class CommentService {
     private final CommentRepository repository;
+    private final PostPublicationGateway postPublicationGateway;
 
-    public CommentService(CommentRepository repository) {
+    @Autowired
+    public CommentService(CommentRepository repository, PostPublicationGateway postPublicationGateway) {
         this.repository = repository;
+        this.postPublicationGateway = postPublicationGateway;
+    }
+
+    /** Compatibility constructor for isolated unit tests and older embedders. */
+    public CommentService(CommentRepository repository) {
+        this(repository, postId -> { });
     }
 
     public List<CommentView> list(Long postId, Long beforeId, int size) {
@@ -28,9 +37,13 @@ public class CommentService {
     }
 
     public CommentView create(Long userId, String idempotencyKey, CreateCommentRequest request) {
+        if (userId == null || userId <= 0) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录");
+        }
         if (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > 128) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "写操作必须提供有效的 Idempotency-Key");
         }
+        postPublicationGateway.requirePublished(request.postId());
         return repository.create(userId, request.postId(), request.parentId(), request.content(), idempotencyKey);
     }
 

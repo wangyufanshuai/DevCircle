@@ -7,6 +7,7 @@ import io.github.devcircle.comment.api.CommentThreadView;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.event.EventEnvelope;
+import io.github.devcircle.common.event.EventTopics;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
@@ -22,7 +23,6 @@ import java.util.Map;
 
 @Repository
 public class CommentRepository {
-    private static final String COMMENT_CREATED = "comment.created";
     private final NamedParameterJdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
 
@@ -75,6 +75,10 @@ public class CommentRepository {
 
     @Transactional
     public CommentView create(Long userId, Long postId, Long parentId, String content, String idempotencyKey) {
+        CommentView replay = replayOrClaimCreate(userId, idempotencyKey);
+        if (replay != null) {
+            return replay;
+        }
         Long rootId = null;
         if (parentId != null) {
             Parent parent = jdbc.query("""
@@ -92,23 +96,6 @@ public class CommentRepository {
             }
             rootId = parent.rootId() == null ? parent.id() : parent.rootId();
         }
-        MapSqlParameterSource idempotency = new MapSqlParameterSource()
-                .addValue("key", idempotencyKey).addValue("userId", userId)
-                .addValue("operation", "CREATE_COMMENT");
-        int claimed = jdbc.update("""
-                        INSERT IGNORE INTO idempotency_record(idempotency_key, user_id, operation)
-                        VALUES (:key, :userId, :operation)
-                        """, idempotency);
-        if (claimed == 0) {
-            Long existingId = jdbc.queryForObject("""
-                            SELECT resource_id FROM idempotency_record
-                            WHERE idempotency_key = :key AND user_id = :userId AND operation = :operation
-                            """, idempotency, Long.class);
-            if (existingId == null) {
-                throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "请求正在处理中");
-            }
-            return find(existingId);
-        }
         GeneratedKeyHolder keyHolder = new GeneratedKeyHolder();
         MapSqlParameterSource insert = new MapSqlParameterSource()
                 .addValue("postId", postId).addValue("authorId", userId)
@@ -125,13 +112,17 @@ public class CommentRepository {
         Long commentId = key.longValue();
         jdbc.update("UPDATE idempotency_record SET resource_id = :commentId WHERE idempotency_key = :key",
                 Map.of("commentId", commentId, "key", idempotencyKey));
-        writeEvent(commentId, postId, userId, parentId);
+        writeEvent(EventTopics.COMMENT_CREATED, commentId, postId, userId, parentId, "CREATED");
         return find(commentId);
     }
 
     @Transactional
     public void deleteOwn(Long commentId, Long userId, String idempotencyKey) {
         if (!claim(idempotencyKey, userId, "DELETE_COMMENT", commentId)) return;
+        CommentMeta meta = meta(commentId);
+        if (!userId.equals(meta.authorId()) || !"VISIBLE".equals(meta.status())) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "只能删除自己的可见评论");
+        }
         int changed = jdbc.update("""
                         UPDATE comment SET status = 'DELETED', content = '[已删除]'
                         WHERE id = :commentId AND author_id = :userId AND status = 'VISIBLE'
@@ -139,12 +130,15 @@ public class CommentRepository {
         if (changed != 1) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "只能删除自己的可见评论");
         }
+        writeEvent(EventTopics.COMMENT_CHANGED, commentId, meta.postId(), userId, meta.parentId(), "DELETED");
     }
 
     @Transactional
     public void hide(Long commentId, Long moderatorId, String idempotencyKey, String reason) {
         if (!claim(idempotencyKey, moderatorId, "HIDE_COMMENT", commentId)) return;
-        int changed = jdbc.update("UPDATE comment SET status = 'HIDDEN' WHERE id = :id AND status <> 'DELETED'",
+        CommentMeta meta = meta(commentId);
+        if ("HIDDEN".equals(meta.status())) return;
+        int changed = jdbc.update("UPDATE comment SET status = 'HIDDEN' WHERE id = :id AND status = 'VISIBLE'",
                 Map.of("id", commentId));
         if (changed != 1) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "评论不存在");
@@ -152,8 +146,43 @@ public class CommentRepository {
         jdbc.update("""
                         INSERT INTO comment_audit_record(comment_id, auditor_id, action, reason)
                         VALUES (:commentId, :moderatorId, 'HIDE', :reason)
-                        """, Map.of("commentId", commentId, "moderatorId", moderatorId,
+                """, Map.of("commentId", commentId, "moderatorId", moderatorId,
                 "reason", reason));
+        writeEvent(EventTopics.COMMENT_CHANGED, commentId, meta.postId(), moderatorId, meta.parentId(), "HIDDEN");
+    }
+
+    private CommentView replayOrClaimCreate(Long userId, String idempotencyKey) {
+        int inserted = jdbc.update("""
+                        INSERT IGNORE INTO idempotency_record(idempotency_key, user_id, operation)
+                        VALUES (:key, :userId, 'CREATE_COMMENT')
+                        """, Map.of("key", idempotencyKey, "userId", userId));
+        if (inserted == 1) return null;
+
+        IdempotencyRecord existing = jdbc.query("""
+                        SELECT user_id, operation, resource_id FROM idempotency_record
+                        WHERE idempotency_key = :key
+                        """, Map.of("key", idempotencyKey), (rs, rowNum) -> new IdempotencyRecord(
+                        rs.getLong("user_id"), rs.getString("operation"), (Long) rs.getObject("resource_id")))
+                .stream().findFirst()
+                .orElseThrow(() -> new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已用于其他操作"));
+        if (!userId.equals(existing.userId()) || !"CREATE_COMMENT".equals(existing.operation())) {
+            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已用于其他操作");
+        }
+        if (existing.resourceId() == null) {
+            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "请求正在处理中");
+        }
+        return find(existing.resourceId());
+    }
+
+    private CommentMeta meta(Long commentId) {
+        return jdbc.query("""
+                        SELECT id, post_id, parent_id, author_id, status
+                        FROM comment WHERE id = :commentId
+                        """, Map.of("commentId", commentId), (rs, rowNum) -> new CommentMeta(
+                        rs.getLong("id"), rs.getLong("post_id"), (Long) rs.getObject("parent_id"),
+                        rs.getLong("author_id"), rs.getString("status")))
+                .stream().findFirst()
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "评论不存在"));
     }
 
     private CommentView find(Long id) {
@@ -175,10 +204,10 @@ public class CommentRepository {
         };
     }
 
-    private void writeEvent(Long commentId, Long postId, Long userId, Long parentId) {
-        EventEnvelope event = EventEnvelope.now(COMMENT_CREATED, "dc-comment", String.valueOf(commentId),
+    private void writeEvent(String topic, Long commentId, Long postId, Long userId, Long parentId, String changeType) {
+        EventEnvelope event = EventEnvelope.now(topic, "dc-comment", String.valueOf(commentId),
                 Map.of("commentId", commentId, "postId", postId, "actorId", userId,
-                        "parentId", parentId == null ? 0L : parentId));
+                        "parentId", parentId == null ? 0L : parentId, "changeType", changeType));
         try {
             jdbc.update("""
                             INSERT INTO outbox_event(event_id, topic, aggregate_type, aggregate_id, payload)
@@ -205,5 +234,11 @@ public class CommentRepository {
     }
 
     private record Parent(Long id, Long postId, Long parentId, Long rootId, String status) {
+    }
+
+    private record IdempotencyRecord(Long userId, String operation, Long resourceId) {
+    }
+
+    private record CommentMeta(Long id, Long postId, Long parentId, Long authorId, String status) {
     }
 }
