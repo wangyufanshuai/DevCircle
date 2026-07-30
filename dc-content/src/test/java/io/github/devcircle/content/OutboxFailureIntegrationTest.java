@@ -62,7 +62,7 @@ class OutboxFailureIntegrationTest {
     }
 
     @Test
-    void failedKafkaPublishKeepsOutboxEventNewForReplay() {
+    void failedKafkaPublishMarksOutboxEventFailedForRetry() {
         var created = postRepository.create(51L, new CreatePostRequest(
                 "Kafka 不可用时保留 Outbox",
                 "发送失败不能把事件标记为已发布，后续补偿任务需要继续重放。",
@@ -76,6 +76,6 @@ class OutboxFailureIntegrationTest {
                 .param("postId", created.id().toString())
                 .query(String.class)
                 .single();
-        assertThat(status).isEqualTo("NEW");
+        assertThat(status).isEqualTo("FAILED");
     }
 }

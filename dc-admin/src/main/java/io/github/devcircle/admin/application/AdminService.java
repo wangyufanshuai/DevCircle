@@ -537,7 +537,7 @@ public class AdminService {
         }
         try {
             Long posts = oneLong("SELECT COUNT(*) FROM post");
-            Long outboxNew = oneLong("SELECT COUNT(*) FROM outbox_event WHERE status = 'NEW'");
+            Long outboxNew = oneLong("SELECT COUNT(*) FROM outbox_event WHERE status IN ('NEW', 'FAILED', 'PROCESSING')");
             Long moderationPending = oneLong("SELECT COUNT(*) FROM moderation_task WHERE status = 'PENDING'");
             Long riskUsers = oneLong("SELECT COUNT(*) FROM user_risk_profile WHERE status <> 'NORMAL'");
             return Map.of(
@@ -592,8 +592,10 @@ public class AdminService {
         try {
             int affected = jdbcClient.sql("""
                             UPDATE outbox_event
-                            SET status = 'NEW', published_at = NULL
-                            WHERE status <> 'NEW'
+                            SET status = 'NEW', attempts = 0, next_attempt_at = NULL,
+                                locked_at = NULL, locked_by = NULL, last_error = NULL, published_at = NULL
+                            WHERE (status IN ('FAILED', 'DEAD')
+                               OR (status = 'PROCESSING' AND locked_at < TIMESTAMPADD(MINUTE, -5, CURRENT_TIMESTAMP)))
                               AND (:topic IS NULL OR topic = :topic)
                             ORDER BY created_at ASC
                             LIMIT :batchSize
@@ -613,7 +615,7 @@ public class AdminService {
             return Map.of("degraded", true, "source", "HEALTH_CHECK", "reason", "DATABASE_UNAVAILABLE");
         }
         try {
-            Long outboxBacklog = oneLong("SELECT COUNT(*) FROM outbox_event WHERE status = 'NEW'");
+            Long outboxBacklog = oneLong("SELECT COUNT(*) FROM outbox_event WHERE status IN ('NEW', 'FAILED', 'PROCESSING')");
             Long impressions = oneLong("SELECT COUNT(*) FROM recommendation_impression");
             Long events = oneLong("SELECT COUNT(*) FROM recommend_event_log");
             Long moderationPending = oneLong("SELECT COUNT(*) FROM moderation_task WHERE status = 'PENDING'");

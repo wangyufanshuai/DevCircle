@@ -16,7 +16,7 @@ DevCircle 使用按业务域拆分、兼容聚合的微服务结构。Gateway �
 - `topic`: Kafka topic，例如 `post.created`。
 - `aggregate_type` 与 `aggregate_id`: 聚合根定位。
 - `payload`: JSON 事件载荷。
-- `status`: `NEW`、`PUBLISHED`、`FAILED`。
+- `status`: `NEW`、`PROCESSING`、`PUBLISHED`、`FAILED`、`DEAD`；失败事件按退避时间重试，超过最大次数进入死信状态。
 
 消费端维护 `consumer_dedup(event_id, topic, consumed_at)`。处理事件前先插入幂等记录，插入失败表示重复消息，应直接确认消费。
 

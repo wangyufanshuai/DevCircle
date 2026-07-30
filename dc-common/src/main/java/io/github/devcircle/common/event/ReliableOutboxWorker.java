@@ -72,8 +72,8 @@ public class ReliableOutboxWorker {
         return jdbcClient.sql("""
                         SELECT id, event_id, topic, aggregate_id, CAST(payload AS CHAR) payload, attempts
                         FROM outbox_event
-                        WHERE (status = 'NEW' AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP))
-                           OR (status = 'PROCESSING' AND locked_at < CURRENT_TIMESTAMP - INTERVAL 5 MINUTE)
+                        WHERE ((status IN ('NEW', 'FAILED') AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP))
+                           OR (status = 'PROCESSING' AND locked_at < TIMESTAMPADD(MINUTE, -5, CURRENT_TIMESTAMP)))
                         ORDER BY created_at
                         LIMIT :batchSize
                         """)
@@ -89,8 +89,8 @@ public class ReliableOutboxWorker {
                         UPDATE outbox_event
                         SET status = 'PROCESSING', locked_at = CURRENT_TIMESTAMP, locked_by = :workerId
                         WHERE id = :id
-                          AND ((status = 'NEW' AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP))
-                            OR (status = 'PROCESSING' AND locked_at < CURRENT_TIMESTAMP - INTERVAL 5 MINUTE))
+                          AND ((status IN ('NEW', 'FAILED') AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP))
+                            OR (status = 'PROCESSING' AND locked_at < TIMESTAMPADD(MINUTE, -5, CURRENT_TIMESTAMP)))
                         """)
                 .param("workerId", workerId)
                 .param("id", id)
@@ -134,7 +134,7 @@ public class ReliableOutboxWorker {
                             locked_at = NULL, locked_by = NULL, last_error = :lastError
                         WHERE id = :id AND locked_by = :workerId
                         """)
-                .param("status", dead ? "DEAD" : "NEW")
+                .param("status", dead ? "DEAD" : "FAILED")
                 .param("attempts", attempts)
                 .param("dead", dead)
                 .param("delaySeconds", delaySeconds)
