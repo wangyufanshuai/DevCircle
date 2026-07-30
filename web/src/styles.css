@@ -191,6 +191,8 @@ select { color-scheme: dark; }
 .solution-copy { padding: 16px; border: 1px solid var(--line-soft); color: #e0d0a7; background: rgba(5,9,15,.5); line-height: 1.8; }
 .comments-section { margin-top: 50px; }
 .comment-form { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 10px; margin: 18px 0 28px; }
+.comment-login { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 18px 0 28px; padding: 16px 0; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
+.comment-login p { margin: 0; color: var(--muted); }
 .comment-list { display: grid; }
 .comment-item { display: grid; grid-template-columns: 36px 1fr; gap: 13px; padding: 18px 0; border-top: 1px solid var(--line-soft); }
 .comment-avatar { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; color: var(--gold); font-size: 11px; }
@@ -202,6 +204,10 @@ select { color-scheme: dark; }
 .comment-thread > .comment-item { border-top: 0; }
 .comment-reply { margin-left: 48px; padding-top: 10px; border-top: 1px dashed var(--line-soft); }
 .reply-form { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 0 0 6px 48px; }
+.moderation-form { display: grid; gap: 8px; margin: 0 0 14px 48px; padding: 14px 0 14px 16px; border-left: 2px solid var(--danger); }
+.moderation-form label { color: #ffc5bb; font-size: 12px; }
+.moderation-form > div { display: flex; gap: 8px; }
+.moderation-status { margin-left: 6px; color: #ffc5bb; font-weight: 400; }
 .empty-copy { padding: 24px 0; }
 .detail-aside { min-width: 0; }
 .aside-card { position: sticky; top: 100px; padding: 22px; border-top: 1px solid var(--gold); background: var(--surface); }
@@ -396,7 +402,8 @@ select { color-scheme: dark; }
   .detail-media-grid { grid-template-columns: 1fr; }
   .reading-copy { font-size: 17px; line-height: 1.95; }
   .comment-form { grid-template-columns: 1fr; }
-  .comment-reply, .reply-form { margin-left: 28px; }
+  .comment-login { align-items: flex-start; flex-direction: column; }
+  .comment-reply, .reply-form, .moderation-form { margin-left: 28px; }
   .reply-form { grid-template-columns: 1fr; }
   .related-list .post-card { grid-template-columns: 118px 1fr; }
   .field-grid { grid-template-columns: 1fr; }

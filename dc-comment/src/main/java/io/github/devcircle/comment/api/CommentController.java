@@ -29,9 +29,12 @@ class CommentController {
     ApiResponse<List<CommentView>> list(@RequestParam Long postId,
                                         @RequestParam(required = false) Long beforeId,
                                         @RequestParam(defaultValue = "20") int size) {
-        List<CommentView> comments = commentService.list(postId, beforeId, size);
-        Long next = comments.isEmpty() ? null : comments.getLast().id();
-        return ApiResponse.ok(comments, Map.of("nextCursor", next == null ? "" : String.valueOf(next), "hasMore", comments.size() == size));
+        int pageSize = Math.max(1, Math.min(size, 50));
+        List<CommentView> fetched = commentService.list(postId, beforeId, pageSize + 1);
+        boolean hasMore = fetched.size() > pageSize;
+        List<CommentView> comments = hasMore ? List.copyOf(fetched.subList(0, pageSize)) : fetched;
+        Long next = hasMore && !comments.isEmpty() ? comments.getLast().id() : null;
+        return ApiResponse.ok(comments, Map.of("nextCursor", next == null ? "" : String.valueOf(next), "hasMore", hasMore));
     }
 
     @PostMapping

@@ -24,6 +24,9 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/recommend/exposures', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { recorded: 8 } } }))
   await page.route('**/api/posts/*/like', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { targetId: 1001, type: 'LIKE', active: true, duplicated: false, idempotencyKey: 'test' } } }))
   await page.route('**/api/posts/*/favorite', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { targetId: 1001, type: 'FAVORITE', active: true, duplicated: false, idempotencyKey: 'test' } } }))
+  await page.route('**/api/posts/*/interaction-state', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { liked: false, favorited: false } } }))
+  await page.route('**/api/posts/*/reading-progress', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { postId: 1001, progressPercent: 25, completed: false } } }))
+  await page.route('**/api/users/*/follow-state', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { following: false } } }))
   await page.route('**/api/deduction/cases/*/answers', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { postId: 1001, userId: 2, correct: true, duplicated: false, revealed: false, solutionUnlocked: true, points: 20, explanation: '推理成立', solution: '关键是怀表与时间线之间的矛盾。' } } }))
   await page.route('**/api/notifications', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [] } }))
   await page.route('**/api/posts/drafts?*', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [] } }))
@@ -40,6 +43,7 @@ test('desktop home has observatory hierarchy and theme links', async ({ page }) 
 test('formal post route opens case and submits deduction', async ({ page }) => {
   await page.goto('/posts/1001')
   await expect(page.getByRole('heading', { name: '雾港钟楼失踪案', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: '登录参与讨论' })).toBeVisible()
   await page.getByLabel('推理结论').fill('夹层藏身，怀表')
   await page.getByRole('button', { name: '提交推理' }).click()
   await expect(page.getByRole('status')).toContainText('推理成立')
@@ -156,6 +160,55 @@ test('keyword discovery keeps every filter in the URL and paginates search resul
   await expect(page.locator('.post-card')).toHaveCount(3)
   expect(requests.at(-1)?.searchParams.get('cursor')).toBe('djE6MQ')
   expect(requests.at(-1)?.searchParams.get('contentKind')).toBe('CASE_FILE')
+})
+
+test('reader comments paginate, reply once and preserve deleted thread structure', async ({ page }) => {
+  await authenticate(page)
+  const root = { id: 30, postId: 1001, authorId: 7, author: '用户 7', content: '第一条线索', status: 'VISIBLE', likes: 0, createdAt: '2026-07-30T01:00:00Z' }
+  const reply = { id: 31, postId: 1001, authorId: 7, author: '用户 7', parentId: 30, rootId: 30, content: '补充证词', status: 'VISIBLE', likes: 0, createdAt: '2026-07-30T01:10:00Z' }
+  await page.route('**/api/posts/1001/comments?*', route => {
+    const cursor = new URL(route.request().url()).searchParams.get('cursor')
+    const data = cursor ? [{ root: { ...root, id: 20, content: '更早的讨论' }, replies: [] }] : [{ root, replies: [reply] }]
+    return route.fulfill({ json: { code: 'OK', message: 'success', data, meta: { nextCursor: cursor ? '' : '30', hasMore: !cursor } } })
+  })
+  await page.route('**/api/comments', route => {
+    const body = JSON.parse(route.request().postData() || '{}')
+    const data = body.parentId
+      ? { id: 98, postId: 1001, authorId: 2, author: '用户 2', parentId: body.parentId, rootId: body.parentId, content: body.content, status: 'VISIBLE', likes: 0, createdAt: '2026-07-30T02:10:00Z' }
+      : { id: 99, postId: 1001, authorId: 2, author: '用户 2', content: body.content, status: 'VISIBLE', likes: 0, createdAt: '2026-07-30T02:00:00Z' }
+    return route.fulfill({ json: { code: 'OK', message: 'success', data } })
+  })
+  await page.route('**/api/comments/*', route => route.fulfill({ json: { code: 'OK', message: 'success', data: null } }))
+  await page.goto('/posts/1001')
+  await expect(page.getByRole('button', { name: '加载更多讨论' })).toBeVisible()
+  await page.getByRole('button', { name: '加载更多讨论' }).click()
+  await expect(page.locator('.comment-thread')).toHaveCount(2)
+  await page.getByLabel('写评论').fill('新的关键线索')
+  await page.getByRole('button', { name: '发表评论' }).click()
+  const createdThread = page.locator('[data-comment-id="99"]')
+  await expect(createdThread).toBeVisible()
+  await createdThread.getByRole('button', { name: '删除' }).click()
+  await expect(createdThread).toContainText('评论已删除')
+  const firstThread = page.locator('.comment-thread').filter({ hasText: '第一条线索' })
+  await firstThread.getByRole('button', { name: '回复' }).click()
+  await firstThread.getByLabel('回复评论').fill('我核对了这条证词')
+  await firstThread.getByRole('button', { name: '发送回复' }).click()
+  await expect(firstThread).toContainText('我核对了这条证词')
+})
+
+test('moderator must provide a reason before hiding a comment', async ({ page }) => {
+  await authenticate(page, ['USER', 'ADMIN'])
+  const root = { id: 40, postId: 1001, authorId: 7, author: '用户 7', content: '泄露隐私的文本', status: 'VISIBLE', likes: 0, createdAt: '2026-07-30T01:00:00Z' }
+  let submittedReason = ''
+  await page.route('**/api/posts/1001/comments?*', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [{ root, replies: [] }], meta: { nextCursor: '', hasMore: false } } }))
+  await page.route('**/api/comments/40/hide', route => { submittedReason = JSON.parse(route.request().postData() || '{}').reason; return route.fulfill({ json: { code: 'OK', message: 'success', data: null } }) })
+  await page.goto('/posts/1001')
+  const thread = page.locator('[data-comment-id="40"]')
+  await thread.getByRole('button', { name: '隐藏' }).click()
+  await thread.getByLabel('隐藏理由').fill('包含未经授权的个人信息')
+  await thread.getByRole('button', { name: '确认隐藏' }).click()
+  await expect(thread).toContainText('评论已隐藏')
+  expect(submittedReason).toBe('包含未经授权的个人信息')
 })
 
 test('responsive shell has no horizontal overflow and uses the correct navigation', async ({ page }, testInfo) => {

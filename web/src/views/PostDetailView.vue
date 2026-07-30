@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ArrowLeft, Bookmark, CheckCircle2, Eye, Heart, MessageCircle, Reply, Send, UserPlus } from 'lucide-vue-next'
+import { ArrowLeft, Bookmark, CheckCircle2, Eye, Heart, LoaderCircle, MessageCircle, Reply, Send, ShieldAlert, UserPlus } from 'lucide-vue-next'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { RouterLink, useRoute } from 'vue-router'
 import {
   answerCase, createComment, currentSession, deleteComment, fetchComments, fetchFollowState,
   fetchInteractionState, fetchMediaAccess, fetchPost, fetchRelated, fetchUserProfile, followUser, interact, revealAnswer,
-  saveReadingProgress, sessionState, unfollowUser
+  hideComment, saveReadingProgress, sessionState, unfollowUser
 } from '../api/client'
 import type { CommentItem, CommentThread, Post, PostDetail } from '../api/types'
 import PostCard from '../components/PostCard.vue'
@@ -21,6 +21,13 @@ const answer = ref('')
 const comment = ref('')
 const replyTarget = ref<number | null>(null)
 const replyText = ref('')
+const commentCursor = ref('')
+const commentHasMore = ref(false)
+const loadingMoreComments = ref(false)
+const moderationTarget = ref<number | null>(null)
+const moderationReason = ref('')
+const moderating = ref(false)
+const commentAuthorNames = new Map<number, string>()
 const loading = ref(false)
 const error = ref('')
 const feedback = ref('')
@@ -30,6 +37,7 @@ const savingProgress = ref(false)
 let progressTimer: ReturnType<typeof setTimeout> | undefined
 const id = computed(() => Number(route.params.id))
 const session = sessionState
+const canModerate = computed(() => session.value?.roles.some(role => role === 'ADMIN' || role === 'MODERATOR') ?? false)
 const themeName: Record<string, string> = { DEDUCTION: '推理馆', SCI_FI: '科幻馆', COSMOS: '宇宙档案' }
 
 const renderedMarkdown = computed(() => {
@@ -46,7 +54,7 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [detail, relatedPosts, commentThreads] = await Promise.all([
+    const [detail, relatedPosts, commentPage] = await Promise.all([
       fetchPost(id.value), fetchRelated(id.value), fetchComments(id.value)
     ])
     post.value = detail
@@ -57,8 +65,11 @@ async function load() {
     }
     const profile = await fetchUserProfile(detail.author.id).catch(() => null)
     if (profile) post.value.author = { ...post.value.author, username: profile.username, bio: profile.bio, followerCount: profile.followers }
+    commentAuthorNames.set(detail.author.id, post.value.author.username)
     related.value = relatedPosts
-    threads.value = commentThreads
+    threads.value = await enrichCommentAuthors(commentPage.records)
+    commentCursor.value = commentPage.nextCursor
+    commentHasMore.value = commentPage.hasMore
     following.value = detail.author.followedByViewer === true
     if (currentSession()) {
       const [interactionState, followState] = await Promise.all([
@@ -75,6 +86,28 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+async function enrichCommentAuthors(records: CommentThread[]) {
+  const comments = records.flatMap(thread => [thread.root, ...thread.replies])
+  const authorIds = [...new Set(comments.map(item => item.authorId))].filter(authorId => !commentAuthorNames.has(authorId))
+  const profiles = await Promise.all(authorIds.map(async authorId => [authorId, await fetchUserProfile(authorId).catch(() => null)] as const))
+  profiles.forEach(([authorId, profile]) => { if (profile) commentAuthorNames.set(authorId, profile.username) })
+  comments.forEach(item => { item.author = commentAuthorNames.get(item.authorId) ?? item.author })
+  return records
+}
+
+async function loadMoreComments() {
+  if (!commentHasMore.value || loadingMoreComments.value) return
+  loadingMoreComments.value = true; commentError.value = ''
+  try {
+    const page = await fetchComments(id.value, commentCursor.value)
+    const records = await enrichCommentAuthors(page.records)
+    const existing = new Set(threads.value.map(thread => thread.root.id))
+    threads.value.push(...records.filter(thread => !existing.has(thread.root.id)))
+    commentCursor.value = page.nextCursor; commentHasMore.value = page.hasMore
+  } catch (reason) { commentError.value = reason instanceof Error ? reason.message : '更多评论暂时无法加载' }
+  finally { loadingMoreComments.value = false }
 }
 
 function restoreAnchor(progress: number) {
@@ -156,6 +189,7 @@ async function reveal() {
 }
 
 function prependComment(item: CommentItem, parentId?: number) {
+  if (session.value) { item.author = session.value.displayName; commentAuthorNames.set(item.authorId, item.author) }
   if (!parentId) {
     threads.value.unshift({ root: item, replies: [] })
     return
@@ -178,6 +212,7 @@ async function submitComment(parentId?: number) {
 }
 
 async function removeComment(item: CommentItem) {
+  commentError.value = ''
   try {
     await deleteComment(item.id)
     item.status = 'DELETED'
@@ -188,6 +223,28 @@ async function removeComment(item: CommentItem) {
 }
 
 function own(item: CommentItem) { return session.value?.userId === item.authorId }
+function visible(item: CommentItem) { return item.status === 'VISIBLE' }
+function commentText(item: CommentItem) {
+  if (item.status === 'DELETED') return '评论已删除'
+  if (item.status === 'HIDDEN') return '评论已隐藏'
+  return item.content
+}
+function startModeration(item: CommentItem) {
+  moderationTarget.value = item.id
+  moderationReason.value = ''
+  commentError.value = ''
+}
+async function moderateComment(item: CommentItem) {
+  const reason = moderationReason.value.trim()
+  if (reason.length < 4) { commentError.value = '请填写至少 4 个字符的隐藏理由'; return }
+  moderating.value = true; commentError.value = ''
+  try {
+    await hideComment(item.id, reason)
+    item.status = 'HIDDEN'; item.content = '评论已隐藏'
+    moderationTarget.value = null; moderationReason.value = ''
+  } catch (cause) { commentError.value = cause instanceof Error ? cause.message : '隐藏评论失败' }
+  finally { moderating.value = false }
+}
 
 watch(id, load)
 onMounted(() => {
@@ -250,17 +307,23 @@ onBeforeUnmount(() => {
           </section>
 
           <section class="comments-section">
-            <div class="section-heading"><div><span class="eyebrow">COMMUNITY NOTES</span><h2>读者讨论</h2></div><span class="muted"><MessageCircle :size="14" /> {{ threads.length }} 条串联</span></div>
-            <form class="comment-form" @submit.prevent="submitComment()"><label class="sr-only" for="comment">写评论</label><textarea id="comment" v-model="comment" rows="2" placeholder="留下你的观察…" /><button class="button button-primary" type="submit">发表评论</button></form>
+            <div class="section-heading"><div><span class="eyebrow">COMMUNITY NOTES</span><h2>读者讨论</h2></div><span class="muted"><MessageCircle :size="14" /> 已加载 {{ threads.length }} 个讨论串</span></div>
+            <form v-if="session" class="comment-form" @submit.prevent="submitComment()"><label class="sr-only" for="comment">写评论</label><textarea id="comment" v-model="comment" rows="2" maxlength="2000" placeholder="留下你的观察…" /><button class="button button-primary" type="submit">发表评论</button></form>
+            <div v-else class="comment-login"><p>登录后才能参与讨论、回复其他读者。</p><RouterLink class="button button-quiet" :to="{ path: '/auth', query: { redirect: route.fullPath } }">登录参与讨论</RouterLink></div>
             <p v-if="commentError" class="form-error" role="alert">{{ commentError }}</p>
             <div v-if="threads.length" class="comment-list">
-              <article v-for="thread in threads" :key="thread.root.id" class="comment-thread">
-                <div class="comment-item"><div class="comment-avatar">{{ thread.root.author.slice(0, 1) }}</div><div class="comment-main"><strong>{{ thread.root.author }}</strong><p>{{ thread.root.content }}</p><small>{{ thread.root.createdAt }}</small><div class="comment-actions"><button class="text-button" type="button" @click="replyTarget = replyTarget === thread.root.id ? null : thread.root.id"><Reply :size="14" /> 回复</button><button v-if="own(thread.root)" class="text-button" type="button" @click="removeComment(thread.root)">删除</button></div></div></div>
+              <article v-for="thread in threads" :key="thread.root.id" class="comment-thread" :data-comment-id="thread.root.id">
+                <div class="comment-item"><div class="comment-avatar">{{ thread.root.author.slice(0, 1) }}</div><div class="comment-main"><strong>{{ thread.root.author }} <small v-if="canModerate && thread.root.status === 'HIDDEN'" class="moderation-status">已隐藏</small></strong><p>{{ commentText(thread.root) }}</p><small>{{ thread.root.createdAt }}</small><div class="comment-actions"><button v-if="session && visible(thread.root)" class="text-button" type="button" @click="replyTarget = replyTarget === thread.root.id ? null : thread.root.id"><Reply :size="14" /> 回复</button><button v-if="own(thread.root) && visible(thread.root)" class="text-button" type="button" @click="removeComment(thread.root)">删除</button><button v-if="canModerate && visible(thread.root)" class="text-button" type="button" @click="startModeration(thread.root)"><ShieldAlert :size="14" /> 隐藏</button></div></div></div>
                 <div v-if="replyTarget === thread.root.id" class="reply-form"><label class="sr-only" :for="`reply-${thread.root.id}`">回复评论</label><textarea :id="`reply-${thread.root.id}`" v-model="replyText" rows="2" placeholder="回复这条观察…" /><button class="button button-quiet" type="button" @click="submitComment(thread.root.id)">发送回复</button></div>
-                <div v-for="reply in thread.replies" :key="reply.id" class="comment-item comment-reply"><div class="comment-avatar">{{ reply.author.slice(0, 1) }}</div><div class="comment-main"><strong>{{ reply.author }}</strong><p>{{ reply.content }}</p><small>{{ reply.createdAt }}</small><button v-if="own(reply)" class="text-button" type="button" @click="removeComment(reply)">删除</button></div></div>
+                <form v-if="moderationTarget === thread.root.id" class="moderation-form" @submit.prevent="moderateComment(thread.root)"><label :for="`moderate-${thread.root.id}`">隐藏理由</label><textarea :id="`moderate-${thread.root.id}`" v-model="moderationReason" rows="2" minlength="4" maxlength="500" required /><div><button class="button button-primary" type="submit" :disabled="moderating">确认隐藏</button><button class="button button-quiet" type="button" @click="moderationTarget = null">取消</button></div></form>
+                <template v-for="reply in thread.replies" :key="reply.id">
+                  <div class="comment-item comment-reply"><div class="comment-avatar">{{ reply.author.slice(0, 1) }}</div><div class="comment-main"><strong>{{ reply.author }} <small v-if="canModerate && reply.status === 'HIDDEN'" class="moderation-status">已隐藏</small></strong><p>{{ commentText(reply) }}</p><small>{{ reply.createdAt }}</small><div class="comment-actions"><button v-if="own(reply) && visible(reply)" class="text-button" type="button" @click="removeComment(reply)">删除</button><button v-if="canModerate && visible(reply)" class="text-button" type="button" @click="startModeration(reply)"><ShieldAlert :size="14" /> 隐藏</button></div></div></div>
+                  <form v-if="moderationTarget === reply.id" class="moderation-form comment-reply" @submit.prevent="moderateComment(reply)"><label :for="`moderate-${reply.id}`">隐藏理由</label><textarea :id="`moderate-${reply.id}`" v-model="moderationReason" rows="2" minlength="4" maxlength="500" required /><div><button class="button button-primary" type="submit" :disabled="moderating">确认隐藏</button><button class="button button-quiet" type="button" @click="moderationTarget = null">取消</button></div></form>
+                </template>
               </article>
             </div>
             <p v-else class="muted empty-copy">还没有讨论，成为第一个留下线索的人。</p>
+            <button v-if="commentHasMore" class="button button-quiet load-more" type="button" :disabled="loadingMoreComments" @click="loadMoreComments"><LoaderCircle v-if="loadingMoreComments" :size="16" />{{ loadingMoreComments ? '正在加载…' : '加载更多讨论' }}</button>
           </section>
         </div>
         <aside class="detail-aside">

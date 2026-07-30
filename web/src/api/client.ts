@@ -179,9 +179,15 @@ export function revealAnswer(postId: number) { return write<DeductionAnswerResul
 export function saveReadingProgress(postId: number, progressPercent: number, anchor: string | null, completed = false) {
   return write<ReadingProgress>(`/api/posts/${postId}/reading-progress`, 'PUT', { progressPercent, anchor, completed })
 }
-export function fetchComments(postId: number) { return request<CommentThread[]>(`/api/posts/${postId}/comments?size=20`) }
+export async function fetchComments(postId: number, cursor = '') {
+  const query = new URLSearchParams({ size: '20' })
+  if (cursor) query.set('cursor', cursor)
+  const body = await requestEnvelope<CommentThread[]>(`/api/posts/${postId}/comments?${query}`)
+  return { records: body.data, nextCursor: String(body.meta?.nextCursor ?? ''), hasMore: body.meta?.hasMore === true }
+}
 export function createComment(postId: number, content: string, parentId?: number) { return write<CommentItem>('/api/comments', 'POST', { postId, content, parentId }) }
 export function deleteComment(id: number) { return write<void>(`/api/comments/${id}`, 'DELETE') }
+export function hideComment(id: number, reason: string) { return write<void>(`/api/comments/${id}/hide`, 'POST', { reason }) }
 export async function fetchNotifications(cursor = '', type = '') {
   const query = new URLSearchParams({ size: '20' })
   if (cursor) query.set('cursor', cursor)

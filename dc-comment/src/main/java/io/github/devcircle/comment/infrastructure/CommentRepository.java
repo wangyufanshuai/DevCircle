@@ -36,7 +36,7 @@ public class CommentRepository {
         MapSqlParameterSource params = new MapSqlParameterSource()
                 .addValue("postId", postId)
                 .addValue("beforeId", beforeId)
-                .addValue("size", Math.max(1, Math.min(size, 50)));
+                .addValue("size", Math.max(1, Math.min(size, 51)));
         return jdbc.query("""
                         SELECT id, post_id, parent_id, root_id, author_id, content, status, like_count, created_at
                         FROM comment
@@ -44,25 +44,30 @@ public class CommentRepository {
                         """ + cursor + " ORDER BY id DESC LIMIT :size", params, mapper());
     }
 
-    public List<CommentThreadView> listThreads(Long postId, Long beforeRootId, int size) {
+    public List<CommentThreadView> listThreads(Long postId, Long beforeRootId, int size, boolean includeHiddenContent) {
         String cursor = beforeRootId == null ? "" : " AND id < :beforeRootId";
         MapSqlParameterSource params = new MapSqlParameterSource()
                 .addValue("postId", postId).addValue("beforeRootId", beforeRootId)
-                .addValue("size", Math.max(1, Math.min(size, 50)));
+                .addValue("includeHidden", includeHiddenContent)
+                .addValue("size", Math.max(1, Math.min(size, 51)));
         List<CommentView> roots = jdbc.query("""
-                        SELECT id, post_id, parent_id, root_id, author_id, content, status, like_count, created_at
+                        SELECT id, post_id, parent_id, root_id, author_id,
+                               CASE WHEN status = 'HIDDEN' AND :includeHidden = FALSE THEN '评论已隐藏' ELSE content END AS content,
+                               status, like_count, created_at
                         FROM comment
-                        WHERE post_id = :postId AND parent_id IS NULL AND status IN ('VISIBLE', 'DELETED')
+                        WHERE post_id = :postId AND parent_id IS NULL AND status IN ('VISIBLE', 'DELETED', 'HIDDEN')
                         """ + cursor + " ORDER BY id DESC LIMIT :size", params, mapper());
         if (roots.isEmpty()) return List.of();
         List<CommentThreadView> threads = new ArrayList<>(roots.size());
         for (CommentView root : roots) {
             List<CommentView> replies = jdbc.query("""
-                            SELECT id, post_id, parent_id, root_id, author_id, content, status, like_count, created_at
+                            SELECT id, post_id, parent_id, root_id, author_id,
+                                   CASE WHEN status = 'HIDDEN' AND :includeHidden = FALSE THEN '评论已隐藏' ELSE content END AS content,
+                                   status, like_count, created_at
                             FROM comment
-                            WHERE post_id = :postId AND root_id = :rootId AND status IN ('VISIBLE', 'DELETED')
+                            WHERE post_id = :postId AND root_id = :rootId AND status IN ('VISIBLE', 'DELETED', 'HIDDEN')
                             ORDER BY id ASC
-                            """, Map.of("postId", postId, "rootId", root.id()), mapper());
+                            """, Map.of("postId", postId, "rootId", root.id(), "includeHidden", includeHiddenContent), mapper());
             threads.add(new CommentThreadView(root, replies));
         }
         return threads;
@@ -148,7 +153,7 @@ public class CommentRepository {
                         INSERT INTO comment_audit_record(comment_id, auditor_id, action, reason)
                         VALUES (:commentId, :moderatorId, 'HIDE', :reason)
                         """, Map.of("commentId", commentId, "moderatorId", moderatorId,
-                "reason", reason == null ? "违规内容" : reason));
+                "reason", reason));
     }
 
     private CommentView find(Long id) {
