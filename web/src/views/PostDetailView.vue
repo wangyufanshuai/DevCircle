@@ -3,8 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ArrowLeft, Bookmark, CheckCircle2, Eye, Heart, LoaderCircle, MessageCircle, Reply, Send, ShieldAlert, UserPlus } from 'lucide-vue-next'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
-  answerCase, createComment, currentSession, deleteComment, fetchComments, fetchFollowState,
-  fetchInteractionState, fetchMediaAccessBatch, fetchPost, fetchRelated, fetchUserProfiles, followUser, interact, revealAnswer,
+  answerCase, createComment, currentSession, deleteComment, fetchComments,
+  fetchPost, fetchRelated, fetchUserProfiles, followUser, interact, revealAnswer,
   hideComment, saveReadingProgress, sessionState, unfollowUser
 } from '../api/client'
 import type { CommentItem, CommentThread, Post, PostDetail, UserProfile } from '../api/types'
@@ -55,28 +55,13 @@ async function load() {
       fetchPost(id.value), fetchRelated(id.value), fetchComments(id.value)
     ])
     post.value = detail
-    if (detail.media.length) {
-      const access = await fetchMediaAccessBatch(detail.media.map(media => media.mediaId))
-      const urls = new Map(access.map(item => [item.mediaId, item.url]))
-      post.value.media = detail.media.map(media => ({ ...media, url: urls.get(media.mediaId) ?? '' }))
-    }
     const initialComments = commentPage.records.flatMap(thread => [thread.root, ...thread.replies])
-    await loadUserProfiles([detail.author.id, ...initialComments.map(item => item.authorId)])
-    const profile = userProfiles.get(detail.author.id)
-    if (profile) post.value.author = { ...post.value.author, username: profile.username, bio: profile.bio, followerCount: profile.followers }
+    await loadUserProfiles(initialComments.map(item => item.authorId))
     related.value = relatedPosts
     threads.value = await enrichCommentAuthors(commentPage.records)
     commentCursor.value = commentPage.nextCursor
     commentHasMore.value = commentPage.hasMore
     following.value = detail.author.followedByViewer === true
-    if (currentSession()) {
-      const [interactionState, followState] = await Promise.all([
-        fetchInteractionState(detail.id), fetchFollowState(detail.author.id)
-      ])
-      post.value.viewerState.liked = interactionState.liked
-      post.value.viewerState.favorited = interactionState.favorited
-      following.value = followState.following
-    }
     await nextTick()
     restoreAnchor(detail.viewerState.readingProgress)
   } catch (reason) {

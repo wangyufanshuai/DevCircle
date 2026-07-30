@@ -71,11 +71,12 @@ class UserController {
         return ApiResponse.ok(userGraphService.recommendations(id));
     }
 
-    record UserProfile(Long id, String username, String bio, long followers, long following, String status) {
+    record UserProfile(Long id, String username, String avatarUrl, String bio,
+                       long followers, long following, String status) {
     }
 
     private UserProfile toView(io.github.devcircle.user.infrastructure.UserGraphRepository.UserProfile profile) {
-        return new UserProfile(profile.userId(), profile.username(), profile.bio(),
+        return new UserProfile(profile.userId(), profile.username(), profile.avatarUrl(), profile.bio(),
                 profile.followerCount(), profile.followingCount(), "ACTIVE");
     }
 }

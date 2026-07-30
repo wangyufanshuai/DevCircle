@@ -18,8 +18,8 @@ class UserGraphServiceProfileTest {
         UserGraphService service = new UserGraphService(repository, mock(StringRedisTemplate.class));
         List<Long> ids = List.of(7L, 8L, 7L);
         List<UserGraphRepository.UserProfile> profiles = List.of(
-                new UserGraphRepository.UserProfile(7L, "林墨", "记录异常信号", 18, 4),
-                new UserGraphRepository.UserProfile(8L, "北辰", "整理证物", 6, 3));
+                new UserGraphRepository.UserProfile(7L, "林墨", "/avatars/7.webp", "记录异常信号", 18, 4),
+                new UserGraphRepository.UserProfile(8L, "北辰", null, "整理证物", 6, 3));
         when(repository.profiles(ids)).thenReturn(profiles);
 
         assertThat(service.profiles(ids)).containsExactlyElementsOf(profiles);

@@ -5,6 +5,7 @@
     <artifactId>dc-content-deployment</artifactId>
     <description>Compatibility deployment facade for content, comment, media and moderation domains.</description>
     <dependencies>
+        <dependency><groupId>io.github.devcircle</groupId><artifactId>dc-common</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>org.springframework.cloud</groupId><artifactId>spring-cloud-starter-gateway-server-webflux</artifactId></dependency>
     </dependencies>
     <build><plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build>

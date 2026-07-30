@@ -247,12 +247,16 @@ services:
     environment:
       <<: *app-env
       DC_CONTENT_URI: http://dc-content:8103
+      DC_USER_URI: http://dc-user:8102
+      DC_INTERACTION_URI: http://dc-interaction:8105
       DC_COMMENT_URI: http://dc-comment:8104
       DC_FILE_URI: http://dc-file:8109
       DC_ADMIN_URI: http://dc-admin:8110
     expose: ["8202"]
     depends_on:
       dc-content: { condition: service_healthy }
+      dc-user: { condition: service_healthy }
+      dc-interaction: { condition: service_healthy }
       dc-comment: { condition: service_healthy }
       dc-file: { condition: service_healthy }
       dc-admin: { condition: service_healthy }

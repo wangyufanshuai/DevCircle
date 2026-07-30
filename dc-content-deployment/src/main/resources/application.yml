@@ -35,3 +35,9 @@ management:
     health:
       probes:
         enabled: true
+devcircle:
+  internal:
+    content-uri: ${DC_CONTENT_URI:http://localhost:8103}
+    user-uri: ${DC_USER_URI:http://localhost:8102}
+    interaction-uri: ${DC_INTERACTION_URI:http://localhost:8105}
+    file-uri: ${DC_FILE_URI:http://localhost:8109}

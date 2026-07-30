@@ -65,9 +65,9 @@ public class UserGraphRepository {
     }
 
     public Optional<UserProfile> profile(Long userId) {
-        return jdbcClient.sql("SELECT user_id, username, bio, follower_count, following_count FROM user_profile WHERE user_id = :userId")
+        return jdbcClient.sql("SELECT user_id, username, avatar_url, bio, follower_count, following_count FROM user_profile WHERE user_id = :userId")
                 .param("userId", userId)
-                .query((rs, rowNum) -> new UserProfile(rs.getLong("user_id"), rs.getString("username"), rs.getString("bio"),
+                .query((rs, rowNum) -> new UserProfile(rs.getLong("user_id"), rs.getString("username"), rs.getString("avatar_url"), rs.getString("bio"),
                         rs.getLong("follower_count"), rs.getLong("following_count")))
                 .optional();
     }
@@ -77,14 +77,14 @@ public class UserGraphRepository {
         List<Long> safeIds = userIds.stream().filter(id -> id != null && id > 0).distinct().limit(50).toList();
         if (safeIds.isEmpty()) return List.of();
         return jdbcClient.sql("""
-                        SELECT user_id, username, bio, follower_count, following_count
+                        SELECT user_id, username, avatar_url, bio, follower_count, following_count
                         FROM user_profile
                         WHERE user_id IN (:userIds)
                         ORDER BY user_id
                         """)
                 .param("userIds", safeIds)
                 .query((rs, rowNum) -> new UserProfile(rs.getLong("user_id"), rs.getString("username"),
-                        rs.getString("bio"), rs.getLong("follower_count"), rs.getLong("following_count")))
+                        rs.getString("avatar_url"), rs.getString("bio"), rs.getLong("follower_count"), rs.getLong("following_count")))
                 .list();
     }
 
@@ -141,6 +141,7 @@ public class UserGraphRepository {
     private record IdempotencyRecord(String operation, Long targetUserId) {
     }
 
-    public record UserProfile(Long userId, String username, String bio, long followerCount, long followingCount) {
+    public record UserProfile(Long userId, String username, String avatarUrl, String bio,
+                              long followerCount, long followingCount) {
     }
 }

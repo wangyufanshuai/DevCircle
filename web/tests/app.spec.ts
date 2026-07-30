@@ -81,20 +81,21 @@ test('write route exposes draft editor and safe preview', async ({ page }) => {
 })
 
 test('detail resolves attached inline media without duplicating it in the gallery', async ({ page }) => {
+  const signedMediaUrl = '/media/evidence.png'
   const mediaPost = {
     ...post,
     markdown: '# 雾港钟楼\n\n![停摆的怀表](media://8)\n\n![远程图片](https://tracker.example/pixel.png)',
-    media: [{ mediaId: 8, objectKey: 'private/8.png', url: '', contentType: 'image/png', size: 12, status: 'APPROVED', role: 'INLINE', altText: '证物桌上停摆的怀表', sortOrder: 0 }]
+    media: [{ mediaId: 8, objectKey: 'private/8.png', url: signedMediaUrl, contentType: 'image/png', size: 12, status: 'APPROVED', role: 'INLINE', altText: '证物桌上停摆的怀表', sortOrder: 0 }]
   }
   let accessCalls = 0
   await page.route('**/api/posts/1001', route => route.fulfill({ json: { code: 'OK', message: 'success', data: mediaPost } }))
-  await page.route('**/api/files/access?*', route => { accessCalls += 1; return route.fulfill({ json: { code: 'OK', message: 'success', data: [{ mediaId: 8, url: `${new URL(route.request().url()).origin}/media/evidence.png`, expiresAt: '2099-01-01T00:00:00Z' }] } }) })
+  await page.route('**/api/files/access?*', route => { accessCalls += 1; return route.fulfill({ status: 500 }) })
   await page.route('**/media/evidence.png', route => route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from([0x89, 0x50, 0x4e, 0x47]) }))
   await page.goto('/posts/1001')
   await expect(page.locator('.inline-media img')).toHaveAttribute('alt', '证物桌上停摆的怀表')
   await expect(page.locator('.detail-media-grid')).toHaveCount(0)
   await expect(page.locator('.inline-media-unavailable')).toContainText('外部图片已阻止')
-  expect(accessCalls).toBe(1)
+  expect(accessCalls).toBe(0)
 })
 
 test('detail batches author profiles instead of issuing per-comment requests', async ({ page }) => {
@@ -105,7 +106,7 @@ test('detail batches author profiles instead of issuing per-comment requests', a
   await page.route('**/api/posts/1001/comments?*', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [{ root, replies: [reply] }], meta: { nextCursor: '', hasMore: false } } }))
   await page.route('**/api/users/batch?*', route => {
     batchCalls += 1
-    expect(new URL(route.request().url()).searchParams.get('ids')?.split(',').sort()).toEqual(['7', '8', '9'])
+    expect(new URL(route.request().url()).searchParams.get('ids')?.split(',').sort()).toEqual(['8', '9'])
     return route.fulfill({ json: { code: 'OK', message: 'success', data: [
       { id: 7, username: '林墨', bio: '记录异常信号', followers: 18, following: 4, status: 'ACTIVE' },
       { id: 8, username: '沈岚', bio: '核对时间线', followers: 6, following: 3, status: 'ACTIVE' },
@@ -117,6 +118,30 @@ test('detail batches author profiles instead of issuing per-comment requests', a
   await expect(page.locator('.comment-thread')).toContainText('北辰')
   expect(batchCalls).toBe(1)
   expect(individualProfileRequests).toEqual([])
+})
+
+test('detail consumes composed follow and interaction state without extra browser requests', async ({ page }) => {
+  await authenticate(page)
+  const composed = {
+    ...post,
+    author: { ...post.author, followedByViewer: true },
+    viewerState: { ...post.viewerState, liked: true, favorited: true }
+  }
+  const redundantRequests: string[] = []
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname
+    if (path.endsWith('/interaction-state') || path.endsWith('/follow-state') || path === '/api/files/access') {
+      redundantRequests.push(path)
+    }
+  })
+  await page.route('**/api/posts/1001', route => route.fulfill({ json: { code: 'OK', message: 'success', data: composed } }))
+
+  await page.goto('/posts/1001')
+
+  await expect(page.getByRole('button', { name: /已喜欢/ })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('button', { name: /已收藏/ })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('button', { name: '已关注' })).toBeVisible()
+  expect(redundantRequests).toEqual([])
 })
 
 test('admin route keeps review reason visible', async ({ page }) => {
