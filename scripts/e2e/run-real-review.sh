@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="${ROOT_DIR}/docker-compose.e2e.yml"
 PROJECT_NAME="${REAL_E2E_PROJECT_NAME:-devcircle-real-review-e2e}"
 WAIT_TIMEOUT="${REAL_E2E_WAIT_TIMEOUT:-180}"
+PULL_POLICY="${REAL_E2E_PULL_POLICY:-missing}"
+BUILD_MODE="${REAL_E2E_BUILD:-true}"
 ADMIN_EMAIL="real-review-admin@example.test"
 ADMIN_PASSWORD="OrbitAdmin2026!"
 COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" --profile review)
@@ -33,7 +35,16 @@ else
   exit 2
 fi
 
-"${COMPOSE[@]}" up -d --build --wait --wait-timeout "${WAIT_TIMEOUT}"
+"${COMPOSE[@]}" down -v --remove-orphans
+if [[ "${BUILD_MODE}" == "true" ]]; then
+  BUILD_ARGS=(--build)
+elif [[ "${BUILD_MODE}" == "false" ]]; then
+  BUILD_ARGS=(--no-build)
+else
+  echo "REAL_E2E_BUILD must be true or false" >&2
+  exit 2
+fi
+"${COMPOSE[@]}" up -d "${BUILD_ARGS[@]}" --pull "${PULL_POLICY}" --wait --wait-timeout "${WAIT_TIMEOUT}"
 
 curl --fail --silent --show-error --output /dev/null \
   --request POST 'http://127.0.0.1:28080/api/auth/register' \

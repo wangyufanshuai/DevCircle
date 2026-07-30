@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="${ROOT_DIR}/docker-compose.e2e.yml"
 PROJECT_NAME="${REAL_E2E_PROJECT_NAME:-devcircle-real-content-e2e}"
 WAIT_TIMEOUT="${REAL_E2E_WAIT_TIMEOUT:-180}"
+PULL_POLICY="${REAL_E2E_PULL_POLICY:-missing}"
+BUILD_MODE="${REAL_E2E_BUILD:-true}"
 COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" --profile content)
 
 cleanup() {
@@ -30,5 +32,14 @@ else
   exit 2
 fi
 
-"${COMPOSE[@]}" up -d --build --wait --wait-timeout "${WAIT_TIMEOUT}"
+"${COMPOSE[@]}" down -v --remove-orphans
+if [[ "${BUILD_MODE}" == "true" ]]; then
+  BUILD_ARGS=(--build)
+elif [[ "${BUILD_MODE}" == "false" ]]; then
+  BUILD_ARGS=(--no-build)
+else
+  echo "REAL_E2E_BUILD must be true or false" >&2
+  exit 2
+fi
+"${COMPOSE[@]}" up -d "${BUILD_ARGS[@]}" --pull "${PULL_POLICY}" --wait --wait-timeout "${WAIT_TIMEOUT}"
 (cd "${ROOT_DIR}/web" && npx playwright test -c playwright.real.config.ts tests-real/content.spec.ts)
