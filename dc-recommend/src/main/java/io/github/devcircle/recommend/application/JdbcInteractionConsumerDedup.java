@@ -19,21 +19,32 @@ class JdbcInteractionConsumerDedup implements InteractionConsumerDedup {
                         """)
                 .param("eventId", eventId).param("topic", topic).update();
         if (inserted == 1) return true;
+
+        DedupRecord existing = jdbcClient.sql("""
+                        SELECT topic, status
+                        FROM recommend_consumer_dedup
+                        WHERE event_id = :eventId
+                        """)
+                .param("eventId", eventId)
+                .query((rs, rowNum) -> new DedupRecord(rs.getString("topic"), rs.getString("status")))
+                .single();
+        if (!existing.topic().equals(topic)) {
+            throw new IllegalArgumentException("Event ID is already associated with topic " + existing.topic());
+        }
+
         int reclaimed = jdbcClient.sql("""
                         UPDATE recommend_consumer_dedup
                         SET status = 'PROCESSING', attempts = attempts + 1, last_error = NULL
-                        WHERE event_id = :eventId AND status = 'FAILED'
+                        WHERE event_id = :eventId AND topic = :topic AND status = 'FAILED'
                         """)
-                .param("eventId", eventId).update();
+                .param("eventId", eventId).param("topic", topic).update();
         if (reclaimed == 1) return true;
-        String status = jdbcClient.sql("SELECT status FROM recommend_consumer_dedup WHERE event_id = :eventId")
-                .param("eventId", eventId).query(String.class).single();
-        return "PROCESSING".equals(status) && jdbcClient.sql("""
+        return "PROCESSING".equals(existing.status()) && jdbcClient.sql("""
                         UPDATE recommend_consumer_dedup
                         SET status = 'PROCESSING', attempts = attempts + 1
-                        WHERE event_id = :eventId AND status = 'PROCESSING'
+                        WHERE event_id = :eventId AND topic = :topic AND status = 'PROCESSING'
                           AND updated_at < CURRENT_TIMESTAMP - INTERVAL 5 MINUTE
-                        """).param("eventId", eventId).update() == 1;
+                        """).param("eventId", eventId).param("topic", topic).update() == 1;
     }
 
     @Override
@@ -57,5 +68,8 @@ class JdbcInteractionConsumerDedup implements InteractionConsumerDedup {
                 .param("eventId", eventId)
                 .param("lastError", safeMessage.substring(0, Math.min(1000, safeMessage.length())))
                 .update();
+    }
+
+    private record DedupRecord(String topic, String status) {
     }
 }

@@ -802,7 +802,7 @@ public class AdminService {
                     .param("postId", postId)
                     .query(Long.class)
                     .single();
-            EventEnvelope event = EventEnvelope.now(topic, "dc-content", String.valueOf(postId),
+            EventEnvelope event = EventEnvelope.now(topic, "dc-admin", String.valueOf(postId),
                     Map.of("postId", postId, "receiverId", receiverId, "action", action, "status", status));
             String payload = objectMapper.writeValueAsString(event);
             jdbcClient.sql("""

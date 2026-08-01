@@ -112,7 +112,7 @@ public class CommentRepository {
         Long commentId = key.longValue();
         jdbc.update("UPDATE idempotency_record SET resource_id = :commentId WHERE idempotency_key = :key",
                 Map.of("commentId", commentId, "key", idempotencyKey));
-        writeEvent(EventTopics.COMMENT_CREATED, commentId, postId, userId, parentId, "CREATED");
+        writeEvent(EventTopics.COMMENT_CHANGED, commentId, postId, userId, parentId, "CREATED");
         return find(commentId);
     }
 

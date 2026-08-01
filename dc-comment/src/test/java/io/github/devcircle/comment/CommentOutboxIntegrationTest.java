@@ -78,7 +78,7 @@ class CommentOutboxIntegrationTest {
         assertThat(outboxWorker.publishBatch(10)).isEqualTo(1);
 
         JsonNode event = readEvent();
-        assertThat(event.path("type").asText()).isEqualTo(EventTopics.COMMENT_CREATED);
+        assertThat(event.path("type").asText()).isEqualTo(EventTopics.COMMENT_CHANGED);
         assertThat(event.path("payload").path("commentId").asLong()).isEqualTo(comment.id());
         assertThat(jdbcClient.sql("SELECT status FROM outbox_event WHERE aggregate_id = :id")
                 .param("id", comment.id().toString()).query(String.class).single()).isEqualTo("PUBLISHED");
@@ -86,7 +86,7 @@ class CommentOutboxIntegrationTest {
 
     private JsonNode readEvent() throws Exception {
         try (var consumer = new KafkaConsumer<String, String>(consumerProperties())) {
-            consumer.subscribe(List.of(EventTopics.COMMENT_CREATED));
+            consumer.subscribe(List.of(EventTopics.COMMENT_CHANGED));
             long deadline = System.nanoTime() + Duration.ofSeconds(15).toNanos();
             while (System.nanoTime() < deadline) {
                 for (var record : consumer.poll(Duration.ofMillis(500))) {
@@ -94,7 +94,7 @@ class CommentOutboxIntegrationTest {
                 }
             }
         }
-        throw new AssertionError("No comment.created event was consumed from Kafka");
+        throw new AssertionError("No comment.changed event was consumed from Kafka");
     }
 
     private Properties consumerProperties() {

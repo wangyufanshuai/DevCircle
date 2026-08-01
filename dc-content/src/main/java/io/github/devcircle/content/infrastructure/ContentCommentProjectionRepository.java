@@ -23,7 +23,8 @@ public class ContentCommentProjectionRepository {
         if (claimed == 0) return false;
 
         int delta;
-        if (EventTopics.COMMENT_CREATED.equals(topic) && "CREATED".equals(changeType)) {
+        if ((EventTopics.COMMENT_CREATED.equals(topic) || EventTopics.COMMENT_CHANGED.equals(topic))
+                && "CREATED".equals(changeType)) {
             delta = 1;
         } else if (EventTopics.COMMENT_CHANGED.equals(topic)
                 && ("DELETED".equals(changeType) || "HIDDEN".equals(changeType))) {

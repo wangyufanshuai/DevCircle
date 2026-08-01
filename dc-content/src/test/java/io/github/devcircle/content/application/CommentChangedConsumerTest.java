@@ -15,7 +15,7 @@ class CommentChangedConsumerTest {
     private final CommentChangedConsumer consumer = new CommentChangedConsumer(repository, new ObjectMapper());
 
     @Test
-    void projectsCreatedComment() throws Exception {
+    void projectsLegacyCreatedComment() throws Exception {
         consumer.consume("""
                 {"eventId":"11111111-1111-1111-1111-111111111111","type":"comment.created",
                  "version":1,"payload":{"commentId":9,"postId":1001,"changeType":"CREATED"}}
@@ -23,6 +23,17 @@ class CommentChangedConsumerTest {
 
         verify(repository).apply("11111111-1111-1111-1111-111111111111",
                 EventTopics.COMMENT_CREATED, 1001L, "CREATED");
+    }
+
+    @Test
+    void projectsCreatedCommentOnTheOrderedLifecycleTopic() throws Exception {
+        consumer.consume("""
+                {"eventId":"33333333-3333-3333-3333-333333333333","type":"comment.changed",
+                 "version":1,"payload":{"commentId":10,"postId":1002,"changeType":"CREATED"}}
+                """);
+
+        verify(repository).apply("33333333-3333-3333-3333-333333333333",
+                EventTopics.COMMENT_CHANGED, 1002L, "CREATED");
     }
 
     @Test

@@ -64,8 +64,8 @@ class CommentRepositoryIntegrationTest {
 
         assertThat(replay.id()).isEqualTo(reply.id());
         assertThat(replay.content()).isEqualTo("reply clue");
-        assertThat(outboxCount("comment.created")).isEqualTo(2);
-        assertThat(outboxCount("comment.changed")).isEqualTo(1);
+        assertThat(outboxCount("comment.created")).isZero();
+        assertThat(outboxCount("comment.changed")).isEqualTo(3);
     }
 
     @Test

@@ -12,6 +12,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ReliableOutboxWorkerTest {
@@ -87,13 +89,43 @@ class ReliableOutboxWorkerTest {
         assertThat(status()).isEqualTo("PUBLISHED");
     }
 
+    @Test
+    void laterAggregateEventWaitsUntilItsPredecessorIsPublished() {
+        insert("evt-first", "NEW", 0, null, "post-1");
+        insert("evt-second", "NEW", 0, null, "post-1");
+        when(kafka.send(anyString(), anyString(), anyString()))
+                .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("broker down")))
+                .thenReturn(CompletableFuture.completedFuture(null));
+        ReliableOutboxWorker worker = new ReliableOutboxWorker(jdbc, kafka, 10, 3);
+
+        worker.publishAvailable();
+
+        assertThat(status("evt-first")).isEqualTo("FAILED");
+        assertThat(status("evt-second")).isEqualTo("NEW");
+        verify(kafka, times(1)).send(anyString(), anyString(), anyString());
+
+        jdbc.sql("UPDATE outbox_event SET next_attempt_at = CURRENT_TIMESTAMP WHERE event_id = 'evt-first'").update();
+        worker.publishAvailable();
+        assertThat(status("evt-first")).isEqualTo("PUBLISHED");
+        assertThat(status("evt-second")).isEqualTo("NEW");
+
+        worker.publishAvailable();
+        assertThat(status("evt-second")).isEqualTo("PUBLISHED");
+        verify(kafka, times(3)).send(anyString(), anyString(), anyString());
+    }
+
     private void insert(String eventId, String status, int attempts, String lockedAtExpression) {
+        insert(eventId, status, attempts, lockedAtExpression, "1");
+    }
+
+    private void insert(String eventId, String status, int attempts, String lockedAtExpression, String aggregateId) {
         String locked = lockedAtExpression == null ? "NULL" : lockedAtExpression;
         jdbc.sql("""
                 INSERT INTO outbox_event(event_id, topic, aggregate_type, aggregate_id, payload, status, attempts, locked_at)
-                VALUES (:eventId, 'test.topic', 'TEST', '1', '{"eventId":"x"}', :status, :attempts, %s)
+                VALUES (:eventId, 'test.topic', 'TEST', :aggregateId, '{"eventId":"x"}', :status, :attempts, %s)
                 """.formatted(locked))
-                .param("eventId", eventId).param("status", status).param("attempts", attempts).update();
+                .param("eventId", eventId).param("aggregateId", aggregateId)
+                .param("status", status).param("attempts", attempts).update();
     }
 
     private String status() {
@@ -102,5 +134,10 @@ class ReliableOutboxWorkerTest {
 
     private int attempts() {
         return jdbc.sql("SELECT attempts FROM outbox_event").query(Integer.class).single();
+    }
+
+    private String status(String eventId) {
+        return jdbc.sql("SELECT status FROM outbox_event WHERE event_id = :eventId")
+                .param("eventId", eventId).query(String.class).single();
     }
 }

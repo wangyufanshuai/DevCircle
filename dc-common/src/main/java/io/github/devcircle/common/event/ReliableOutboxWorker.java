@@ -71,10 +71,20 @@ public class ReliableOutboxWorker {
     private List<EventRow> candidates(int requestedBatchSize) {
         return jdbcClient.sql("""
                         SELECT id, event_id, topic, aggregate_id, CAST(payload AS CHAR) payload, attempts
-                        FROM outbox_event
-                        WHERE ((status IN ('NEW', 'FAILED') AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP))
-                           OR (status = 'PROCESSING' AND locked_at < TIMESTAMPADD(MINUTE, -5, CURRENT_TIMESTAMP)))
-                        ORDER BY created_at
+                        FROM outbox_event current_event
+                        WHERE ((current_event.status IN ('NEW', 'FAILED')
+                                  AND (current_event.next_attempt_at IS NULL OR current_event.next_attempt_at <= CURRENT_TIMESTAMP))
+                           OR (current_event.status = 'PROCESSING'
+                                  AND current_event.locked_at < TIMESTAMPADD(MINUTE, -5, CURRENT_TIMESTAMP)))
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM outbox_event prior_event
+                              WHERE prior_event.topic = current_event.topic
+                                AND prior_event.aggregate_id = current_event.aggregate_id
+                                AND prior_event.id < current_event.id
+                                AND prior_event.status <> 'PUBLISHED'
+                          )
+                        ORDER BY current_event.created_at, current_event.id
                         LIMIT :batchSize
                         """)
                 .param("batchSize", requestedBatchSize)

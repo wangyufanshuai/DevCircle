@@ -51,9 +51,9 @@ class ContentCommentProjectionIntegrationTest {
 
     @Test
     void createDeleteAndDuplicateEventsKeepCountConsistent() {
-        assertThat(repository.apply("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", EventTopics.COMMENT_CREATED,
+        assertThat(repository.apply("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", EventTopics.COMMENT_CHANGED,
                 92001L, "CREATED")).isTrue();
-        assertThat(repository.apply("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", EventTopics.COMMENT_CREATED,
+        assertThat(repository.apply("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", EventTopics.COMMENT_CHANGED,
                 92001L, "CREATED")).isFalse();
         assertThat(repository.apply("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", EventTopics.COMMENT_CHANGED,
                 92001L, "DELETED")).isTrue();
