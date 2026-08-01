@@ -40,6 +40,8 @@
         <testcontainers.version>1.21.3</testcontainers.version>
         <testcontainers.core.version>2.0.5</testcontainers.core.version>
         <jacoco.version>0.8.13</jacoco.version>
+        <mockito.agent.version>5.20.0</mockito.agent.version>
+        <argLine></argLine>
         <maven.compiler.release>${java.version}</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
@@ -153,6 +155,14 @@
                     <configuration>
                         <release>${java.version}</release>
                         <parameters>true</parameters>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.2.5</version>
+                    <configuration>
+                        <argLine>@{argLine} -javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.agent.version}/mockito-core-${mockito.agent.version}.jar -Xshare:off</argLine>
                     </configuration>
                 </plugin>
             </plugins>
