@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-line_min="${MIN_LINE_COVERAGE:-30.0}"
-branch_min="${MIN_BRANCH_COVERAGE:-27.9}"
+line_min="${MIN_LINE_COVERAGE:-35.0}"
+branch_min="${MIN_BRANCH_COVERAGE:-32.0}"
 
 shopt -s nullglob
 reports=(./dc-*/target/site/jacoco/jacoco.xml)

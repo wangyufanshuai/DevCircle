@@ -61,6 +61,16 @@ $env:DOCKER_HOST='tcp://127.0.0.1:2375'
 
 ## 覆盖链路
 
+CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 35%、分支覆盖率 32%，并在下一步拒绝任何 skipped 测试。Docker 不可用时，可以只测量纯单元基线，但该结果不得替代容器验收：
+
+```powershell
+.\mvnw.cmd -B -Pcoverage clean verify "-Dtest=!*IntegrationTest,!DockerPreflightTest,!KafkaContainerSmokeTest" "-Dsurefire.failIfNoSpecifiedTests=false"
+```
+
+随后在 Git Bash（不要使用 `C:\Windows\System32\bash.exe`）中执行 `bash scripts/ops/assert-coverage.sh`。
+
+2026-08-01 在 `01961e6` 后的纯单元基线为 155 个测试、0 skipped，行覆盖率 38.24%、分支覆盖率 37.77%。完整 CI 仍必须运行下列 Testcontainers 链路：
+
 - Docker preflight：启动最小容器，确认 Testcontainers 能连接 Docker。
 - `dc-content`: 发帖写入帖子、正文、标签、媒体关联和 Outbox；真实 Kafka 发送成功后事件才变为 `PUBLISHED`。
 - `dc-interaction`: 重复点赞/收藏不重复写记录或重复增加计数，Redis 热度随首次互动变化。
