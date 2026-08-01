@@ -14,13 +14,14 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 class UserRegisteredConsumerTest {
+    private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+    private final UserGraphRepository repository = mock(UserGraphRepository.class);
+    private final UserRegisteredConsumer consumer = new UserRegisteredConsumer(mapper, repository);
+
     @Test
     void createsTheProfileThroughTheConsumerDedupBoundary() throws Exception {
-        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
-        UserGraphRepository repository = mock(UserGraphRepository.class);
-        UserRegisteredConsumer consumer = new UserRegisteredConsumer(mapper, repository);
-        EventEnvelope event = EventEnvelope.now(EventTopics.USER_REGISTERED, "dc-auth", "42",
-                Map.of("userId", 42L, "displayName", "观测者", "status", "ACTIVE"));
+        EventEnvelope event = event("42", Map.of(
+                "userId", 42L, "displayName", "观测者", "status", "ACTIVE"));
 
         consumer.consume(mapper.writeValueAsString(event));
 
@@ -30,16 +31,38 @@ class UserRegisteredConsumerTest {
 
     @Test
     void aggregateIdentityMismatchIsRejectedBeforeProjection() throws Exception {
-        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
-        UserGraphRepository repository = mock(UserGraphRepository.class);
-        UserRegisteredConsumer consumer = new UserRegisteredConsumer(mapper, repository);
-        EventEnvelope event = EventEnvelope.now(EventTopics.USER_REGISTERED, "dc-auth", "99",
-                Map.of("userId", 42L, "displayName", "观测者", "status", "ACTIVE"));
+        EventEnvelope event = event("99", Map.of(
+                "userId", 42L, "displayName", "观测者", "status", "ACTIVE"));
 
         assertThatThrownBy(() -> consumer.consume(mapper.writeValueAsString(event)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("User aggregateId does not match userId");
 
         verifyNoInteractions(repository);
+    }
+
+    @Test
+    void malformedUserIdentityFieldsAreRejectedBeforeProjection() {
+        assertInvalid(Map.of("displayName", "观测者"));
+        assertInvalid(Map.of("userId", "42", "displayName", "观测者"));
+        assertInvalid(Map.of("userId", 0L, "displayName", "观测者"));
+        assertInvalid(Map.of("userId", 42L));
+        assertInvalid(Map.of("userId", 42L, "displayName", 7));
+        assertInvalid(Map.of("userId", 42L, "displayName", " "));
+        assertInvalid(Map.of("userId", 42L, "displayName", "x".repeat(65)));
+        assertInvalid(Map.of("userId", 42L, "displayName", " 观测者"));
+
+        verifyNoInteractions(repository);
+    }
+
+    private void assertInvalid(Map<String, Object> payload) {
+        EventEnvelope event = event("42", payload);
+        assertThatThrownBy(() -> consumer.consume(mapper.writeValueAsString(event)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Invalid user registration event payload");
+    }
+
+    private EventEnvelope event(String aggregateId, Map<String, Object> payload) {
+        return EventEnvelope.now(EventTopics.USER_REGISTERED, "dc-auth", aggregateId, payload);
     }
 }

@@ -3,7 +3,9 @@ package io.github.devcircle.recommend.application;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -75,6 +77,50 @@ class InteractionChangedConsumerTest {
 
         verify(dedup).markFailed(EVENT_ID_1, "Interaction aggregateId does not match postId");
         verifyNoInteractions(signals);
+    }
+
+    @Test
+    void invalidPayloadFieldsAndInteractionTypeAreMarkedForRetry() {
+        when(dedup.claim(EVENT_ID_1, "interaction.changed")).thenReturn(true);
+
+        assertRejected("{\"actorId\":\"7\",\"postId\":9001,\"interactionType\":\"LIKE\"}",
+                "Interaction payload actorId must be a positive integer");
+        assertRejected("{\"postId\":9001,\"interactionType\":\"LIKE\"}",
+                "Interaction payload actorId must be a positive integer");
+        assertRejected("{\"actorId\":999999999999999999999999999999,\"postId\":9001,\"interactionType\":\"LIKE\"}",
+                "Interaction payload actorId must be a positive integer");
+        assertRejected("{\"actorId\":7,\"postId\":0,\"interactionType\":\"LIKE\"}",
+                "Interaction payload postId must be a positive integer");
+        assertRejected("{\"actorId\":7,\"postId\":9001,\"interactionType\":7}",
+                "Interaction payload interactionType must be a non-blank string");
+        assertRejected("{\"actorId\":7,\"postId\":9001}",
+                "Interaction payload interactionType must be a non-blank string");
+        assertRejected("{\"actorId\":7,\"postId\":9001,\"interactionType\":\" \"}",
+                "Interaction payload interactionType must be a non-blank string");
+        assertRejected("{\"actorId\":7,\"postId\":9001,\"interactionType\":\"SHARE\"}",
+                "Unsupported interaction type: SHARE");
+
+        verifyNoInteractions(signals);
+    }
+
+    @Test
+    void dedupFailureIsSuppressedWithoutHidingTheProjectionFailure() throws Exception {
+        when(dedup.claim(EVENT_ID_1, "interaction.changed")).thenReturn(true);
+        RuntimeException projectionFailure = new RuntimeException();
+        RuntimeException stateFailure = new IllegalStateException("dedup unavailable");
+        doThrow(projectionFailure).when(signals).apply(EVENT_ID_1, 7L, 9001L, "LIKE");
+        doThrow(stateFailure).when(dedup).markFailed(EVENT_ID_1, "RuntimeException");
+
+        assertThatThrownBy(() -> consumer.consume(event(EVENT_ID_1, "9001", """
+                {"actorId":7,"postId":9001,"interactionType":"LIKE"}
+                """))).isSameAs(projectionFailure);
+        assertThat(projectionFailure.getSuppressed()).containsExactly(stateFailure);
+    }
+
+    private void assertRejected(String payload, String message) {
+        assertThatThrownBy(() -> consumer.consume(event(EVENT_ID_1, "9001", payload)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(message);
     }
 
     private String event(String eventId, String aggregateId, String payload) {
