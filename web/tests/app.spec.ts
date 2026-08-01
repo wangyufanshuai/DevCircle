@@ -8,6 +8,7 @@ const post = {
 }
 const feed = Array.from({ length: 8 }, (_, index) => ({ post: { ...post, id: post.id + index, title: `${post.title} ${index + 1}` }, reason: '与你近期感兴趣的主题相关', score: 100 - index, liked: false, favorited: false, algorithm: 'EXPLAINABLE_RULE_V1', features: {} }))
 const dashboard = { profile: { id: 2, username: '观测者', bio: '追踪星图中的异常', followers: 3, following: 5, status: 'ACTIVE' }, readingProgress: [], submissions: [], favorites: [{ id: 1001, title: '雾港钟楼失踪案', excerpt: '钟声停在 00:07。', theme: 'DEDUCTION', contentKind: 'CASE_FILE', difficulty: 'HARD', createdAt: '2026-07-30T00:00:00Z' }], unreadNotifications: 0, deductionStats: { attempts: 6, correctCount: 4, revealedCount: 1, totalPoints: 80 } }
+const unhandledApiRequests = new WeakMap<import('@playwright/test').Page, string[]>()
 
 async function authenticate(page: import('@playwright/test').Page, roles: string[] = ['USER']) {
   await page.context().addCookies([{ name: 'dc_csrf', value: 'test-csrf', domain: '127.0.0.1', path: '/' }])
@@ -15,6 +16,18 @@ async function authenticate(page: import('@playwright/test').Page, roles: string
 }
 
 test.beforeEach(async ({ page }) => {
+  const unhandled: string[] = []
+  unhandledApiRequests.set(page, unhandled)
+  await page.route('**/*', route => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (!url.pathname.startsWith('/api/')) return route.fallback()
+    unhandled.push(`${request.method()} ${url.pathname}${url.search}`)
+    return route.fulfill({
+      status: 503,
+      json: { code: 'UNHANDLED_TEST_ROUTE', message: 'Playwright API route is not declared', data: null }
+    })
+  })
   await page.route('**/api/recommend/feed**', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { records: feed, nextCursor: '8', hasMore: false }, traceId: 'test' } }))
   await page.route('**/api/posts?*', route => route.fulfill({ json: { code: 'OK', message: 'success', data: feed.map(item => item.post), meta: { nextCursor: '', hasMore: false } } }))
   await page.route('**/api/posts/1001', route => route.fulfill({ json: { code: 'OK', message: 'success', data: post } }))
@@ -33,6 +46,13 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/posts/drafts?*', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [] } }))
   await page.route('**/api/admin/appeals?*', route => route.fulfill({ json: { code: 'OK', message: 'success', data: [] } }))
   await page.route('**/api/me/dashboard', route => route.fulfill({ json: { code: 'OK', message: 'success', data: dashboard } }))
+})
+
+test.afterEach(async ({ page }) => {
+  if (!page.isClosed()) {
+    await page.goto('about:blank').catch(() => undefined)
+  }
+  expect(unhandledApiRequests.get(page) ?? [], 'every mocked API request must have an explicit route').toEqual([])
 })
 
 test('desktop home has observatory hierarchy and theme links', async ({ page }) => {
