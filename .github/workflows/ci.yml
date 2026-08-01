@@ -183,7 +183,14 @@ jobs:
   images:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    needs: [backend, frontend, delivery]
+    needs:
+      - backend
+      - frontend
+      - real-auth-e2e
+      - real-content-e2e
+      - real-review-e2e
+      - real-community-e2e
+      - delivery
     strategy:
       fail-fast: false
       matrix:
@@ -233,7 +240,13 @@ jobs:
   web-image:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    needs: [frontend, delivery]
+    needs:
+      - frontend
+      - real-auth-e2e
+      - real-content-e2e
+      - real-review-e2e
+      - real-community-e2e
+      - delivery
     steps:
       - uses: actions/checkout@v5
       - uses: docker/login-action@v3
