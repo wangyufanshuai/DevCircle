@@ -22,6 +22,14 @@ public class ContentInteractionProjectionRepository {
                 .param("topic", topic)
                 .update();
         if (claimed == 0) {
+            String existingTopic = jdbcClient.sql(
+                            "SELECT topic FROM interaction_projection_dedup WHERE event_id = :eventId")
+                    .param("eventId", eventId)
+                    .query(String.class)
+                    .single();
+            if (!topic.equals(existingTopic)) {
+                throw new IllegalArgumentException("Event ID is already bound to topic " + existingTopic);
+            }
             return false;
         }
 

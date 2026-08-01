@@ -6,7 +6,9 @@ import io.github.devcircle.common.api.ApiResponse;
 import io.github.devcircle.common.api.PageResponse;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
+import io.github.devcircle.common.event.EventEnvelopeValidator;
 import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.common.model.PostSummary;
 import io.github.devcircle.common.seed.ThemeContentLibrary;
 import io.github.devcircle.search.infrastructure.PostSearchDocument;
@@ -26,11 +28,22 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 @Service
 public class SearchService {
+    private static final Map<String, Set<String>> UPSERT_EVENT_CONTRACTS = Map.of(
+            EventTopics.POST_CREATED, Set.of("dc-content"),
+            EventTopics.POST_UPDATED, Set.of("dc-content"),
+            EventTopics.AUDIT_COMPLETED, Set.of("dc-admin"),
+            EventTopics.CONTENT_REJECTED, Set.of("dc-admin"));
+    private static final Map<String, Set<String>> DELETE_EVENT_CONTRACT =
+            Map.of(EventTopics.POST_DELETED, Set.of("dc-content"));
+
     private final ElasticsearchOperations elasticsearchOperations;
     private final ObjectMapper objectMapper;
+    private final EventEnvelopeValidator envelopeValidator;
     private final RestClient contentClient;
     private final SearchEventCoordinator eventCoordinator;
 
@@ -43,6 +56,7 @@ public class SearchService {
                          SearchEventCoordinator eventCoordinator) {
         this.elasticsearchOperations = elasticsearchOperations;
         this.objectMapper = objectMapper;
+        this.envelopeValidator = new EventEnvelopeValidator(objectMapper);
         this.contentClient = RestClient.builder().baseUrl(contentBaseUrl).build();
         this.eventCoordinator = eventCoordinator;
     }
@@ -125,23 +139,20 @@ public class SearchService {
     }
 
     public void upsertPostFromEvent(String message) throws Exception {
-        JsonNode envelope = objectMapper.readTree(message);
-        String eventId = requiredText(envelope, "eventId");
-        String topic = requiredText(envelope, "type");
-        JsonNode payload = envelope.path("payload");
-        if (!payload.isObject()) {
-            throw new IllegalArgumentException("Post event payload must be an object");
+        ValidatedEvent event = envelopeValidator.parse(message, UPSERT_EVENT_CONTRACTS);
+        String eventId = event.eventId().toString();
+        String topic = event.type();
+        JsonNode payload = event.payload();
+        long postId = requiredPositiveLong(payload, "postId");
+        if (!event.aggregateId().equals(Long.toString(postId))) {
+            throw new IllegalArgumentException("Search aggregateId does not match postId");
         }
-        long postId = payload.path("postId").asLong(0);
-        if (postId <= 0) {
-            throw new IllegalArgumentException("Post event is missing postId");
-        }
-        Instant occurredAt = Instant.parse(requiredText(envelope, "occurredAt"));
+        Instant occurredAt = event.occurredAt();
         if (!eventCoordinator.claim(eventId, topic, postId, occurredAt)) {
             return;
         }
         try {
-            String eventStatus = payload.path("status").asText("");
+            String eventStatus = optionalText(payload, "status", "");
             if (EventTopics.CONTENT_REJECTED.equals(topic)
                     || (!eventStatus.isBlank() && !"PUBLISHED".equals(eventStatus))) {
                 elasticsearchOperations.delete(String.valueOf(postId), PostSearchDocument.class);
@@ -181,14 +192,13 @@ public class SearchService {
 
     @KafkaListener(topics = EventTopics.POST_DELETED, groupId = "dc-search")
     public void deletePostEvent(String message) throws Exception {
-        JsonNode envelope = objectMapper.readTree(message);
-        String eventId = requiredText(envelope, "eventId");
-        String topic = requiredText(envelope, "type");
-        Instant occurredAt = Instant.parse(requiredText(envelope, "occurredAt"));
-        JsonNode payload = envelope.path("payload");
-        long postId = payload.path("postId").asLong(0);
-        if (postId <= 0) {
-            throw new IllegalArgumentException("Post delete event is missing postId");
+        ValidatedEvent event = envelopeValidator.parse(message, DELETE_EVENT_CONTRACT);
+        String eventId = event.eventId().toString();
+        String topic = event.type();
+        Instant occurredAt = event.occurredAt();
+        long postId = requiredPositiveLong(event.payload(), "postId");
+        if (!event.aggregateId().equals(Long.toString(postId))) {
+            throw new IllegalArgumentException("Search aggregateId does not match postId");
         }
         if (!eventCoordinator.claim(eventId, topic, postId, occurredAt)) {
             return;
@@ -274,6 +284,23 @@ public class SearchService {
             throw new IllegalArgumentException("Search event is missing " + field);
         }
         return value;
+    }
+
+    private long requiredPositiveLong(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || !value.isIntegralNumber() || !value.canConvertToLong() || value.longValue() <= 0) {
+            throw new IllegalArgumentException("Search payload " + field + " must be a positive integer");
+        }
+        return value.longValue();
+    }
+
+    private String optionalText(JsonNode payload, String field, String defaultValue) {
+        JsonNode value = payload.get(field);
+        if (value == null || value.isNull()) return defaultValue;
+        if (!value.isTextual()) {
+            throw new IllegalArgumentException("Search payload " + field + " must be a string");
+        }
+        return value.textValue();
     }
 
     private PostSummary toSummary(PostSearchDocument document) {

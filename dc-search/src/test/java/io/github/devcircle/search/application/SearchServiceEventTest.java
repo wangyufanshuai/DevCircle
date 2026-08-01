@@ -37,7 +37,7 @@ class SearchServiceEventTest {
 
         service.upsertPostFromEvent("""
                 {"eventId":"44444444-4444-4444-4444-444444444444","type":"content.rejected","version":1,
-                 "occurredAt":"2026-07-30T12:00:00Z","producer":"dc-content","aggregateId":"91",
+                 "occurredAt":"2026-07-30T12:00:00Z","producer":"dc-admin","aggregateId":"91",
                  "payload":{"postId":91,"status":"REJECTED"}}
                 """);
 
@@ -77,5 +77,25 @@ class SearchServiceEventTest {
                 .hasMessageContaining("elasticsearch unavailable");
 
         verify(coordinator).fail(eq(eventId), eq(93L), any(IllegalStateException.class));
+    }
+
+    @Test
+    void producerAndAggregateIdentityAreRejectedBeforeClaimingSearchState() {
+        assertThatThrownBy(() -> service.upsertPostFromEvent("""
+                {"eventId":"77777777-7777-4777-8777-777777777777","type":"content.rejected","version":1,
+                 "occurredAt":"2026-07-30T13:30:00Z","producer":"dc-content","aggregateId":"94",
+                 "payload":{"postId":94,"status":"REJECTED"}}
+                """))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unsupported event producer dc-content for type content.rejected");
+        assertThatThrownBy(() -> service.deletePostEvent("""
+                {"eventId":"88888888-8888-4888-8888-888888888888","type":"post.deleted","version":1,
+                 "occurredAt":"2026-07-30T13:30:00Z","producer":"dc-content","aggregateId":"95",
+                 "payload":{"postId":96}}
+                """))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Search aggregateId does not match postId");
+
+        verifyNoInteractions(coordinator, operations);
     }
 }

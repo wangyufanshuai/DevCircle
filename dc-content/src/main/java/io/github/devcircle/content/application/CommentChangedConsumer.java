@@ -2,42 +2,64 @@ package io.github.devcircle.content.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.devcircle.common.event.EventEnvelopeValidator;
 import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.content.infrastructure.ContentCommentProjectionRepository;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
+import java.util.Map;
+import java.util.Set;
+
 @Component
 class CommentChangedConsumer {
+    private static final Map<String, Set<String>> EVENT_CONTRACTS = Map.of(
+            EventTopics.COMMENT_CREATED, Set.of("dc-comment"),
+            EventTopics.COMMENT_CHANGED, Set.of("dc-comment"));
+    private static final Set<String> ALLOWED_CHANGES = Set.of("CREATED", "DELETED", "HIDDEN");
+
     private final ContentCommentProjectionRepository projectionRepository;
-    private final ObjectMapper objectMapper;
+    private final EventEnvelopeValidator envelopeValidator;
 
     CommentChangedConsumer(ContentCommentProjectionRepository projectionRepository, ObjectMapper objectMapper) {
         this.projectionRepository = projectionRepository;
-        this.objectMapper = objectMapper;
+        this.envelopeValidator = new EventEnvelopeValidator(objectMapper);
     }
 
     @KafkaListener(topics = {EventTopics.COMMENT_CREATED, EventTopics.COMMENT_CHANGED},
             groupId = "dc-content-comment-projection")
     void consume(String message) throws Exception {
-        JsonNode envelope = objectMapper.readTree(message);
-        String eventId = requiredText(envelope, "eventId");
-        String topic = requiredText(envelope, "type");
-        if (!EventTopics.COMMENT_CREATED.equals(topic) && !EventTopics.COMMENT_CHANGED.equals(topic)) {
-            throw new IllegalArgumentException("Unexpected comment event type: " + topic);
+        ValidatedEvent event = envelopeValidator.parse(message, EVENT_CONTRACTS);
+        JsonNode payload = event.payload();
+        long commentId = requiredPositiveLong(payload, "commentId");
+        long postId = requiredPositiveLong(payload, "postId");
+        String changeType = requiredText(payload, "changeType");
+        if (!ALLOWED_CHANGES.contains(changeType)) {
+            throw new IllegalArgumentException("Unsupported comment change type: " + changeType);
         }
-        JsonNode payload = envelope.path("payload");
-        long postId = payload.path("postId").asLong(0);
-        String changeType = payload.path("changeType").asText("");
-        if (postId <= 0 || changeType.isBlank()) {
-            throw new IllegalArgumentException("Comment event is missing postId or changeType");
+        if (EventTopics.COMMENT_CREATED.equals(event.type()) && !"CREATED".equals(changeType)) {
+            throw new IllegalArgumentException("Legacy comment.created only supports CREATED changes");
         }
-        projectionRepository.apply(eventId, topic, postId, changeType);
+        if (!event.aggregateId().equals(Long.toString(commentId))) {
+            throw new IllegalArgumentException("Comment aggregateId does not match commentId");
+        }
+        projectionRepository.apply(event.eventId().toString(), event.type(), postId, changeType);
     }
 
-    private String requiredText(JsonNode node, String field) {
-        String value = node.path(field).asText("");
-        if (value.isBlank()) throw new IllegalArgumentException("Event is missing " + field);
-        return value;
+    private long requiredPositiveLong(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || !value.isIntegralNumber() || !value.canConvertToLong() || value.longValue() <= 0) {
+            throw new IllegalArgumentException("Comment payload " + field + " must be a positive integer");
+        }
+        return value.longValue();
+    }
+
+    private String requiredText(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || !value.isTextual() || value.textValue().isBlank()) {
+            throw new IllegalArgumentException("Comment payload " + field + " must be a non-blank string");
+        }
+        return value.textValue();
     }
 }

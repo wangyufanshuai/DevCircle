@@ -26,6 +26,18 @@ class SearchEventCoordinator {
                 .param("postId", postId)
                 .update();
         if (inserted == 0) {
+            EventIdentity identity = jdbcClient.sql("""
+                            SELECT topic, post_id
+                            FROM search_consumer_dedup
+                            WHERE event_id = :eventId
+                            """)
+                    .param("eventId", eventId)
+                    .query((rs, rowNum) -> new EventIdentity(rs.getString("topic"), rs.getLong("post_id")))
+                    .single();
+            if (!topic.equals(identity.topic()) || postId != identity.postId()) {
+                throw new IllegalArgumentException("Search event ID is already bound to "
+                        + identity.topic() + "/" + identity.postId());
+            }
             int reclaimed = jdbcClient.sql("""
                             UPDATE search_consumer_dedup
                             SET status = 'PROCESSING', attempts = attempts + 1, last_error = NULL
@@ -144,5 +156,8 @@ class SearchEventCoordinator {
     }
 
     private record EventWatermark(Instant occurredAt) {
+    }
+
+    private record EventIdentity(String topic, long postId) {
     }
 }

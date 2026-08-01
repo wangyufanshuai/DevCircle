@@ -8,6 +8,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SearchEventCoordinatorTest {
     private JdbcClient jdbcClient;
@@ -79,5 +80,20 @@ class SearchEventCoordinatorTest {
                 .query(Integer.class)
                 .single();
         assertThat(attempts).isEqualTo(2);
+    }
+
+    @Test
+    void eventIdCannotBeRetriedAgainstAnotherTopicOrPost() {
+        String eventId = "7be56fe6-d3b8-46ce-899a-e633150a5f45";
+        Instant occurredAt = Instant.parse("2026-07-30T11:00:00Z");
+        assertThat(coordinator.claim(eventId, "post.updated", 73L, occurredAt)).isTrue();
+        coordinator.fail(eventId, 73L, new IllegalStateException("elasticsearch unavailable"));
+
+        assertThatThrownBy(() -> coordinator.claim(eventId, "content.rejected", 73L, occurredAt))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Search event ID is already bound to post.updated/73");
+        assertThatThrownBy(() -> coordinator.claim(eventId, "post.updated", 74L, occurredAt))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Search event ID is already bound to post.updated/73");
     }
 }

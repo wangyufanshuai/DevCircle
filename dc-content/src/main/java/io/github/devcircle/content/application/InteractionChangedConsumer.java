@@ -2,43 +2,60 @@ package io.github.devcircle.content.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.devcircle.common.event.EventEnvelopeValidator;
 import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.content.infrastructure.ContentInteractionProjectionRepository;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
+import java.util.Map;
+import java.util.Set;
+
 @Component
 class InteractionChangedConsumer {
+    private static final Map<String, Set<String>> EVENT_CONTRACT =
+            Map.of(EventTopics.INTERACTION_CHANGED, Set.of("dc-interaction"));
+    private static final Set<String> ALLOWED_INTERACTIONS =
+            Set.of("LIKE", "UNLIKE", "FAVORITE", "UNFAVORITE");
+
     private final ContentInteractionProjectionRepository projectionRepository;
-    private final ObjectMapper objectMapper;
+    private final EventEnvelopeValidator envelopeValidator;
 
     InteractionChangedConsumer(ContentInteractionProjectionRepository projectionRepository, ObjectMapper objectMapper) {
         this.projectionRepository = projectionRepository;
-        this.objectMapper = objectMapper;
+        this.envelopeValidator = new EventEnvelopeValidator(objectMapper);
     }
 
     @KafkaListener(topics = EventTopics.INTERACTION_CHANGED, groupId = "dc-content-interaction-projection")
     void consume(String message) throws Exception {
-        JsonNode envelope = objectMapper.readTree(message);
-        String eventId = requiredText(envelope, "eventId");
-        String type = requiredText(envelope, "type");
-        if (!EventTopics.INTERACTION_CHANGED.equals(type)) {
-            throw new IllegalArgumentException("Unexpected event type: " + type);
+        ValidatedEvent event = envelopeValidator.parse(message, EVENT_CONTRACT);
+        JsonNode payload = event.payload();
+        long actorId = requiredPositiveLong(payload, "actorId");
+        long postId = requiredPositiveLong(payload, "postId");
+        String interactionType = requiredText(payload, "interactionType");
+        if (!ALLOWED_INTERACTIONS.contains(interactionType)) {
+            throw new IllegalArgumentException("Unsupported interaction type: " + interactionType);
         }
-        JsonNode payload = envelope.path("payload");
-        long postId = payload.path("postId").asLong(0);
-        String interactionType = payload.path("interactionType").asText("");
-        if (postId <= 0 || interactionType.isBlank()) {
-            throw new IllegalArgumentException("Interaction event is missing postId or interactionType");
+        if (!event.aggregateId().equals(Long.toString(postId))) {
+            throw new IllegalArgumentException("Interaction aggregateId does not match postId");
         }
-        projectionRepository.apply(eventId, type, postId, interactionType);
+        projectionRepository.apply(event.eventId().toString(), event.type(), postId, interactionType);
     }
 
-    private String requiredText(JsonNode node, String field) {
-        String value = node.path(field).asText("");
-        if (value.isBlank()) {
-            throw new IllegalArgumentException("Event is missing " + field);
+    private long requiredPositiveLong(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || !value.isIntegralNumber() || !value.canConvertToLong() || value.longValue() <= 0) {
+            throw new IllegalArgumentException("Interaction payload " + field + " must be a positive integer");
         }
-        return value;
+        return value.longValue();
+    }
+
+    private String requiredText(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || !value.isTextual() || value.textValue().isBlank()) {
+            throw new IllegalArgumentException("Interaction payload " + field + " must be a non-blank string");
+        }
+        return value.textValue();
     }
 }
