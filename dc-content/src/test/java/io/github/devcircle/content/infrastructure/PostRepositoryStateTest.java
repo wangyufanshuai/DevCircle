@@ -235,6 +235,29 @@ class PostRepositoryStateTest {
         assertThat(progressIdempotencyCount("unavailable-key")).isZero();
     }
 
+    @Test
+    void cursorTypeFilterIsAppliedBeforePagination() {
+        post(7L, "普通文本", "PUBLISHED", "TEXT");
+        long firstImage = post(7L, "第一张索引图", "PUBLISHED", "IMAGE");
+        long secondImage = post(7L, "第二张索引图", "PUBLISHED", "IMAGE");
+
+        var first = repository.listCursor(null, 1, "IMAGE", null, null, null);
+        var second = repository.listCursor(first.nextCursor(), 1, "IMAGE", null, null, null);
+
+        assertThat(first.records()).singleElement().satisfies(post -> {
+            assertThat(post.id()).isEqualTo(secondImage);
+            assertThat(post.type()).isEqualTo("IMAGE");
+        });
+        assertThat(first.hasMore()).isTrue();
+        assertThat(second.records()).singleElement().satisfies(post -> {
+            assertThat(post.id()).isEqualTo(firstImage);
+            assertThat(post.type()).isEqualTo("IMAGE");
+        });
+        assertThat(second.hasMore()).isFalse();
+        assertCode(() -> repository.listCursor(null, 20, "AUDIO", null, null, null),
+                ErrorCode.VALIDATION_FAILED);
+    }
+
     private SaveDraftRequest draft(List<String> tags, Long version) {
         return new SaveDraftRequest(
                 "钟楼草稿", "# 钟楼\n\n正文", tags, "TEXT", List.of(), List.of(),
@@ -262,8 +285,13 @@ class PostRepositoryStateTest {
     }
 
     private long post(long authorId, String title, String status) {
-        jdbcClient.sql("INSERT INTO post(author_id, title, status) VALUES (:authorId, :title, :status)")
-                .param("authorId", authorId).param("title", title).param("status", status).update();
+        return post(authorId, title, status, "TEXT");
+    }
+
+    private long post(long authorId, String title, String status, String type) {
+        jdbcClient.sql("INSERT INTO post(author_id, title, status, type) VALUES (:authorId, :title, :status, :type)")
+                .param("authorId", authorId).param("title", title).param("status", status)
+                .param("type", type).update();
         long id = jdbcClient.sql("SELECT MAX(id) FROM post").query(Long.class).single();
         jdbcClient.sql("INSERT INTO post_content(post_id, markdown) VALUES (:id, :markdown)")
                 .param("id", id).param("markdown", "# " + title).update();

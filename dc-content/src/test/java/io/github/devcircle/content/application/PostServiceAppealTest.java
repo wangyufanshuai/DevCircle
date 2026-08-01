@@ -23,7 +23,7 @@ class PostServiceAppealTest {
 
     @Test
     void validAppealIsDelegatedWithItsIdempotencyKey() {
-        service.createAppeal(2L, 12L, "审核意见遗漏了附件中的来源说明", "appeal-12");
+        service.createAppeal(2L, 12L, "  审核意见遗漏了附件中的来源说明  ", "appeal-12");
 
         verify(repository).createAppeal(2L, 12L, "审核意见遗漏了附件中的来源说明", "appeal-12");
     }

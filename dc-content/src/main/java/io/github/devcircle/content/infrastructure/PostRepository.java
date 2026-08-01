@@ -324,7 +324,7 @@ public class PostRepository {
                 .list();
     }
 
-    public PostCursorPage listCursor(String cursor, int size, String theme, String contentKind, String difficulty) {
+    public PostCursorPage listCursor(String cursor, int size, String type, String theme, String contentKind, String difficulty) {
         CursorValue value = decodeCursor(cursor);
         List<PostSummary> rows = jdbcClient.sql("""
                         SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
@@ -336,6 +336,7 @@ public class PostRepository {
                         LEFT JOIN post_tag pt ON pt.post_id = p.id
                         LEFT JOIN tag t ON t.id = pt.tag_id
                         WHERE p.status = 'PUBLISHED'
+                          AND (:type IS NULL OR p.type = :type)
                           AND (:theme IS NULL OR p.theme = :theme)
                           AND (:contentKind IS NULL OR p.content_kind = :contentKind)
                           AND (:difficulty IS NULL OR p.difficulty = :difficulty)
@@ -347,6 +348,7 @@ public class PostRepository {
                         ORDER BY p.created_at DESC, p.id DESC
                         LIMIT :limit
                         """)
+                .param("type", normalizeNullableType(type))
                 .param("theme", normalizeNullableTheme(theme))
                 .param("contentKind", normalizeNullableContentKind(contentKind))
                 .param("difficulty", normalizeNullableDifficulty(difficulty))
@@ -1207,6 +1209,14 @@ public class PostRepository {
 
     private String normalizeNullableTheme(String theme) {
         return theme == null || theme.isBlank() ? null : normalizeTheme(theme);
+    }
+
+    private String normalizeNullableType(String type) {
+        if (type == null || type.isBlank()) return null;
+        return switch (type.toUpperCase()) {
+            case "TEXT", "IMAGE", "VIDEO" -> type.toUpperCase();
+            default -> throw new BusinessException(ErrorCode.VALIDATION_FAILED, "内容类型无效");
+        };
     }
 
     private String normalizeNullableContentKind(String contentKind) {
