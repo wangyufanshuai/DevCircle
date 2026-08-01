@@ -11,16 +11,18 @@ import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Component
 class TraceFilter implements GlobalFilter, Ordered {
     private static final Logger log = LoggerFactory.getLogger(TraceFilter.class);
+    private static final Pattern SAFE_TRACE_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._:-]{0,127}");
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         long startedAt = System.currentTimeMillis();
         String traceId = exchange.getRequest().getHeaders().getFirst("X-Trace-Id");
-        if (traceId == null || traceId.isBlank()) {
+        if (traceId == null || !SAFE_TRACE_ID.matcher(traceId).matches()) {
             traceId = UUID.randomUUID().toString();
         }
         ServerHttpRequest request = exchange.getRequest().mutate().header("X-Trace-Id", traceId).build();
