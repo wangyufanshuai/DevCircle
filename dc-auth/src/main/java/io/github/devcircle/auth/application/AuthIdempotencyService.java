@@ -35,7 +35,7 @@ public class AuthIdempotencyService {
         this.hmacKey = sha256(signingSecret + ":auth-idempotency");
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = TokenRevokedException.class)
     public AuthService.SessionTokens executeSession(String idempotencyKey,
                                                     String operation,
                                                     String requestMaterial,
@@ -44,7 +44,7 @@ public class AuthIdempotencyService {
         return execute(idempotencyKey, operation, requestMaterial, action, replayAction);
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = TokenRevokedException.class)
     public void executeVoid(String idempotencyKey,
                             String operation,
                             String requestMaterial,
@@ -116,7 +116,19 @@ public class AuthIdempotencyService {
             }
         }
 
-        T result = action.get();
+        T result;
+        try {
+            result = action.get();
+        } catch (TokenRevokedException ex) {
+            jdbcClient.sql("""
+                            DELETE FROM auth_idempotency_record
+                            WHERE idempotency_key = :key AND request_fingerprint = :fingerprint
+                            """)
+                    .param("key", idempotencyKey)
+                    .param("fingerprint", fingerprint)
+                    .update();
+            throw ex;
+        }
         Long userId = result instanceof AuthService.SessionTokens tokens && tokens.user() != null
                 ? tokens.user().userId() : null;
         jdbcClient.sql("""

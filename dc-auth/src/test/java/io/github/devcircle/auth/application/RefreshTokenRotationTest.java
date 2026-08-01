@@ -11,6 +11,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
@@ -22,6 +23,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 @SpringJUnitConfig(RefreshTokenRotationTest.TestConfig.class)
 class RefreshTokenRotationTest {
@@ -29,6 +31,8 @@ class RefreshTokenRotationTest {
     private JdbcClient jdbcClient;
     @Autowired
     private AuthTokenRepository repository;
+    @Autowired
+    private AuthService authService;
 
     @BeforeEach
     void setUp() {
@@ -58,6 +62,17 @@ class RefreshTokenRotationTest {
                     expires_at TIMESTAMP NOT NULL,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
+                """).update();
+        jdbcClient.sql("""
+                CREATE TABLE auth_idempotency_record (
+                    idempotency_key VARCHAR(128) PRIMARY KEY,
+                    operation VARCHAR(32) NOT NULL,
+                    request_fingerprint CHAR(64) NOT NULL,
+                    status VARCHAR(16) NOT NULL DEFAULT 'PROCESSING',
+                    user_id BIGINT,
+                    expires_at TIMESTAMP NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
                 """).update();
         jdbcClient.sql("INSERT INTO role(code, name) VALUES ('USER', 'User')").update();
         jdbcClient.sql("""
@@ -97,6 +112,49 @@ class RefreshTokenRotationTest {
         assertThat(revocationStates("family-2")).containsExactly(true, true);
     }
 
+    @Test
+    void idempotentRefreshCannotRollBackFamilyRevocationOnCsrfFailure() {
+        Instant expiresAt = Instant.now().plus(7, ChronoUnit.DAYS);
+        repository.saveRefreshToken(7L, "refresh-idempotent", "csrf-idempotent", "family-3", expiresAt);
+        repository.saveRefreshToken(7L, "refresh-sibling", "csrf-sibling", "family-3", expiresAt);
+
+        assertThatThrownBy(() -> authService.refresh(
+                "refresh-idempotent", "wrong-csrf", "refresh-request-key", "trace"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.code()).isEqualTo(ErrorCode.TOKEN_REVOKED));
+
+        assertThat(revocationStates("family-3")).containsExactly(true, true);
+        assertThat(jdbcClient.sql("SELECT COUNT(*) FROM auth_idempotency_record")
+                .query(Long.class).single()).isZero();
+    }
+
+    @Test
+    void idempotentLogoutCannotRollBackFamilyRevocationOnCsrfFailure() {
+        Instant expiresAt = Instant.now().plus(7, ChronoUnit.DAYS);
+        repository.saveRefreshToken(7L, "logout-primary", "logout-csrf", "family-4", expiresAt);
+        repository.saveRefreshToken(7L, "logout-sibling", "sibling-csrf", "family-4", expiresAt);
+
+        assertThatThrownBy(() -> authService.logout(
+                "logout-primary", "wrong-csrf", "logout-request-key", "trace"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.code()).isEqualTo(ErrorCode.TOKEN_REVOKED));
+
+        assertThat(revocationStates("family-4")).containsExactly(true, true);
+        assertThat(jdbcClient.sql("SELECT COUNT(*) FROM auth_idempotency_record")
+                .query(Long.class).single()).isZero();
+    }
+
+    @Test
+    void ordinaryAuthenticationFailureStillRollsBackItsIdempotencyClaim() {
+        assertThatThrownBy(() -> authService.login(
+                "reader@example.com", "wrong-password", "failed-login-key", "trace"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.code()).isEqualTo(ErrorCode.AUTHENTICATION_FAILED));
+
+        assertThat(jdbcClient.sql("SELECT COUNT(*) FROM auth_idempotency_record")
+                .query(Long.class).single()).isZero();
+    }
+
     private List<Boolean> revocationStates(String familyId) {
         return jdbcClient.sql("SELECT revoked FROM refresh_token WHERE family_id = :familyId ORDER BY id")
                 .param("familyId", familyId)
@@ -127,6 +185,20 @@ class RefreshTokenRotationTest {
         @Bean
         AuthTokenRepository authTokenRepository(JdbcClient jdbcClient) {
             return new AuthTokenRepository(jdbcClient, new ObjectMapper());
+        }
+
+        @Bean
+        AuthIdempotencyService authIdempotencyService(JdbcClient jdbcClient) {
+            return new AuthIdempotencyService(jdbcClient,
+                    "test-signing-secret-that-is-long-enough-for-auth-idempotency-123456");
+        }
+
+        @Bean
+        AuthService authService(AuthTokenRepository repository, AuthIdempotencyService idempotencyService) {
+            PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
+            return new AuthService(repository,
+                    new JwtService("test-secret-that-is-long-enough-for-production-style-validation-123456"),
+                    passwordEncoder, idempotencyService);
         }
     }
 }

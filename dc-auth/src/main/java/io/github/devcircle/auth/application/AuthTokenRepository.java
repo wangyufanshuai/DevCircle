@@ -228,7 +228,7 @@ public class AuthTokenRepository {
                 .optional();
     }
 
-    @Transactional(noRollbackFor = BusinessException.class)
+    @Transactional(noRollbackFor = TokenRevokedException.class)
     public Account rotateRefreshToken(String rawToken,
                                       String rawCsrf,
                                       String replacementToken,
@@ -249,14 +249,14 @@ public class AuthTokenRepository {
                         rs.getBoolean("revoked"),
                         rs.getTimestamp("expires_at").toInstant()))
                 .optional()
-                .orElseThrow(() -> new BusinessException(ErrorCode.TOKEN_REVOKED, "登录状态已失效，请重新登录"));
+                .orElseThrow(() -> new TokenRevokedException("登录状态已失效，请重新登录"));
         if (!constantTimeEquals(session.csrfHash(), hash(rawCsrf))) {
             revokeFamily(session.familyId());
-            throw new BusinessException(ErrorCode.TOKEN_REVOKED, "安全校验失败，请重新登录");
+            throw new TokenRevokedException("安全校验失败，请重新登录");
         }
         if (session.revoked() || !session.expiresAt().isAfter(Instant.now())) {
             revokeFamily(session.familyId());
-            throw new BusinessException(ErrorCode.TOKEN_REVOKED, "检测到刷新令牌重复使用，请重新登录");
+            throw new TokenRevokedException("检测到刷新令牌重复使用，请重新登录");
         }
         int revoked = jdbcClient.sql("""
                         UPDATE refresh_token
@@ -268,14 +268,14 @@ public class AuthTokenRepository {
                 .update();
         if (revoked != 1) {
             revokeFamily(session.familyId());
-            throw new BusinessException(ErrorCode.TOKEN_REVOKED, "检测到刷新令牌重复使用，请重新登录");
+            throw new TokenRevokedException("检测到刷新令牌重复使用，请重新登录");
         }
         saveRefreshToken(session.userId(), replacementToken, replacementCsrf, session.familyId(), replacementExpiresAt);
         return findAccountById(session.userId())
                 .orElseThrow(() -> new IllegalStateException("Refresh token account no longer exists"));
     }
 
-    @Transactional(noRollbackFor = BusinessException.class)
+    @Transactional(noRollbackFor = TokenRevokedException.class)
     public void revokeRefreshToken(String rawToken, String rawCsrf) {
         Optional<RefreshSession> session = jdbcClient.sql("""
                         SELECT id, user_id, csrf_hash, family_id, revoked, expires_at
@@ -293,7 +293,7 @@ public class AuthTokenRepository {
         }
         if (!constantTimeEquals(session.get().csrfHash(), hash(rawCsrf))) {
             revokeFamily(session.get().familyId());
-            throw new BusinessException(ErrorCode.TOKEN_REVOKED, "安全校验失败");
+            throw new TokenRevokedException("安全校验失败");
         }
         jdbcClient.sql("UPDATE refresh_token SET revoked = true WHERE id = :id")
                 .param("id", session.get().id())
