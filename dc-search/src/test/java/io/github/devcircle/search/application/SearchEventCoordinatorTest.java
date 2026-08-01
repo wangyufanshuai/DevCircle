@@ -96,4 +96,43 @@ class SearchEventCoordinatorTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Search event ID is already bound to post.updated/73");
     }
+
+    @Test
+    void concurrentEventForTheSamePostIsFailedUntilTheLeaseIsReleased() {
+        String first = "1603b780-e1d5-4f3b-b8f6-5ea67626dac1";
+        String second = "321d4a42-6a74-4f5f-996e-490d424455db";
+        Instant occurredAt = Instant.parse("2026-07-30T12:00:00Z");
+        assertThat(coordinator.claim(first, "post.updated", 88L, occurredAt)).isTrue();
+
+        assertThatThrownBy(() -> coordinator.claim(
+                second, "post.updated", 88L, occurredAt.plusSeconds(1)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Search event for post 88 is already being processed");
+
+        String status = jdbcClient.sql("SELECT status FROM search_consumer_dedup WHERE event_id = :eventId")
+                .param("eventId", second).query(String.class).single();
+        assertThat(status).isEqualTo("FAILED");
+    }
+
+    @Test
+    void completionWithoutAnOwnedLeaseIsRejected() {
+        assertThatThrownBy(() -> coordinator.complete(
+                "8a650a91-f9d0-47d8-8828-9d21545e7a83", 89L,
+                Instant.parse("2026-07-30T12:00:00Z"), "UPSERT"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Search event lease was lost before completion");
+    }
+
+    @Test
+    void failureWithoutADiagnosticMessageStillPersistsASafeReason() {
+        String eventId = "4194f31d-44ea-4dcb-a935-f4eeabcb2a17";
+        Instant occurredAt = Instant.parse("2026-07-30T12:00:00Z");
+        assertThat(coordinator.claim(eventId, "post.updated", 90L, occurredAt)).isTrue();
+
+        coordinator.fail(eventId, 90L, null);
+
+        String error = jdbcClient.sql("SELECT last_error FROM search_consumer_dedup WHERE event_id = :eventId")
+                .param("eventId", eventId).query(String.class).single();
+        assertThat(error).isEqualTo("unknown search indexing failure");
+    }
 }

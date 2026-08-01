@@ -98,4 +98,22 @@ class SearchServiceEventTest {
 
         verifyNoInteractions(coordinator, operations);
     }
+
+    @Test
+    void nonTextualStatusIsRecordedAsAFailedIndexingAttempt() {
+        String eventId = "9e45e6c2-3020-43bd-818d-f61b629d6ce1";
+        Instant occurredAt = Instant.parse("2026-07-30T14:00:00Z");
+        when(coordinator.claim(eventId, "post.updated", 97L, occurredAt)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.upsertPostFromEvent("""
+                {"eventId":"9e45e6c2-3020-43bd-818d-f61b629d6ce1","type":"post.updated","version":1,
+                 "occurredAt":"2026-07-30T14:00:00Z","producer":"dc-content","aggregateId":"97",
+                 "payload":{"postId":97,"status":7}}
+                """))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Search payload status must be a string");
+
+        verify(coordinator).fail(eq(eventId), eq(97L), any(IllegalArgumentException.class));
+        verifyNoInteractions(operations);
+    }
 }
