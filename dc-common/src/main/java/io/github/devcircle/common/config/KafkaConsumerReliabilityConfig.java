@@ -1,6 +1,7 @@
 package io.github.devcircle.common.config;
 
 import org.apache.kafka.common.TopicPartition;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
@@ -23,18 +24,24 @@ public class KafkaConsumerReliabilityConfig {
     @Bean
     @ConditionalOnMissingBean(CommonErrorHandler.class)
     DefaultErrorHandler kafkaConsumerErrorHandler(
-            KafkaTemplate<?, ?> kafkaTemplate,
+            ObjectProvider<KafkaTemplate<?, ?>> kafkaTemplateProvider,
             @Value("${devcircle.kafka.retry.initial-interval-ms:1000}") long initialInterval,
             @Value("${devcircle.kafka.retry.multiplier:2.0}") double multiplier,
             @Value("${devcircle.kafka.retry.max-interval-ms:10000}") long maxInterval,
             @Value("${devcircle.kafka.retry.max-attempts:4}") long maxAttempts) {
-        DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(kafkaTemplate,
-                (record, failure) -> new TopicPartition(record.topic() + ".DLT", -1));
         ExponentialBackOff backOff = new ExponentialBackOff(
                 Math.max(1, initialInterval), Math.max(1.0, multiplier));
         backOff.setMaxInterval(Math.max(initialInterval, maxInterval));
         backOff.setMaxAttempts(Math.max(1, maxAttempts));
-        DefaultErrorHandler handler = new DefaultErrorHandler(recoverer, backOff);
+        DefaultErrorHandler handler = new DefaultErrorHandler((record, failure) -> {
+            KafkaTemplate<?, ?> kafkaTemplate = kafkaTemplateProvider.getIfAvailable();
+            if (kafkaTemplate == null) {
+                throw new IllegalStateException("KafkaTemplate is required to publish a dead-letter record", failure);
+            }
+            new DeadLetterPublishingRecoverer(kafkaTemplate,
+                    (failedRecord, exception) -> new TopicPartition(failedRecord.topic() + ".DLT", -1))
+                    .accept(record, failure);
+        }, backOff);
         handler.setCommitRecovered(true);
         return handler;
     }

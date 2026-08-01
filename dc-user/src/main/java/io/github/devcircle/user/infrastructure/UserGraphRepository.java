@@ -116,11 +116,9 @@ public class UserGraphRepository {
         int claimed = jdbcClient.sql("INSERT IGNORE INTO consumer_dedup(event_id, topic) VALUES (:eventId, :topic)")
                 .param("eventId", eventId).param("topic", topic).update();
         if (claimed == 0) return false;
-        jdbcClient.sql("""
-                        INSERT INTO user_profile(user_id, username)
-                        VALUES (:userId, :username)
-                        ON DUPLICATE KEY UPDATE username = VALUES(username)
-                        """)
+        jdbcClient.sql("INSERT IGNORE INTO user_profile(user_id, username) VALUES (:userId, :username)")
+                .param("userId", userId).param("username", displayName).update();
+        jdbcClient.sql("UPDATE user_profile SET username = :username WHERE user_id = :userId")
                 .param("userId", userId).param("username", displayName).update();
         return true;
     }

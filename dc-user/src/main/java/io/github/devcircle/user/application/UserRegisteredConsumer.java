@@ -4,10 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.user.infrastructure.UserGraphRepository;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 @Component
+@ConditionalOnBean(name = "kafkaListenerContainerFactory")
 class UserRegisteredConsumer {
     private final ObjectMapper objectMapper;
     private final UserGraphRepository repository;

@@ -355,13 +355,22 @@ public class AdminService {
     public AdminActionResult restrictUser(Long userId, String status) {
         requireDatabase();
         jdbcClient.sql("""
-                            INSERT INTO user_risk_profile(user_id, status, risk_score, reason, restricted_until)
+                            INSERT IGNORE INTO user_risk_profile(user_id, status, risk_score, reason, restricted_until)
                             VALUES (:userId, :status, 90, :reason, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 7 DAY))
-                            ON DUPLICATE KEY UPDATE status = VALUES(status), risk_score = VALUES(risk_score), reason = VALUES(reason), restricted_until = VALUES(restricted_until)
                             """)
                     .param("userId", userId)
                     .param("status", status == null || status.isBlank() ? "NO_POST" : status)
                     .param("reason", "管理员手动治理")
+                .update();
+        jdbcClient.sql("""
+                            UPDATE user_risk_profile
+                            SET status = :status, risk_score = 90, reason = :reason,
+                                restricted_until = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 7 DAY)
+                            WHERE user_id = :userId
+                            """)
+                .param("userId", userId)
+                .param("status", status == null || status.isBlank() ? "NO_POST" : status)
+                .param("reason", "管理员手动治理")
                 .update();
         logAudit(1L, "RESTRICT_USER", "USER", String.valueOf(userId), null, null, Map.of("status", status));
         return new AdminActionResult("RESTRICT_USER", Map.of("userId", userId, "status", status == null ? "NO_POST" : status));
@@ -474,14 +483,22 @@ public class AdminService {
         requireDatabase();
         try {
             jdbcClient.sql("""
-                                INSERT INTO recommend_experiment(experiment_id, name, scene, status, traffic_percent, weights)
+                                INSERT IGNORE INTO recommend_experiment(experiment_id, name, scene, status, traffic_percent, weights)
                                 VALUES (:experimentId, :name, :scene, 'DRAFT', 0, CAST(:weights AS JSON))
-                                ON DUPLICATE KEY UPDATE name = VALUES(name), scene = VALUES(scene)
                                 """)
                         .param("experimentId", experimentId)
                         .param("name", name)
                         .param("scene", scene)
                         .param("weights", objectMapper.writeValueAsString(payload.getOrDefault("weights", Map.of("theme", 1.0))))
+                    .update();
+            jdbcClient.sql("""
+                                UPDATE recommend_experiment
+                                SET name = :name, scene = :scene
+                                WHERE experiment_id = :experimentId
+                                """)
+                    .param("experimentId", experimentId)
+                    .param("name", name)
+                    .param("scene", scene)
                     .update();
         } catch (DataAccessException | JsonProcessingException ex) {
             throw dependencyUnavailable();

@@ -1,5 +1,7 @@
 package io.github.devcircle.user.application;
 
+import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.user.infrastructure.UserGraphRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,6 +40,9 @@ class UserGraphServiceIntegrationTest {
 
     @Autowired
     JdbcClient jdbcClient;
+
+    @Autowired
+    UserGraphRepository repository;
 
     @BeforeEach
     void cleanState() {
@@ -83,5 +88,19 @@ class UserGraphServiceIntegrationTest {
         assertThat(recommendations).extracting(item -> item.userId()).contains(3L, 2L);
         assertThat(recommendations.getFirst().mutualFollowees()).isGreaterThanOrEqualTo(1L);
         assertThat(recommendations.getFirst().reason()).contains("共同关注");
+    }
+
+    @Test
+    void profileProjectionUpsertsOnMySqlWithoutDuplicatingTheUser() {
+        assertThat(repository.synchronizeProfile("evt-profile-1", EventTopics.USER_REGISTERED, 42L, "初始名称"))
+                .isTrue();
+        assertThat(repository.synchronizeProfile("evt-profile-2", EventTopics.USER_REGISTERED, 42L, "更新名称"))
+                .isTrue();
+        assertThat(repository.synchronizeProfile("evt-profile-2", EventTopics.USER_REGISTERED, 42L, "重复投递"))
+                .isFalse();
+
+        assertThat(repository.requireProfile(42L).username()).isEqualTo("更新名称");
+        assertThat(jdbcClient.sql("SELECT COUNT(*) FROM user_profile WHERE user_id = 42")
+                .query(Long.class).single()).isEqualTo(1L);
     }
 }

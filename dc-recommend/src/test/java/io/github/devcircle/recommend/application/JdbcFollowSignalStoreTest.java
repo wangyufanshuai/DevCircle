@@ -6,6 +6,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class JdbcFollowSignalStoreTest {
     private JdbcFollowSignalStore store;
@@ -44,5 +45,16 @@ class JdbcFollowSignalStoreTest {
         store.apply("evt-follow-retry", 2L, 7L, "FOLLOWED");
 
         assertThat(store.followedAuthorIds(2L)).containsExactly(7L);
+    }
+
+    @Test
+    void rejectsAnEventIdReusedForAnotherRelationship() {
+        store.apply("evt-follow-collision", 2L, 7L, "FOLLOWED");
+
+        assertThatThrownBy(() -> store.apply("evt-follow-collision", 3L, 8L, "FOLLOWED"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("identity");
+        assertThat(store.followedAuthorIds(2L)).containsExactly(7L);
+        assertThat(store.followedAuthorIds(3L)).isEmpty();
     }
 }

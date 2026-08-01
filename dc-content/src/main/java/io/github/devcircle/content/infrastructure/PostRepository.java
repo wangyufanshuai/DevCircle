@@ -260,13 +260,18 @@ public class PostRepository {
         }
         int progress = request.completed() ? 100 : Math.max(0, Math.min(request.progressPercent(), 99));
         jdbcClient.sql("""
-                        INSERT INTO reading_progress(user_id, post_id, progress_percent, anchor, completed)
+                        INSERT IGNORE INTO reading_progress(user_id, post_id, progress_percent, anchor, completed)
                         VALUES (:userId, :postId, :progress, :anchor, :completed)
-                        ON DUPLICATE KEY UPDATE
-                          progress_percent = GREATEST(progress_percent, VALUES(progress_percent)),
-                          anchor = IF(VALUES(progress_percent) >= progress_percent, VALUES(anchor), anchor),
-                          completed = completed OR VALUES(completed),
-                          last_read_at = CURRENT_TIMESTAMP
+                        """)
+                .param("userId", userId).param("postId", postId).param("progress", progress)
+                .param("anchor", request.anchor()).param("completed", request.completed()).update();
+        jdbcClient.sql("""
+                        UPDATE reading_progress
+                        SET anchor = IF(:progress >= progress_percent, :anchor, anchor),
+                            progress_percent = GREATEST(progress_percent, :progress),
+                            completed = completed OR :completed,
+                            last_read_at = CURRENT_TIMESTAMP
+                        WHERE user_id = :userId AND post_id = :postId
                         """)
                 .param("userId", userId).param("postId", postId).param("progress", progress)
                 .param("anchor", request.anchor()).param("completed", request.completed()).update();
@@ -1251,7 +1256,8 @@ public class PostRepository {
             jdbcClient.sql("""
                             INSERT INTO user_risk_profile(user_id, status, risk_score, reason)
                             VALUES (:userId, :status, :riskScore, :reason)
-                            ON DUPLICATE KEY UPDATE risk_score = GREATEST(risk_score, VALUES(risk_score)), status = VALUES(status), reason = VALUES(reason)
+                            AS incoming
+                            ON DUPLICATE KEY UPDATE risk_score = GREATEST(risk_score, incoming.risk_score), status = incoming.status, reason = incoming.reason
                             """)
                     .param("userId", authorId)
                     .param("status", risk.score() >= 80 ? "RESTRICTED" : "WATCH")

@@ -22,7 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(properties = {
-        "spring.kafka.bootstrap-servers=localhost:65535"
+        "spring.kafka.bootstrap-servers=localhost:65535",
+        "devcircle.outbox.poll-interval-ms=60000"
 })
 @Import(InteractionPipelineIntegrationTest.PublicationTestConfig.class)
 class InteractionPipelineIntegrationTest {
