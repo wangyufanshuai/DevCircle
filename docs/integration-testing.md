@@ -61,7 +61,7 @@ $env:DOCKER_HOST='tcp://127.0.0.1:2375'
 
 ## 覆盖链路
 
-CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 55%、分支覆盖率 54%，并在下一步拒绝任何 skipped 测试。Docker 不可用时，可以只测量纯单元基线，但该结果不得替代容器验收：
+CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 60%、分支覆盖率 56%，并在下一步拒绝任何 skipped 测试。Docker 不可用时，可以只测量纯单元基线，但该结果不得替代容器验收：
 
 ```powershell
 .\mvnw.cmd -B -Pcoverage clean verify "-Dtest=!*IntegrationTest,!DockerPreflightTest,!KafkaContainerSmokeTest" "-Dsurefire.failIfNoSpecifiedTests=false"
@@ -69,7 +69,7 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 55%、�
 
 随后在 Git Bash（不要使用 `C:\Windows\System32\bash.exe`）中执行 `bash scripts/ops/assert-coverage.sh`。
 
-2026-08-01 在 `9e1d90d` 后的纯单元/H2 状态基线为 210 个测试、0 failures/errors/skipped，行覆盖率 55.81%、分支覆盖率 54.61%。其中 `DeductionService` 为 100% 行覆盖率、95.29% 分支覆盖率；`CommentService` 为 100%/95.83%，`CommentRepository` 为 96.77%/89.66%；`InteractionService` 为 92%/100%，`InteractionRepository` 为 98.11%/90.91%；`UserGraphService` 与 `UserGraphRepository` 均为 100%/100%；通知模块为 83.70%/87.93%，其消费器、仓储和控制器分支覆盖率均超过 88%；`PostRepository` 从未覆盖提升至 36.66% 行、28.04% 分支，内容模块整体达到 48.89%/49.58%。认证事务测试确认 Refresh/Logout 的令牌族撤销不会被幂等事务回滚，禁用账号也不能通过登录或刷新重放取得新会话。完整 CI 仍必须运行下列 Testcontainers 链路：
+2026-08-01 在 `6f1467d` 后的纯单元/H2 状态基线为 217 个测试、0 failures/errors/skipped，行覆盖率 60.34%、分支覆盖率 56.89%。其中 `DeductionService` 为 100% 行覆盖率、95.29% 分支覆盖率；`CommentService` 为 100%/95.83%，`CommentRepository` 为 96.77%/89.66%；`InteractionService` 为 92%/100%，`InteractionRepository` 为 98.11%/90.91%；`UserGraphService` 与 `UserGraphRepository` 均为 100%/100%；通知模块为 83.70%/87.93%，其消费器、仓储和控制器分支覆盖率均超过 88%；`PostRepository` 为 36.66%/28.04%，内容模块整体为 48.89%/49.58%；管理模块从 2.45%/0.91% 提升至 45.13%/48.33%，审核、申诉、审计和 Outbox 的核心事务路径已纳入 H2 回归。认证事务测试确认 Refresh/Logout 的令牌族撤销不会被幂等事务回滚，禁用账号也不能通过登录或刷新重放取得新会话。完整 CI 仍必须运行下列 Testcontainers 链路：
 
 - Docker preflight：启动最小容器，确认 Testcontainers 能连接 Docker。
 - `dc-content`: 发帖写入帖子、正文、标签、媒体关联和 Outbox；真实 Kafka 发送成功后事件才变为 `PUBLISHED`。
