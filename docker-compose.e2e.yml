@@ -12,7 +12,7 @@ x-app-defaults: &app-defaults
     KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     SPRINGDOC_API_DOCS_ENABLED: "false"
     SPRINGDOC_SWAGGER_UI_ENABLED: "false"
-    JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=70 -XX:MaxMetaspaceSize=192m
+    JAVA_TOOL_OPTIONS: -Xms32m -Xmx128m -XX:MaxMetaspaceSize=96m -XX:ReservedCodeCacheSize=32m -XX:+UseSerialGC
 
 x-service-build: &service-build
   context: .
@@ -26,12 +26,17 @@ services:
       MYSQL_ROOT_PASSWORD: e2e-root-password
       MYSQL_USER: devcircle
       MYSQL_PASSWORD: e2e-database-password
-    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    command:
+      - "--character-set-server=utf8mb4"
+      - "--collation-server=utf8mb4_unicode_ci"
+      - "--innodb-buffer-pool-size=64M"
+      - "--performance-schema=OFF"
+      - "--max-connections=60"
     volumes:
       - ./deploy/mysql/init:/docker-entrypoint-initdb.d:ro
       - e2e-mysql:/var/lib/mysql
     networks: [e2e]
-    mem_limit: 512m
+    mem_limit: 384m
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 5s
@@ -42,7 +47,7 @@ services:
     image: redis:8.2.3-alpine
     restart: "no"
     networks: [e2e]
-    mem_limit: 128m
+    mem_limit: 64m
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -64,8 +69,10 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_HEAP_OPTS: -Xms128m -Xmx192m
+      KAFKA_LOG_CLEANER_ENABLE: "false"
     networks: [e2e]
-    mem_limit: 512m
+    mem_limit: 384m
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
       interval: 5s
@@ -85,7 +92,7 @@ services:
       MYSQL_PASSWORD: e2e-database-password
       AUTH_COOKIE_SECURE: "false"
       AUTH_FRONTEND_CALLBACK_URI: http://127.0.0.1:5511/auth/callback
-    mem_limit: 384m
+    mem_limit: 256m
     depends_on:
       mysql: { condition: service_healthy }
       kafka: { condition: service_healthy, required: false }
@@ -110,7 +117,7 @@ services:
       DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
       DEVCIRCLE_KAFKA_TOPICS_ENABLED: "false"
       SPRING_KAFKA_LISTENER_AUTO_STARTUP: "false"
-    mem_limit: 384m
+    mem_limit: 256m
     depends_on:
       mysql: { condition: service_healthy }
     healthcheck:
@@ -131,7 +138,7 @@ services:
       MYSQL_PORT: 3306
       MYSQL_USER: devcircle
       MYSQL_PASSWORD: e2e-database-password
-    mem_limit: 384m
+    mem_limit: 256m
     depends_on:
       mysql: { condition: service_healthy }
       kafka: { condition: service_healthy }
@@ -154,7 +161,7 @@ services:
       MYSQL_PORT: 3306
       MYSQL_USER: devcircle
       MYSQL_PASSWORD: e2e-database-password
-    mem_limit: 384m
+    mem_limit: 256m
     depends_on:
       mysql: { condition: service_healthy }
       kafka: { condition: service_healthy }
@@ -177,7 +184,7 @@ services:
       MYSQL_USER: devcircle
       MYSQL_PASSWORD: e2e-database-password
       DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
-    mem_limit: 384m
+    mem_limit: 256m
     depends_on:
       dc-content: { condition: service_healthy }
       kafka: { condition: service_healthy }
@@ -199,7 +206,7 @@ services:
       MYSQL_PORT: 3306
       MYSQL_USER: devcircle
       MYSQL_PASSWORD: e2e-database-password
-    mem_limit: 384m
+    mem_limit: 256m
     depends_on:
       dc-content: { condition: service_healthy }
     healthcheck:
@@ -222,7 +229,7 @@ services:
       DC_NOTIFICATION_URI: http://dc-notification:8108
       DC_ADMIN_URI: http://dc-admin:8110
     ports: ["28080:8080"]
-    mem_limit: 384m
+    mem_limit: 256m
     depends_on:
       dc-auth: { condition: service_healthy }
       dc-admin: { condition: service_healthy, required: false }

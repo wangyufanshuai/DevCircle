@@ -33,6 +33,16 @@ bash scripts/e2e/run-real-community.sh
 
 该脚本启动 Kafka、Auth、User、Content、Notification、Recommend 和 Gateway，验证两名新用户的资料同步、关注幂等、通知去重、取消关注静默以及推荐投影回退为未关注状态。
 
+Community E2E 已限制 JVM、MySQL 和 Kafka 的测试内存。独占 Docker 时建议至少分配 2GB；如果同一 Docker Engine 还运行其他项目，建议分配 4GB 以上或先由操作者自行停止无关容器。Docker API 返回 500/502、容器退出码 137 或 `context deadline exceeded` 都属于环境失败，不能记为业务链路通过。
+
+镜像已在本机缓存且外网不可用时，可明确禁止拉取：
+
+```bash
+REAL_E2E_PULL_POLICY=never bash scripts/e2e/run-real-community.sh
+```
+
+Windows 请优先使用 Git Bash；`C:\Windows\System32\bash.exe` 可能实际进入 WSL，并受到 Docker Desktop 内部发行版状态影响。
+
 本地 `mvnw test` 在 Docker 不可用时会把 Testcontainers 项目标记为 skipped，输出只能作为“单元测试通过、容器链路未验证”。CI 在 Maven 后额外运行 `scripts/ops/assert-no-skipped-tests.sh`，任何 skipped 都会阻断构建，避免把“没有跑容器”误认为“容器链路通过”。
 
 Windows Docker Desktop 29 如遇 named pipe 探测失败，可启用本地只绑定回环地址的 Docker socket 代理：
