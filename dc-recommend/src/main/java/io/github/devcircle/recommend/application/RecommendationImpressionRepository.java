@@ -13,6 +13,10 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
@@ -77,9 +81,11 @@ class RecommendationImpressionRepository {
 
     @Transactional
     int saveExposure(Long userId, List<Long> postIds, String scene, String idempotencyKey) {
-        if (!claim(userId, "EXPOSURE", idempotencyKey)) return 0;
+        List<Long> normalizedPostIds = postIds.stream().distinct().sorted().limit(100).toList();
+        String fingerprint = fingerprint(userId, scene, normalizedPostIds);
+        if (!claim(userId, "EXPOSURE", idempotencyKey, fingerprint)) return 0;
         int recorded = 0;
-        for (Long postId : postIds.stream().distinct().limit(100).toList()) {
+        for (Long postId : normalizedPostIds) {
             jdbcClient.sql("""
                             INSERT INTO recommendation_exposure(user_id, post_id, scene)
                             VALUES (:userId, :postId, :scene)
@@ -93,7 +99,8 @@ class RecommendationImpressionRepository {
 
     @Transactional
     void saveRecommendEvent(Long userId, Long postId, String eventType, String scene, String experimentId, String bucket, String requestId) {
-        if (!claim(userId, "RECOMMEND_EVENT", requestId)) return;
+        String fingerprint = fingerprint(userId, postId, eventType, scene, experimentId, bucket);
+        if (!claim(userId, "RECOMMEND_EVENT", requestId, fingerprint)) return;
         try {
             jdbcClient.sql("""
                             INSERT INTO recommend_event_log(user_id, post_id, event_type, scene, experiment_id, bucket, request_id)
@@ -138,23 +145,46 @@ class RecommendationImpressionRepository {
         }
     }
 
-    private boolean claim(Long userId, String operation, String key) {
+    private boolean claim(Long userId, String operation, String key, String requestFingerprint) {
         int inserted = jdbcClient.sql("""
-                        INSERT IGNORE INTO recommend_write_idempotency(idempotency_key, user_id, operation)
-                        VALUES (:key, :userId, :operation)
+                        INSERT IGNORE INTO recommend_write_idempotency(
+                            idempotency_key, user_id, operation, request_fingerprint)
+                        VALUES (:key, :userId, :operation, :requestFingerprint)
                         """)
-                .param("key", key).param("userId", userId).param("operation", operation).update();
+                .param("key", key).param("userId", userId).param("operation", operation)
+                .param("requestFingerprint", requestFingerprint).update();
         if (inserted == 1) return true;
         Map<String, Object> existing = jdbcClient.sql("""
-                        SELECT user_id, operation FROM recommend_write_idempotency WHERE idempotency_key = :key
+                        SELECT user_id, operation, request_fingerprint
+                        FROM recommend_write_idempotency WHERE idempotency_key = :key
                         """)
                 .param("key", key)
-                .query((rs, rowNum) -> Map.<String, Object>of("userId", rs.getLong("user_id"), "operation", rs.getString("operation")))
+                .query((rs, rowNum) -> Map.<String, Object>of(
+                        "userId", rs.getLong("user_id"),
+                        "operation", rs.getString("operation"),
+                        "requestFingerprint", rs.getString("request_fingerprint")))
                 .single();
-        if (!existing.get("userId").equals(userId) || !existing.get("operation").equals(operation)) {
+        if (!existing.get("userId").equals(userId)
+                || !existing.get("operation").equals(operation)
+                || !existing.get("requestFingerprint").equals(requestFingerprint)) {
             throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已被其他推荐写操作使用");
         }
         return false;
+    }
+
+    private String fingerprint(Object... values) {
+        StringBuilder canonical = new StringBuilder();
+        for (Object value : values) {
+            String text = String.valueOf(value);
+            canonical.append(text.length()).append(':').append(text).append('|');
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is unavailable", ex);
+        }
     }
 
     private BusinessException dependency(String message, Exception cause) {

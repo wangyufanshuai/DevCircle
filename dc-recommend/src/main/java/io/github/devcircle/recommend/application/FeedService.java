@@ -14,6 +14,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -116,10 +117,16 @@ public class FeedService {
     }
 
     public int recordExposure(ExposureRequest request, String idempotencyKey) {
+        requireWrite(request == null ? null : request.userId(), idempotencyKey);
+        if (request == null) {
+            throw validation("曝光请求不能为空");
+        }
         if (request.postIds() == null || request.postIds().isEmpty()) {
             return 0;
         }
-        requireWrite(request.userId(), idempotencyKey);
+        if (request.postIds().stream().anyMatch(postId -> postId == null || postId <= 0)) {
+            throw validation("曝光内容 ID 必须为正整数");
+        }
         if (impressionRepository == null) {
             throw new io.github.devcircle.common.error.BusinessException(
                     io.github.devcircle.common.error.ErrorCode.DEPENDENCY_UNAVAILABLE, "推荐数据服务暂时不可用");
@@ -138,6 +145,9 @@ public class FeedService {
 
     public Map<String, Object> recordRecommendEvent(Long userId, Long postId, String eventType, String scene, String experimentId, String bucket, String requestId) {
         requireWrite(userId, requestId);
+        if (postId == null || postId <= 0) {
+            throw validation("推荐事件内容 ID 必须为正整数");
+        }
         String normalizedEvent = normalizeEventType(eventType);
         String normalizedScene = normalizeScene(scene);
         String finalExperimentId = experimentId == null || experimentId.isBlank() ? "exp-theme-feed-v1" : experimentId;
@@ -153,7 +163,7 @@ public class FeedService {
             failIfStrict("推荐事件缓存暂时不可用", ex);
         }
         return Map.of(
-                "eventId", UUID.randomUUID().toString(),
+                "eventId", stableEventId(userId, requestId),
                 "userId", userId,
                 "postId", postId,
                 "eventType", normalizedEvent,
@@ -357,6 +367,16 @@ public class FeedService {
                 io.github.devcircle.common.error.ErrorCode.DEPENDENCY_UNAVAILABLE, message);
         failure.initCause(cause);
         return failure;
+    }
+
+    private io.github.devcircle.common.error.BusinessException validation(String message) {
+        return new io.github.devcircle.common.error.BusinessException(
+                io.github.devcircle.common.error.ErrorCode.VALIDATION_FAILED, message);
+    }
+
+    private String stableEventId(Long userId, String requestId) {
+        return UUID.nameUUIDFromBytes(("recommend-event\u0000" + userId + "\u0000" + requestId)
+                .getBytes(StandardCharsets.UTF_8)).toString();
     }
 
     private String normalizeEventType(String eventType) {

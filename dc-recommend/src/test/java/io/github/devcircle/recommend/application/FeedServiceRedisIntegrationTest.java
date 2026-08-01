@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "devcircle.kafka.topics.enabled=false"
 })
 @Sql(statements = {
-        "CREATE TABLE IF NOT EXISTS recommend_write_idempotency (idempotency_key VARCHAR(128) PRIMARY KEY, user_id BIGINT NOT NULL, operation VARCHAR(48) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE TABLE IF NOT EXISTS recommend_write_idempotency (idempotency_key VARCHAR(128) PRIMARY KEY, user_id BIGINT NOT NULL, operation VARCHAR(48) NOT NULL, request_fingerprint CHAR(64) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
         "CREATE TABLE IF NOT EXISTS recommendation_exposure (user_id BIGINT NOT NULL, post_id BIGINT NOT NULL, scene VARCHAR(64) NOT NULL, exposed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, post_id, scene))",
         "CREATE TABLE IF NOT EXISTS recommend_follow_projection (viewer_id BIGINT NOT NULL, author_id BIGINT NOT NULL, followed BOOLEAN NOT NULL, source_event_id VARCHAR(36) NOT NULL, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (viewer_id, author_id), UNIQUE (source_event_id))"
 })
