@@ -62,6 +62,35 @@ class CommentChangedConsumerTest {
         verifyNoInteractions(repository);
     }
 
+    @Test
+    void rejectsMalformedCommentPayloadFieldsBeforeProjection() {
+        assertRejected("{\"commentId\":\"13\",\"postId\":1001,\"changeType\":\"CREATED\"}",
+                "Comment payload commentId must be a positive integer");
+        assertRejected("{\"commentId\":0,\"postId\":1001,\"changeType\":\"CREATED\"}",
+                "Comment payload commentId must be a positive integer");
+        assertRejected("{\"commentId\":999999999999999999999999999999,\"postId\":1001,\"changeType\":\"CREATED\"}",
+                "Comment payload commentId must be a positive integer");
+        assertRejected("{\"commentId\":13,\"postId\":\"1001\",\"changeType\":\"CREATED\"}",
+                "Comment payload postId must be a positive integer");
+        assertRejected("{\"commentId\":13,\"postId\":1001}",
+                "Comment payload changeType must be a non-blank string");
+        assertRejected("{\"commentId\":13,\"postId\":1001,\"changeType\":7}",
+                "Comment payload changeType must be a non-blank string");
+        assertRejected("{\"commentId\":13,\"postId\":1001,\"changeType\":\" \"}",
+                "Comment payload changeType must be a non-blank string");
+        assertRejected("{\"commentId\":13,\"postId\":1001,\"changeType\":\"UPDATED\"}",
+                "Unsupported comment change type: UPDATED");
+
+        verifyNoInteractions(repository);
+    }
+
+    private void assertRejected(String payload, String message) {
+        assertThatThrownBy(() -> consumer.consume(event(
+                "55555555-5555-4555-8555-555555555555", EventTopics.COMMENT_CHANGED, "13", payload)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(message);
+    }
+
     private String event(String eventId, String type, String aggregateId, String payload) {
         return """
                 {"eventId":"%s","type":"%s","version":1,

@@ -10,6 +10,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 class NotificationEventEnvelopeValidationTest {
@@ -41,5 +42,103 @@ class NotificationEventEnvelopeValidationTest {
                 .hasMessage("Notification aggregateId does not match targetId");
 
         verifyNoInteractions(repository, resolver);
+    }
+
+    @Test
+    void followAggregateMustMatchReceiverAndStatusMustBeSupported() throws Exception {
+        EventEnvelope wrongAggregate = EventEnvelope.now(EventTopics.FOLLOW_CHANGED, "dc-user", "8",
+                Map.of("actorId", 2L, "receiverId", 7L, "status", "FOLLOWED"));
+        EventEnvelope wrongStatus = EventEnvelope.now(EventTopics.FOLLOW_CHANGED, "dc-user", "7",
+                Map.of("actorId", 2L, "receiverId", 7L, "status", "PENDING"));
+
+        assertThatThrownBy(() -> consumer.consume(objectMapper.writeValueAsString(wrongAggregate)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Follow aggregateId does not match receiverId");
+        assertThatThrownBy(() -> consumer.consume(objectMapper.writeValueAsString(wrongStatus)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unsupported follow status: PENDING");
+
+        verifyNoInteractions(repository, resolver);
+    }
+
+    @Test
+    void unresolvedInteractionReceiverIsRejected() throws Exception {
+        NotificationEventConsumer consumerWithoutResolver = new NotificationEventConsumer(repository, objectMapper);
+        EventEnvelope event = EventEnvelope.now(EventTopics.INTERACTION_CHANGED, "dc-interaction", "9001",
+                Map.of("actorId", 2L, "postId", 9001L, "interactionType", "LIKE"));
+
+        assertThatThrownBy(() -> consumerWithoutResolver.consume(objectMapper.writeValueAsString(event)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Notification event is missing receiverId");
+
+        verifyNoInteractions(repository, resolver);
+    }
+
+    @Test
+    void auditStatusMustBePresentTextualAndNonBlank() {
+        assertInvalid(EventTopics.AUDIT_COMPLETED, "dc-admin", "12",
+                Map.of("receiverId", 2L, "postId", 12L),
+                "Audit notification event is missing status");
+        assertInvalid(EventTopics.AUDIT_COMPLETED, "dc-admin", "12",
+                Map.of("receiverId", 2L, "postId", 12L, "status", " "),
+                "Audit notification event is missing status");
+        assertInvalid(EventTopics.AUDIT_COMPLETED, "dc-admin", "12",
+                Map.of("receiverId", 2L, "postId", 12L, "status", 7),
+                "Notification payload status must be a string");
+
+        verifyNoInteractions(repository, resolver);
+    }
+
+    @Test
+    void malformedOptionalIdentityAndNavigationFieldsAreRejected() {
+        assertInvalid(EventTopics.INTERACTION_CHANGED, "dc-interaction", "9001",
+                Map.of("receiverId", "7", "postId", 9001L, "interactionType", "LIKE"),
+                "Notification payload receiverId must be a positive integer");
+        assertInvalid(EventTopics.FOLLOW_CHANGED, "dc-user", "7",
+                Map.of("receiverId", 7L, "actorId", "2", "status", "FOLLOWED"),
+                "Notification payload actorId must be a positive integer");
+        assertInvalid(EventTopics.FOLLOW_CHANGED, "dc-user", "7",
+                Map.of("receiverId", 7L, "actorId", 2L, "targetId", 2L,
+                        "targetType", 7, "status", "FOLLOWED"),
+                "Notification payload targetType must be a string");
+
+        verifyNoInteractions(repository, resolver);
+    }
+
+    @Test
+    void followWithoutNavigationTargetCreatesANonNavigableNotification() throws Exception {
+        EventEnvelope event = EventEnvelope.now(EventTopics.FOLLOW_CHANGED, "dc-user", "7",
+                Map.of("actorId", 2L, "actorUsername", "观测者", "receiverId", 7L, "status", "FOLLOWED"));
+
+        consumer.consume(objectMapper.writeValueAsString(event));
+
+        verify(repository).createOnce(event.eventId().toString(), EventTopics.FOLLOW_CHANGED, 7L, 2L,
+                "FOLLOW", "新的关注者", "观测者 关注了你", "", null, "");
+        verifyNoInteractions(resolver);
+    }
+
+    @Test
+    void completedAuditAndResolvedAppealUseTheirDistinctMessages() throws Exception {
+        EventEnvelope audit = EventEnvelope.now(EventTopics.AUDIT_COMPLETED, "dc-admin", "12",
+                Map.of("receiverId", 2L, "postId", 12L, "status", "PUBLISHED"));
+        EventEnvelope appeal = EventEnvelope.now(EventTopics.APPEAL_RESOLVED, "dc-admin", "13",
+                Map.of("receiverId", 2L, "postId", 13L, "status", "PUBLISHED"));
+
+        consumer.consume(objectMapper.writeValueAsString(audit));
+        consumer.consume(objectMapper.writeValueAsString(appeal));
+
+        verify(repository).createOnce(audit.eventId().toString(), EventTopics.AUDIT_COMPLETED, 2L, null,
+                "AUDIT", "投稿审核状态更新", "你的投稿状态已更新为 PUBLISHED", "POST", 12L, "/posts/12");
+        verify(repository).createOnce(appeal.eventId().toString(), EventTopics.APPEAL_RESOLVED, 2L, null,
+                "AUDIT", "申诉处理结果", "你的申诉已处理，请查看审核时间线", "POST", 13L, "/posts/13");
+        verifyNoInteractions(resolver);
+    }
+
+    private void assertInvalid(String type, String producer, String aggregateId,
+                               Map<String, Object> payload, String message) {
+        EventEnvelope event = EventEnvelope.now(type, producer, aggregateId, payload);
+        assertThatThrownBy(() -> consumer.consume(objectMapper.writeValueAsString(event)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(message);
     }
 }

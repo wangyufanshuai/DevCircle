@@ -47,6 +47,34 @@ class InteractionChangedConsumerTest {
         verifyNoInteractions(repository);
     }
 
+    @Test
+    void rejectsMalformedPayloadFieldsBeforeProjection() {
+        assertRejected("{\"actorId\":\"7\",\"postId\":1001,\"interactionType\":\"LIKE\"}",
+                "Interaction payload actorId must be a positive integer");
+        assertRejected("{\"actorId\":0,\"postId\":1001,\"interactionType\":\"LIKE\"}",
+                "Interaction payload actorId must be a positive integer");
+        assertRejected("{\"actorId\":999999999999999999999999999999,\"postId\":1001,\"interactionType\":\"LIKE\"}",
+                "Interaction payload actorId must be a positive integer");
+        assertRejected("{\"actorId\":7,\"postId\":\"1001\",\"interactionType\":\"LIKE\"}",
+                "Interaction payload postId must be a positive integer");
+        assertRejected("{\"actorId\":7,\"postId\":1001}",
+                "Interaction payload interactionType must be a non-blank string");
+        assertRejected("{\"actorId\":7,\"postId\":1001,\"interactionType\":7}",
+                "Interaction payload interactionType must be a non-blank string");
+        assertRejected("{\"actorId\":7,\"postId\":1001,\"interactionType\":\" \"}",
+                "Interaction payload interactionType must be a non-blank string");
+        assertRejected("{\"actorId\":7,\"postId\":1001,\"interactionType\":\"SHARE\"}",
+                "Unsupported interaction type: SHARE");
+
+        verifyNoInteractions(repository);
+    }
+
+    private void assertRejected(String payload, String message) {
+        assertThatThrownBy(() -> consumer.consume(event("1001", "dc-interaction", payload)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(message);
+    }
+
     private String event(String aggregateId, String producer, String payload) {
         return """
                 {"eventId":"e7106d33-45e2-4e26-9a25-757488b57f98","type":"interaction.changed",
