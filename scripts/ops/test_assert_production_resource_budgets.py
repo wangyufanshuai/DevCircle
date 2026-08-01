@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+import copy
+import importlib.util
+import unittest
+from pathlib import Path
+
+
+SCRIPT = Path(__file__).with_name("assert-production-resource-budgets.py")
+SPEC = importlib.util.spec_from_file_location("production_resource_budgets", SCRIPT)
+if SPEC is None or SPEC.loader is None:
+    raise RuntimeError(f"cannot load {SCRIPT}")
+budgets = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(budgets)
+
+
+def app_environment() -> dict[str, str]:
+    return {
+        "JAVA_TOOL_OPTIONS": (
+            "-XX:MaxRAMPercentage=60.0 -XX:InitialRAMPercentage=20.0 "
+            "-XX:+ExitOnOutOfMemoryError"
+        ),
+        "SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE": "8",
+        "SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT": "3000",
+        "SERVER_TOMCAT_THREADS_MAX": "48",
+    }
+
+
+def service(memory: int = 512 * budgets.MIB) -> dict:
+    return {
+        "mem_limit": memory,
+        "cpus": 0.75,
+        "pids_limit": 256,
+    }
+
+
+def valid_compose() -> dict:
+    services = {
+        name: {**service(), "environment": app_environment()}
+        for name in budgets.APP_SERVICES
+    }
+    services.update({
+        "mysql": {
+            **service(2 * budgets.GIB),
+            "cpus": 1.5,
+            "pids_limit": 512,
+            "command": ["--max-connections=120", "--innodb-buffer-pool-size=768M"],
+        },
+        "redis": service(384 * budgets.MIB),
+        "kafka": {
+            **service(1536 * budgets.MIB),
+            "cpus": 1.25,
+            "pids_limit": 512,
+            "environment": {"KAFKA_HEAP_OPTS": "-Xms512m -Xmx768m"},
+        },
+        "elasticsearch": {
+            **service(2 * budgets.GIB),
+            "cpus": 1.5,
+            "pids_limit": 512,
+            "environment": {"ES_JAVA_OPTS": "-Xms1g -Xmx1g"},
+        },
+        "minio": service(768 * budgets.MIB),
+        "web-static": service(128 * budgets.MIB),
+        "web": {
+            **service(256 * budgets.MIB),
+            "ports": [
+                {"published": 80, "target": 80, "protocol": "tcp"},
+                {"published": 443, "target": 443, "protocol": "tcp"},
+                {"published": 443, "target": 443, "protocol": "udp"},
+            ],
+        },
+    })
+    services["dc-gateway"]["ports"] = [
+        {"published": 8080, "target": 8080, "protocol": "tcp"},
+    ]
+    return {"services": services}
+
+
+class ProductionResourceBudgetTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.compose = valid_compose()
+
+    def test_accepts_the_21_service_production_contract(self) -> None:
+        service_count, total_memory = budgets.validate(self.compose)
+
+        self.assertEqual(21, service_count)
+        self.assertLessEqual(total_memory, 15 * budgets.GIB)
+
+    def test_rejects_a_missing_memory_limit(self) -> None:
+        del self.compose["services"]["dc-auth"]["mem_limit"]
+
+        with self.assertRaisesRegex(ValueError, "dc-auth must define numeric mem_limit"):
+            budgets.validate(self.compose)
+
+    def test_rejects_a_private_service_with_a_published_port(self) -> None:
+        self.compose["services"]["redis"]["ports"] = [
+            {"published": 6379, "target": 6379, "protocol": "tcp"},
+        ]
+
+        with self.assertRaisesRegex(ValueError, "redis published ports"):
+            budgets.validate(self.compose)
+
+    def test_rejects_an_aggregate_memory_ceiling_above_15_gib(self) -> None:
+        self.compose["services"]["mysql"]["mem_limit"] = 9 * budgets.GIB
+
+        with self.assertRaisesRegex(ValueError, "exceeds 15 GiB"):
+            budgets.validate(self.compose)
+
+    def test_rejects_a_jvm_without_the_heap_contract(self) -> None:
+        self.compose["services"]["dc-auth"]["environment"]["JAVA_TOOL_OPTIONS"] = (
+            "-XX:+ExitOnOutOfMemoryError"
+        )
+
+        with self.assertRaisesRegex(ValueError, "dc-auth JAVA_TOOL_OPTIONS is missing"):
+            budgets.validate(self.compose)
+
+    def test_rejects_an_unexpected_production_service(self) -> None:
+        invalid = copy.deepcopy(self.compose)
+        invalid["services"]["debug-console"] = service()
+
+        with self.assertRaisesRegex(ValueError, "unexpected=.*debug-console"):
+            budgets.validate(invalid)
+
+
+if __name__ == "__main__":
+    unittest.main()

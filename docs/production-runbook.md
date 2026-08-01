@@ -14,10 +14,13 @@
 chmod +x scripts/ops/*.sh
 scripts/ops/validate-production-env.sh .env.production
 docker compose --env-file .env.production -f docker-compose.prod.yml config --quiet
+python scripts/ops/assert-production-resource-budgets.py --env-file .env.production
 docker compose --env-file .env.production -f docker-compose.prod.yml pull
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d mysql redis kafka elasticsearch minio
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 ```
+
+生产 Compose 将21个容器的内存上限控制在合计14 GiB，只允许 `web` 与 `dc-gateway` 发布宿主机端口。14个 JVM 服务单实例限制为512 MiB、0.75 CPU和256个 PID，Java 最大堆按容器内存的60%计算；数据库连接池默认每服务最多8个连接。MySQL、Kafka和Elasticsearch分别设置显式缓存或堆上限，为16GB目标主机保留约2GB给操作系统与 Docker。该预算是防止资源失控的上限，不代表性能验收已经通过；发布前仍必须执行50并发 k6 和目标主机观测。
 
 生产编排只发布 Caddy Web 的 80/443 和 Gateway 的 8080。MySQL、Redis、Kafka、Elasticsearch、MinIO 与领域服务只在内部网络可达。若不需要直接访问 Gateway，应由主机防火墙把 8080 限制为运维网段。
 
