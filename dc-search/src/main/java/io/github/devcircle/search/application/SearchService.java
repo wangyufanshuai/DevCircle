@@ -106,7 +106,7 @@ public class SearchService {
         } catch (RuntimeException ex) {
             if (ex instanceof BusinessException) throw ex;
             if (!readFallbackEnabled) {
-                throw ex;
+                throw dependency("搜索服务暂时不可用", ex);
             }
             List<PostSummary> matches = ThemeContentLibrary.search(keyword, theme, contentKind, difficulty);
             int from = Math.min(page * size, matches.size());
@@ -117,7 +117,13 @@ public class SearchService {
     }
 
     public int reindexSeedPosts() {
-        List<PostSummary> posts = loadPostsFromContent();
+        List<PostSummary> posts;
+        try {
+            posts = loadPostsFromContent();
+        } catch (RuntimeException ex) {
+            if (ex instanceof BusinessException) throw ex;
+            throw dependency("内容服务暂时不可用，无法重建搜索索引", ex);
+        }
         if (posts.isEmpty() && readFallbackEnabled) {
             posts = ThemeContentLibrary.summaries();
         }
@@ -128,7 +134,8 @@ public class SearchService {
             elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
             return posts.size();
         } catch (RuntimeException ex) {
-            throw ex;
+            if (ex instanceof BusinessException) throw ex;
+            throw dependency("搜索索引暂时不可用，重建未完成", ex);
         }
     }
 
@@ -228,12 +235,13 @@ public class SearchService {
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
                     });
-            if (response != null && response.data() != null) {
-                List<PostSummary> records = response.data().records();
-                posts.addAll(records);
-                if (records.size() < 20) {
-                    break;
-                }
+            if (response == null || response.data() == null || response.data().records() == null) {
+                throw new IllegalStateException("Content service returned an invalid post page");
+            }
+            List<PostSummary> records = response.data().records();
+            posts.addAll(records);
+            if (records.size() < 20) {
+                break;
             }
         }
         return posts;
@@ -332,6 +340,12 @@ public class SearchService {
 
     private String encodeCursor(int page) {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(("v1:" + page).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private BusinessException dependency(String message, RuntimeException cause) {
+        BusinessException failure = new BusinessException(ErrorCode.DEPENDENCY_UNAVAILABLE, message);
+        failure.initCause(cause);
+        return failure;
     }
 
     public record SearchSlice(List<PostSummary> records, String nextCursor, boolean hasMore) {
