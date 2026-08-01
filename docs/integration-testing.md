@@ -61,7 +61,7 @@ $env:DOCKER_HOST='tcp://127.0.0.1:2375'
 
 ## 覆盖链路
 
-CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 44%、分支覆盖率 44%，并在下一步拒绝任何 skipped 测试。Docker 不可用时，可以只测量纯单元基线，但该结果不得替代容器验收：
+CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 47%、分支覆盖率 47%，并在下一步拒绝任何 skipped 测试。Docker 不可用时，可以只测量纯单元基线，但该结果不得替代容器验收：
 
 ```powershell
 .\mvnw.cmd -B -Pcoverage clean verify "-Dtest=!*IntegrationTest,!DockerPreflightTest,!KafkaContainerSmokeTest" "-Dsurefire.failIfNoSpecifiedTests=false"
@@ -69,7 +69,7 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 44%、�
 
 随后在 Git Bash（不要使用 `C:\Windows\System32\bash.exe`）中执行 `bash scripts/ops/assert-coverage.sh`。
 
-2026-08-01 在 `1509d82` 后的纯单元基线为 183 个测试、0 skipped，行覆盖率 44.68%、分支覆盖率 45.05%。其中 `DeductionService` 为 100% 行覆盖率、95.29% 分支覆盖率；`CommentService` 为 100%/95.83%，`CommentRepository` 为 96.77%/89.66%。认证事务测试确认 Refresh/Logout 的令牌族撤销不会被幂等事务回滚，禁用账号也不能通过登录或刷新重放取得新会话。完整 CI 仍必须运行下列 Testcontainers 链路：
+2026-08-01 在 `115f34f` 后的纯单元基线为 189 个测试、0 skipped，行覆盖率 47.06%、分支覆盖率 47.41%。其中 `DeductionService` 为 100% 行覆盖率、95.29% 分支覆盖率；`CommentService` 为 100%/95.83%，`CommentRepository` 为 96.77%/89.66%；`InteractionService` 为 92%/100%，`InteractionRepository` 为 98.11%/90.91%。认证事务测试确认 Refresh/Logout 的令牌族撤销不会被幂等事务回滚，禁用账号也不能通过登录或刷新重放取得新会话。完整 CI 仍必须运行下列 Testcontainers 链路：
 
 - Docker preflight：启动最小容器，确认 Testcontainers 能连接 Docker。
 - `dc-content`: 发帖写入帖子、正文、标签、媒体关联和 Outbox；真实 Kafka 发送成功后事件才变为 `PUBLISHED`。
