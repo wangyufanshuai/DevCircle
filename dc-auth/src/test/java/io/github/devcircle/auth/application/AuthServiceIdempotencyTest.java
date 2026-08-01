@@ -96,7 +96,7 @@ class AuthServiceIdempotencyTest {
         Instant expiresAt = Instant.now().plusSeconds(3600);
         when(repository.rotateRefreshToken(eq("refresh-old"), eq("csrf-old"), anyString(), anyString(), any()))
                 .thenReturn(account);
-        when(repository.findRefreshToken(anyString()))
+        when(repository.findActiveRefreshToken(anyString()))
                 .thenReturn(java.util.Optional.of(new AuthTokenRepository.RefreshTokenView(7L, expiresAt)));
         when(repository.findAccountById(7L)).thenReturn(java.util.Optional.of(disabled));
 

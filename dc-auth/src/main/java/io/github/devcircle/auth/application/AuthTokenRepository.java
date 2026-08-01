@@ -219,9 +219,13 @@ public class AuthTokenRepository {
                 .update();
     }
 
-    public Optional<RefreshTokenView> findRefreshToken(String rawToken) {
+    public Optional<RefreshTokenView> findActiveRefreshToken(String rawToken) {
         return jdbcClient.sql("""
-                        SELECT user_id, expires_at FROM refresh_token WHERE token_hash = :tokenHash
+                        SELECT user_id, expires_at
+                        FROM refresh_token
+                        WHERE token_hash = :tokenHash
+                          AND revoked = false
+                          AND expires_at > CURRENT_TIMESTAMP
                         """)
                 .param("tokenHash", hash(rawToken))
                 .query((rs, rowNum) -> new RefreshTokenView(rs.getLong("user_id"), rs.getTimestamp("expires_at").toInstant()))

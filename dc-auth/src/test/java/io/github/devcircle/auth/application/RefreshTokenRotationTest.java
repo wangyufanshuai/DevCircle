@@ -74,6 +74,17 @@ class RefreshTokenRotationTest {
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
                 """).update();
+        jdbcClient.sql("""
+                CREATE TABLE audit_log (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT,
+                    action VARCHAR(96) NOT NULL,
+                    target_type VARCHAR(64) NOT NULL,
+                    target_id VARCHAR(96),
+                    trace_id VARCHAR(128),
+                    metadata JSON,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
         jdbcClient.sql("INSERT INTO role(code, name) VALUES ('USER', 'User')").update();
         jdbcClient.sql("""
                         INSERT INTO user_account(id, username, display_name, email, password_hash, status)
@@ -170,6 +181,25 @@ class RefreshTokenRotationTest {
         assertThat(revocationStates("family-5")).containsExactly(true, true);
         assertThat(jdbcClient.sql("SELECT COUNT(*) FROM refresh_token WHERE family_id = 'family-5'")
                 .query(Long.class).single()).isEqualTo(2);
+    }
+
+    @Test
+    void completedRefreshCannotBeReplayedAfterItsReplacementWasLoggedOut() {
+        Instant expiresAt = Instant.now().plus(7, ChronoUnit.DAYS);
+        repository.saveRefreshToken(7L, "replay-source", "replay-csrf", "family-6", expiresAt);
+
+        AuthService.SessionTokens replacement = authService.refresh(
+                "replay-source", "replay-csrf", "refresh-replay-key", "trace-refresh");
+        authService.logout(replacement.refreshToken(), replacement.csrfToken(),
+                "logout-replacement-key", "trace-logout");
+
+        assertThatThrownBy(() -> authService.refresh(
+                "replay-source", "replay-csrf", "refresh-replay-key", "trace-refresh"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.code()).isEqualTo(ErrorCode.TOKEN_REVOKED));
+        assertThat(revocationStates("family-6")).containsExactly(true, true);
+        assertThat(jdbcClient.sql("SELECT COUNT(*) FROM audit_log WHERE action = 'REFRESH_TOKEN'")
+                .query(Long.class).single()).isOne();
     }
 
     private List<Boolean> revocationStates(String familyId) {

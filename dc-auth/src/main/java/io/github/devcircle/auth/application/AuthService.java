@@ -126,7 +126,7 @@ public class AuthService {
     private SessionTokens replayRefresh(String refreshToken, String csrfToken, String idempotencyKey) {
         String replacement = idempotency.deriveOpaqueToken("refresh", idempotencyKey + "\u0000" + refreshToken);
         String replacementCsrf = idempotency.deriveOpaqueToken("csrf", idempotencyKey + "\u0000" + refreshToken);
-        AuthTokenRepository.RefreshTokenView view = repository.findRefreshToken(replacement)
+        AuthTokenRepository.RefreshTokenView view = repository.findActiveRefreshToken(replacement)
                 .orElseThrow(() -> new BusinessException(ErrorCode.TOKEN_REVOKED, "刷新请求已失效，请重新登录"));
         AuthTokenRepository.Account account = repository.findAccountById(view.userId())
                 .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED, "用户不存在"));
