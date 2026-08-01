@@ -99,7 +99,7 @@ public class AdminService {
 
     @Transactional
     public AdminActionResult approve(Long postId, Long auditorId, String traceId, String reason) {
-        return auditPost(postId, auditorId, traceId, "APPROVE_POST", "PUBLISHED", "APPROVED", EventTopics.AUDIT_COMPLETED, reason);
+        return auditPost(postId, null, auditorId, traceId, "APPROVE_POST", "PUBLISHED", "APPROVED", EventTopics.AUDIT_COMPLETED, reason);
     }
 
     @Transactional
@@ -114,7 +114,7 @@ public class AdminService {
 
     @Transactional
     public AdminActionResult reject(Long postId, Long auditorId, String traceId, String reason) {
-        return auditPost(postId, auditorId, traceId, "REJECT_POST", "REJECTED", "REJECTED", EventTopics.CONTENT_REJECTED, reason);
+        return auditPost(postId, null, auditorId, traceId, "REJECT_POST", "REJECTED", "REJECTED", EventTopics.CONTENT_REJECTED, reason);
     }
 
     @Transactional
@@ -130,7 +130,7 @@ public class AdminService {
     @Transactional
     public AdminActionResult approveModerationTask(Long taskId, Long auditorId, String traceId, String reason) {
         Long postId = postIdByTask(taskId);
-        return auditPost(postId, auditorId, traceId, "APPROVE_POST", "PUBLISHED", "APPROVED", EventTopics.AUDIT_COMPLETED, reason);
+        return auditPost(postId, taskId, auditorId, traceId, "APPROVE_POST", "PUBLISHED", "APPROVED", EventTopics.AUDIT_COMPLETED, reason);
     }
 
     @Transactional
@@ -142,7 +142,7 @@ public class AdminService {
     @Transactional
     public AdminActionResult rejectModerationTask(Long taskId, Long auditorId, String traceId, String reason) {
         Long postId = postIdByTask(taskId);
-        return auditPost(postId, auditorId, traceId, "REJECT_POST", "REJECTED", "REJECTED", EventTopics.CONTENT_REJECTED, reason);
+        return auditPost(postId, taskId, auditorId, traceId, "REJECT_POST", "REJECTED", "REJECTED", EventTopics.CONTENT_REJECTED, reason);
     }
 
     @Transactional
@@ -221,6 +221,8 @@ public class AdminService {
     private AdminActionResult resolveAppeal(Long appealId, Long auditorId, String traceId, String reason,
                                             boolean approved) {
         requireDatabase();
+        requireAuditor(auditorId);
+        requirePositiveId(appealId, "申诉 ID 无效");
         requireReason(reason);
         String normalizedReason = reason.trim();
         AppealRow appeal = jdbcClient.sql("""
@@ -266,7 +268,7 @@ public class AdminService {
                             INSERT INTO moderation_task(post_id, author_id, queue_name, machine_result, risk_level,
                                                         risk_score, reason, status, review_level, sla_deadline)
                             VALUES (:postId, :authorId, 'appeal-review', 'APPEAL_ACCEPTED', 'MEDIUM', 0,
-                                    :reason, 'PENDING', 'APPEAL', DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 48 HOUR))
+                                    :reason, 'PENDING', 'APPEAL', TIMESTAMPADD(HOUR, 48, CURRENT_TIMESTAMP))
                             """)
                     .param("postId", appeal.postId())
                     .param("authorId", appeal.userId())
@@ -649,10 +651,14 @@ public class AdminService {
         }
     }
 
-    private AdminActionResult auditPost(Long postId, Long auditorId, String traceId, String action, String postStatus, String taskStatus, String topic, String reason) {
+    private AdminActionResult auditPost(Long postId, Long requestedTaskId, Long auditorId, String traceId,
+                                        String action, String postStatus, String taskStatus, String topic, String reason) {
         requireDatabase();
+        requireAuditor(auditorId);
+        requirePositiveId(postId, "内容 ID 无效");
         requireReason(reason);
         try {
+            Long taskId = activeTaskId(postId, requestedTaskId);
             int postRows = jdbcClient.sql("UPDATE post SET status = :status, review_reason = :reason WHERE id = :postId AND status = 'PENDING'")
                     .param("status", postStatus)
                     .param("reason", reason.trim())
@@ -664,19 +670,25 @@ public class AdminService {
             int taskRows = jdbcClient.sql("""
                             UPDATE moderation_task
                             SET status = :taskStatus, reviewer_id = :auditorId, reviewed_at = CURRENT_TIMESTAMP
-                            WHERE post_id = :postId AND status IN ('PENDING', 'ESCALATED')
+                            WHERE id = :taskId AND post_id = :postId AND status IN ('PENDING', 'ESCALATED')
                             """)
                     .param("taskStatus", taskStatus)
                     .param("auditorId", auditorId)
+                    .param("taskId", taskId)
                     .param("postId", postId)
                     .update();
             if (taskRows == 0) {
                 throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "审核任务不存在或已处理");
             }
-            Long taskId = jdbcClient.sql("SELECT COALESCE(MAX(id), 0) FROM moderation_task WHERE post_id = :postId")
+            jdbcClient.sql("""
+                            UPDATE moderation_task
+                            SET status = 'CANCELLED', reviewer_id = :auditorId, reviewed_at = CURRENT_TIMESTAMP
+                            WHERE post_id = :postId AND id <> :taskId AND status IN ('PENDING', 'ESCALATED')
+                            """)
+                    .param("auditorId", auditorId)
                     .param("postId", postId)
-                    .query(Long.class)
-                    .single();
+                    .param("taskId", taskId)
+                    .update();
             jdbcClient.sql("INSERT INTO post_audit_record(post_id, auditor_id, action, reason) VALUES (:postId, :auditorId, :action, :reason)")
                     .param("postId", postId)
                     .param("auditorId", auditorId)
@@ -692,10 +704,10 @@ public class AdminService {
                     .update();
             if ("PUBLISHED".equals(postStatus)) {
                 jdbcClient.sql("""
-                                UPDATE media_asset m
-                                JOIN post_media pm ON pm.media_id = m.id
-                                SET m.status = 'APPROVED'
-                                WHERE pm.post_id = :postId AND m.status = 'PENDING_REVIEW'
+                                UPDATE media_asset
+                                SET status = 'APPROVED'
+                                WHERE status = 'PENDING_REVIEW'
+                                  AND id IN (SELECT media_id FROM post_media WHERE post_id = :postId)
                                 """)
                         .param("postId", postId)
                         .update();
@@ -708,8 +720,35 @@ public class AdminService {
         }
     }
 
+    private Long activeTaskId(Long postId, Long requestedTaskId) {
+        if (requestedTaskId != null) {
+            requirePositiveId(requestedTaskId, "审核任务 ID 无效");
+            return jdbcClient.sql("""
+                            SELECT id FROM moderation_task
+                            WHERE id = :taskId AND post_id = :postId AND status IN ('PENDING', 'ESCALATED')
+                            FOR UPDATE
+                            """)
+                    .param("taskId", requestedTaskId)
+                    .param("postId", postId)
+                    .query(Long.class)
+                    .optional()
+                    .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "审核任务不存在或已处理"));
+        }
+        return jdbcClient.sql("""
+                        SELECT id FROM moderation_task
+                        WHERE post_id = :postId AND status IN ('PENDING', 'ESCALATED')
+                        ORDER BY id DESC LIMIT 1 FOR UPDATE
+                        """)
+                .param("postId", postId)
+                .query(Long.class)
+                .optional()
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "审核任务不存在或已处理"));
+    }
+
     private AdminActionResult updateModerationTask(Long taskId, Long auditorId, String traceId, String action, String status, String reviewLevel, String reason) {
         requireDatabase();
+        requireAuditor(auditorId);
+        requirePositiveId(taskId, "审核任务 ID 无效");
         requireReason(reason);
         String normalizedReason = reason.trim();
         try {
@@ -746,6 +785,15 @@ public class AdminService {
                 if (postRows == 0) {
                     throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "待审核内容不存在或状态已变化");
                 }
+                jdbcClient.sql("""
+                                UPDATE moderation_task
+                                SET status = 'CANCELLED', reviewer_id = :auditorId, reviewed_at = CURRENT_TIMESTAMP
+                                WHERE post_id = :postId AND id <> :taskId AND status IN ('PENDING', 'ESCALATED')
+                                """)
+                        .param("auditorId", auditorId)
+                        .param("postId", postId)
+                        .param("taskId", taskId)
+                        .update();
                 jdbcClient.sql("INSERT INTO post_audit_record(post_id, auditor_id, action, reason) VALUES (:postId, :auditorId, :action, :reason)")
                         .param("postId", postId)
                         .param("auditorId", auditorId)
@@ -764,6 +812,7 @@ public class AdminService {
 
     private Long postIdByTask(Long taskId) {
         requireDatabase();
+        requirePositiveId(taskId, "审核任务 ID 无效");
         try {
             return jdbcClient.sql("SELECT post_id FROM moderation_task WHERE id = :taskId")
                     .param("taskId", taskId)
@@ -835,6 +884,7 @@ public class AdminService {
 
     private Long claimIdempotency(Long actorId, String operation, String key) {
         requireDatabase();
+        requireAuditor(actorId);
         if (key == null || key.isBlank() || key.length() > 128) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "审核写操作必须提供有效的 Idempotency-Key");
         }
@@ -880,6 +930,18 @@ public class AdminService {
         }
         if (reason.length() > 512) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "审核理由不能超过 512 个字符");
+        }
+    }
+
+    private void requireAuditor(Long auditorId) {
+        if (auditorId == null || auditorId <= 0) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录");
+        }
+    }
+
+    private void requirePositiveId(Long value, String message) {
+        if (value == null || value <= 0) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, message);
         }
     }
 

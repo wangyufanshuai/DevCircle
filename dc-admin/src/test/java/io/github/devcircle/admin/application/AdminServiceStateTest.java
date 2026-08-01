@@ -1,0 +1,421 @@
+package io.github.devcircle.admin.application;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.devcircle.common.error.BusinessException;
+import io.github.devcircle.common.error.ErrorCode;
+import org.h2.jdbcx.JdbcDataSource;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
+
+import javax.sql.DataSource;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+@SpringJUnitConfig(AdminServiceStateTest.TestConfig.class)
+class AdminServiceStateTest {
+    @Autowired
+    @Qualifier("normalService")
+    private AdminService service;
+    @Autowired
+    @Qualifier("failingService")
+    private AdminService failingService;
+    @Autowired
+    private JdbcClient jdbcClient;
+
+    @BeforeEach
+    void setUp() {
+        jdbcClient.sql("DROP ALL OBJECTS").update();
+        jdbcClient.sql("""
+                CREATE TABLE post (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    author_id BIGINT NOT NULL,
+                    title VARCHAR(160) NOT NULL,
+                    status VARCHAR(32) NOT NULL,
+                    version BIGINT NOT NULL DEFAULT 0,
+                    review_reason VARCHAR(512) NULL,
+                    submitted_at TIMESTAMP NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
+        jdbcClient.sql("""
+                CREATE TABLE moderation_task (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    post_id BIGINT NOT NULL,
+                    author_id BIGINT NOT NULL,
+                    queue_name VARCHAR(64) NOT NULL,
+                    machine_result VARCHAR(64) NOT NULL,
+                    risk_level VARCHAR(32) NOT NULL,
+                    risk_score DOUBLE NOT NULL,
+                    reason VARCHAR(512) NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+                    review_level VARCHAR(32) NOT NULL DEFAULT 'NORMAL',
+                    sla_deadline TIMESTAMP NOT NULL,
+                    reviewer_id BIGINT NULL,
+                    reviewed_at TIMESTAMP NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
+        jdbcClient.sql("""
+                CREATE TABLE moderation_decision (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    task_id BIGINT NOT NULL,
+                    post_id BIGINT NOT NULL,
+                    reviewer_id BIGINT NOT NULL,
+                    action VARCHAR(48) NOT NULL,
+                    reason VARCHAR(512) NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
+        jdbcClient.sql("""
+                CREATE TABLE post_audit_record (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    post_id BIGINT NOT NULL,
+                    auditor_id BIGINT NULL,
+                    action VARCHAR(48) NOT NULL,
+                    reason VARCHAR(512) NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
+        jdbcClient.sql("""
+                CREATE TABLE appeal_record (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    post_id BIGINT NOT NULL,
+                    user_id BIGINT NOT NULL,
+                    reason VARCHAR(512) NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+                    handler_id BIGINT NULL,
+                    handled_at TIMESTAMP NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
+        jdbcClient.sql("""
+                CREATE TABLE audit_log (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT NULL,
+                    action VARCHAR(96) NOT NULL,
+                    target_type VARCHAR(64) NOT NULL,
+                    target_id VARCHAR(96) NULL,
+                    ip VARCHAR(64) NULL,
+                    trace_id VARCHAR(128) NULL,
+                    metadata JSON NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
+        jdbcClient.sql("""
+                CREATE TABLE outbox_event (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    event_id CHAR(36) NOT NULL UNIQUE,
+                    topic VARCHAR(128) NOT NULL,
+                    aggregate_type VARCHAR(64) NOT NULL,
+                    aggregate_id VARCHAR(64) NOT NULL,
+                    payload JSON NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'NEW',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
+        jdbcClient.sql("""
+                CREATE TABLE content_idempotency_record (
+                    idempotency_key VARCHAR(128) PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    operation VARCHAR(48) NOT NULL,
+                    resource_id BIGINT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
+        jdbcClient.sql("""
+                CREATE TABLE media_asset (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    status VARCHAR(32) NOT NULL DEFAULT 'PENDING_REVIEW')
+                """).update();
+        jdbcClient.sql("CREATE TABLE post_media(post_id BIGINT NOT NULL, media_id BIGINT NOT NULL, PRIMARY KEY(post_id, media_id))")
+                .update();
+    }
+
+    @Test
+    void taskDecisionBindsToRequestedTaskAndCancelsActiveSiblings() {
+        long postId = post(7L, "待审核档案", "PENDING");
+        long requested = task(postId, 7L, "PENDING");
+        long sibling = task(postId, 7L, "ESCALATED");
+        long mediaId = media(postId);
+
+        var result = service.approveModerationTask(requested, 9L, "trace-approve",
+                "证据与媒体均符合发布要求", "approve-task");
+        var replay = service.approveModerationTask(requested, 9L, "trace-approve",
+                "证据与媒体均符合发布要求", "approve-task");
+
+        assertThat(result.action()).isEqualTo("APPROVE_POST");
+        assertThat(replay.attributes()).containsEntry("duplicateRequest", true)
+                .containsEntry("resourceId", requested);
+        assertThat(postStatus(postId)).isEqualTo("PUBLISHED");
+        assertThat(taskStatus(requested)).isEqualTo("APPROVED");
+        assertThat(taskStatus(sibling)).isEqualTo("CANCELLED");
+        assertThat(mediaStatus(mediaId)).isEqualTo("APPROVED");
+        assertThat(decisionTaskIds()).containsExactly(requested);
+        assertThat(count("post_audit_record")).isEqualTo(1);
+        assertThat(count("audit_log")).isEqualTo(1);
+        assertThat(count("outbox_event")).isEqualTo(1);
+
+        assertCode(() -> service.rejectModerationTask(requested, 9L, "trace", "改为驳回", "approve-task"),
+                ErrorCode.DUPLICATE_OPERATION);
+        assertCode(() -> service.approveModerationTask(sibling, 9L, "trace", "另一个任务", "approve-task"),
+                ErrorCode.DUPLICATE_OPERATION);
+        assertCode(() -> service.approveModerationTask(requested, 10L, "trace", "另一个审核员", "approve-task"),
+                ErrorCode.DUPLICATE_OPERATION);
+    }
+
+    @Test
+    void serializationFailureRollsBackPostTaskMediaDecisionKeyAndOutbox() {
+        long postId = post(7L, "事务回滚档案", "PENDING");
+        long taskId = task(postId, 7L, "PENDING");
+        long mediaId = media(postId);
+
+        assertThatThrownBy(() -> failingService.approveModerationTask(taskId, 9L, "trace-failure",
+                "序列化失败必须整体回滚", "failure-key"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("serialize audit metadata");
+
+        assertThat(postStatus(postId)).isEqualTo("PENDING");
+        assertThat(taskStatus(taskId)).isEqualTo("PENDING");
+        assertThat(mediaStatus(mediaId)).isEqualTo("PENDING_REVIEW");
+        assertThat(count("moderation_decision")).isZero();
+        assertThat(count("post_audit_record")).isZero();
+        assertThat(count("audit_log")).isZero();
+        assertThat(count("outbox_event")).isZero();
+        assertThat(idempotencyCount("failure-key")).isZero();
+
+        service.approveModerationTask(taskId, 9L, "trace-retry",
+                "故障恢复后允许同键重试", "failure-key");
+        assertThat(postStatus(postId)).isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    void directPostDecisionSelectsLatestTaskAndCancelsTheOlderTask() {
+        long postId = post(7L, "直接审核档案", "PENDING");
+        long older = task(postId, 7L, "PENDING");
+        long latest = task(postId, 7L, "PENDING");
+
+        service.approve(postId, 9L, "trace-direct", "直接审核选择最新活动任务", "direct-approve");
+
+        assertThat(taskStatus(older)).isEqualTo("CANCELLED");
+        assertThat(taskStatus(latest)).isEqualTo("APPROVED");
+        assertThat(decisionTaskIds()).containsExactly(latest);
+        assertThat(postStatus(postId)).isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    void requireChangesPersistsReasonAndCancelsSiblingTasks() {
+        long postId = post(7L, "需要修改的档案", "PENDING");
+        long requested = task(postId, 7L, "PENDING");
+        long sibling = task(postId, 7L, "ESCALATED");
+
+        service.requireChanges(requested, 9L, "trace-changes",
+                "时间线与证据图的对应关系需要补充", "require-changes");
+
+        assertThat(postStatus(postId)).isEqualTo("CHANGES_REQUIRED");
+        assertThat(postReviewReason(postId)).isEqualTo("时间线与证据图的对应关系需要补充");
+        assertThat(taskStatus(requested)).isEqualTo("CHANGES_REQUIRED");
+        assertThat(taskStatus(sibling)).isEqualTo("CANCELLED");
+        assertThat(decisionTaskIds()).containsExactly(requested);
+        assertThat(count("post_audit_record")).isEqualTo(1);
+        assertThat(count("outbox_event")).isEqualTo(1);
+    }
+
+    @Test
+    void invalidReasonIdentityOrMissingTaskNeverBurnsTheRequestKey() {
+        long postId = post(7L, "审核校验档案", "PENDING");
+        long taskId = task(postId, 7L, "PENDING");
+
+        assertCode(() -> service.approveModerationTask(taskId, 9L, "trace", " ", "reason-key"),
+                ErrorCode.VALIDATION_FAILED);
+        assertThat(idempotencyCount("reason-key")).isZero();
+        assertCode(() -> service.approveModerationTask(taskId, 9L, "trace", "x".repeat(513), "long-reason-key"),
+                ErrorCode.VALIDATION_FAILED);
+        assertThat(idempotencyCount("long-reason-key")).isZero();
+        assertCode(() -> service.approveModerationTask(taskId, null, "trace", "理由有效", "identity-key"),
+                ErrorCode.UNAUTHORIZED);
+        assertThat(idempotencyCount("identity-key")).isZero();
+        assertCode(() -> service.approveModerationTask(0L, 9L, "trace", "任务无效", "invalid-task-key"),
+                ErrorCode.VALIDATION_FAILED);
+        assertThat(idempotencyCount("invalid-task-key")).isZero();
+        assertCode(() -> service.approveModerationTask(9999L, 9L, "trace", "任务不存在", "missing-key"),
+                ErrorCode.RESOURCE_NOT_FOUND);
+        assertThat(idempotencyCount("missing-key")).isZero();
+
+        service.approveModerationTask(taskId, 9L, "trace", "修复输入后允许重试", "reason-key");
+        assertThat(postStatus(postId)).isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    void acceptedAppealRequeuesPostAndRejectedAppealLeavesPostRejected() {
+        long acceptedPost = post(21L, "申诉通过档案", "CHANGES_REQUIRED");
+        long acceptedAppeal = appeal(acceptedPost, 21L, "证据已补充");
+
+        var accepted = service.resolveAppeal(acceptedAppeal, 9L, "trace-appeal",
+                "补充材料有效，进入人工复审", true, "accept-appeal");
+        var acceptedReplay = service.resolveAppeal(acceptedAppeal, 9L, "trace-appeal",
+                "补充材料有效，进入人工复审", true, "accept-appeal");
+
+        assertThat(accepted.action()).isEqualTo("APPEAL_APPROVED");
+        assertThat(acceptedReplay.attributes()).containsEntry("duplicateRequest", true);
+        assertThat(postStatus(acceptedPost)).isEqualTo("PENDING");
+        assertThat(appealStatus(acceptedAppeal)).isEqualTo("APPROVED");
+        assertThat(activeTaskCount(acceptedPost)).isEqualTo(1);
+
+        long rejectedPost = post(22L, "申诉驳回档案", "REJECTED");
+        long rejectedAppeal = appeal(rejectedPost, 22L, "希望再次复核");
+        service.resolveAppeal(rejectedAppeal, 9L, "trace-reject",
+                "原审核结论成立", false, "reject-appeal");
+
+        assertThat(postStatus(rejectedPost)).isEqualTo("REJECTED");
+        assertThat(appealStatus(rejectedAppeal)).isEqualTo("REJECTED");
+        assertThat(activeTaskCount(rejectedPost)).isZero();
+        assertThat(count("post_audit_record")).isEqualTo(2);
+        assertThat(count("outbox_event")).isEqualTo(2);
+    }
+
+    @Test
+    void appealStatusFailureRollsBackKeyAndCanBeRetriedAfterRepair() {
+        long postId = post(31L, "状态修复档案", "PUBLISHED");
+        long appealId = appeal(postId, 31L, "状态暂时不允许");
+
+        assertCode(() -> service.resolveAppeal(appealId, 9L, "trace", "先修复状态", true, "repair-key"),
+                ErrorCode.VALIDATION_FAILED);
+        assertThat(idempotencyCount("repair-key")).isZero();
+        assertThat(appealStatus(appealId)).isEqualTo("PENDING");
+
+        jdbcClient.sql("UPDATE post SET status = 'REJECTED' WHERE id = :id").param("id", postId).update();
+        service.resolveAppeal(appealId, 9L, "trace", "状态修复后重试", true, "repair-key");
+        assertThat(postStatus(postId)).isEqualTo("PENDING");
+    }
+
+    private long post(long authorId, String title, String status) {
+        jdbcClient.sql("INSERT INTO post(author_id, title, status) VALUES (:authorId, :title, :status)")
+                .param("authorId", authorId).param("title", title).param("status", status).update();
+        return jdbcClient.sql("SELECT MAX(id) FROM post").query(Long.class).single();
+    }
+
+    private long task(long postId, long authorId, String status) {
+        jdbcClient.sql("""
+                        INSERT INTO moderation_task(post_id, author_id, queue_name, machine_result, risk_level,
+                                                    risk_score, reason, status, review_level, sla_deadline)
+                        VALUES (:postId, :authorId, 'standard', 'PASS', 'LOW', 0, 'machine', :status,
+                                'NORMAL', TIMESTAMPADD(HOUR, 24, CURRENT_TIMESTAMP))
+                        """)
+                .param("postId", postId).param("authorId", authorId).param("status", status).update();
+        return jdbcClient.sql("SELECT MAX(id) FROM moderation_task").query(Long.class).single();
+    }
+
+    private long appeal(long postId, long userId, String reason) {
+        jdbcClient.sql("INSERT INTO appeal_record(post_id, user_id, reason) VALUES (:postId, :userId, :reason)")
+                .param("postId", postId).param("userId", userId).param("reason", reason).update();
+        return jdbcClient.sql("SELECT MAX(id) FROM appeal_record").query(Long.class).single();
+    }
+
+    private long media(long postId) {
+        jdbcClient.sql("INSERT INTO media_asset(status) VALUES ('PENDING_REVIEW')").update();
+        long mediaId = jdbcClient.sql("SELECT MAX(id) FROM media_asset").query(Long.class).single();
+        jdbcClient.sql("INSERT INTO post_media(post_id, media_id) VALUES (:postId, :mediaId)")
+                .param("postId", postId).param("mediaId", mediaId).update();
+        return mediaId;
+    }
+
+    private String postStatus(long postId) {
+        return value("SELECT status FROM post WHERE id = :id", postId);
+    }
+
+    private String postReviewReason(long postId) {
+        return value("SELECT review_reason FROM post WHERE id = :id", postId);
+    }
+
+    private String taskStatus(long taskId) {
+        return value("SELECT status FROM moderation_task WHERE id = :id", taskId);
+    }
+
+    private String appealStatus(long appealId) {
+        return value("SELECT status FROM appeal_record WHERE id = :id", appealId);
+    }
+
+    private String mediaStatus(long mediaId) {
+        return value("SELECT status FROM media_asset WHERE id = :id", mediaId);
+    }
+
+    private String value(String sql, long id) {
+        return jdbcClient.sql(sql).param("id", id).query(String.class).single();
+    }
+
+    private List<Long> decisionTaskIds() {
+        return jdbcClient.sql("SELECT task_id FROM moderation_decision ORDER BY id")
+                .query(Long.class).list();
+    }
+
+    private long activeTaskCount(long postId) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM moderation_task WHERE post_id = :postId AND status = 'PENDING'")
+                .param("postId", postId).query(Long.class).single();
+    }
+
+    private long count(String table) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM " + table).query(Long.class).single();
+    }
+
+    private long idempotencyCount(String key) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM content_idempotency_record WHERE idempotency_key = :key")
+                .param("key", key).query(Long.class).single();
+    }
+
+    private void assertCode(ThrowingAction action, ErrorCode expected) {
+        assertThatThrownBy(action::run)
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.code()).isEqualTo(expected));
+    }
+
+    @FunctionalInterface
+    private interface ThrowingAction {
+        void run();
+    }
+
+    @Configuration
+    @EnableTransactionManagement
+    static class TestConfig {
+        @Bean
+        DataSource dataSource() {
+            JdbcDataSource dataSource = new JdbcDataSource();
+            dataSource.setURL("jdbc:h2:mem:admin-state;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE");
+            return dataSource;
+        }
+
+        @Bean
+        JdbcClient jdbcClient(DataSource dataSource) {
+            return JdbcClient.create(dataSource);
+        }
+
+        @Bean
+        ObjectMapper objectMapper() {
+            return new ObjectMapper().findAndRegisterModules();
+        }
+
+        @Bean("normalService")
+        AdminService normalService(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+            return new AdminService(jdbcClient, objectMapper);
+        }
+
+        @Bean("failingService")
+        AdminService failingService(JdbcClient jdbcClient) {
+            ObjectMapper failingMapper = new ObjectMapper() {
+                @Override
+                public String writeValueAsString(Object value) throws JsonProcessingException {
+                    throw new JsonProcessingException("serialization offline") { };
+                }
+            };
+            return new AdminService(jdbcClient, failingMapper);
+        }
+
+        @Bean
+        PlatformTransactionManager transactionManager(DataSource dataSource) {
+            return new DataSourceTransactionManager(dataSource);
+        }
+    }
+}
