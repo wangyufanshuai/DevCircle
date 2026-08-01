@@ -226,6 +226,27 @@ class AdminServiceStateTest {
     }
 
     @Test
+    void rejectionKeepsMediaPrivateAndPublishesOneRejectionDecision() {
+        long postId = post(7L, "审核驳回档案", "PENDING");
+        long requested = task(postId, 7L, "PENDING");
+        long sibling = task(postId, 7L, "ESCALATED");
+        long mediaId = media(postId);
+
+        service.rejectModerationTask(requested, 9L, "trace-reject-task",
+                "关键证据来源无法核验", "reject-task");
+
+        assertThat(postStatus(postId)).isEqualTo("REJECTED");
+        assertThat(postReviewReason(postId)).isEqualTo("关键证据来源无法核验");
+        assertThat(taskStatus(requested)).isEqualTo("REJECTED");
+        assertThat(taskStatus(sibling)).isEqualTo("CANCELLED");
+        assertThat(mediaStatus(mediaId)).isEqualTo("PENDING_REVIEW");
+        assertThat(decisionTaskIds()).containsExactly(requested);
+        assertThat(count("post_audit_record")).isEqualTo(1);
+        assertThat(count("audit_log")).isEqualTo(1);
+        assertThat(outboxTopics()).containsExactly("content.rejected");
+    }
+
+    @Test
     void escalationIsSingleStepAndRequiresAPendingPost() {
         long postId = post(7L, "升级复审档案", "PENDING");
         long taskId = task(postId, 7L, "PENDING");
@@ -407,6 +428,11 @@ class AdminServiceStateTest {
     private List<Long> decisionTaskIds() {
         return jdbcClient.sql("SELECT task_id FROM moderation_decision ORDER BY id")
                 .query(Long.class).list();
+    }
+
+    private List<String> outboxTopics() {
+        return jdbcClient.sql("SELECT topic FROM outbox_event ORDER BY id")
+                .query(String.class).list();
     }
 
     private long activeTaskCount(long postId) {
