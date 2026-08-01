@@ -33,7 +33,6 @@ import java.nio.charset.StandardCharsets;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -267,7 +266,7 @@ public class PostRepository {
                 .param("anchor", request.anchor()).param("completed", request.completed()).update();
         jdbcClient.sql("""
                         UPDATE reading_progress
-                        SET anchor = IF(:progress >= progress_percent, :anchor, anchor),
+                        SET anchor = CASE WHEN :progress >= progress_percent THEN :anchor ELSE anchor END,
                             progress_percent = GREATEST(progress_percent, :progress),
                             completed = completed OR :completed,
                             last_read_at = CURRENT_TIMESTAMP
@@ -458,7 +457,7 @@ public class PostRepository {
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement(
                     "INSERT INTO post(author_id, title, type, theme, content_kind, difficulty, solvable, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING')",
-                    Statement.RETURN_GENERATED_KEYS
+                    new String[]{"id"}
             );
             statement.setLong(1, authorId);
             statement.setString(2, request.title());
@@ -487,13 +486,7 @@ public class PostRepository {
                 .param("solution", request.solution() == null ? "" : request.solution())
                 .param("explanation", request.solution() == null ? "" : request.solution())
                 .update();
-        for (String tagName : safeTags(request.tags())) {
-            Long tagId = upsertTag(tagName);
-            jdbcClient.sql("INSERT IGNORE INTO post_tag(post_id, tag_id) VALUES (:postId, :tagId)")
-                    .param("postId", postId)
-                    .param("tagId", tagId)
-                    .update();
-        }
+        replacePostTags(postId, request.tags());
         int index = 0;
         for (Long mediaId : safeMediaIds(request.mediaIds())) {
             requireOwnedCompletedMedia(authorId, mediaId);
@@ -509,7 +502,7 @@ public class PostRepository {
         return new PostSummary(postId, normalizeType(request.type()), normalizeTheme(request.theme()), normalizeContentKind(request.contentKind()),
                 normalizeDifficulty(request.difficulty()), Boolean.TRUE.equals(request.solvable()), 0,
                 request.title(), excerpt(request.content()), "user-" + authorId, authorId,
-                safeTags(request.tags()), mediaAssets(postId), 0, 0, 0, "PENDING", Instant.now());
+                normalizedTags(request.tags()), mediaAssets(postId), 0, 0, 0, "PENDING", Instant.now());
     }
 
     @Transactional
@@ -523,7 +516,7 @@ public class PostRepository {
             PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO post(author_id, title, type, theme, content_kind, difficulty, solvable, status, version, last_saved_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, 'DRAFT', 0, CURRENT_TIMESTAMP)
-                    """, Statement.RETURN_GENERATED_KEYS);
+                    """, new String[]{"id"});
             statement.setLong(1, authorId);
             statement.setString(2, safeText(request.title()));
             statement.setString(3, normalizeType(request.type()));
@@ -696,13 +689,7 @@ public class PostRepository {
                     .param("cosmicFacts", json(seed.cosmicFacts()))
                     .param("relatedPostIds", json(seed.relatedPostIds()))
                     .update();
-            for (String tagName : seed.tags()) {
-                Long tagId = upsertTag(tagName);
-                jdbcClient.sql("INSERT IGNORE INTO post_tag(post_id, tag_id) VALUES (:postId, :tagId)")
-                        .param("postId", seed.id())
-                        .param("tagId", tagId)
-                        .update();
-            }
+            replacePostTags(seed.id(), seed.tags());
             imported++;
         }
         return imported;
@@ -734,7 +721,7 @@ public class PostRepository {
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement(
                     "INSERT INTO appeal_record(post_id, user_id, reason) VALUES (?, ?, ?)",
-                    Statement.RETURN_GENERATED_KEYS
+                    new String[]{"id"}
             );
             statement.setLong(1, postId);
             statement.setLong(2, userId);
@@ -860,12 +847,7 @@ public class PostRepository {
 
     private void replaceDraftRelations(Long draftId, Long authorId, List<String> tags, List<Long> mediaIds,
                                        List<DraftMediaInput> media) {
-        jdbcClient.sql("DELETE FROM post_tag WHERE post_id = :postId").param("postId", draftId).update();
-        for (String tagName : safeTags(tags).stream().map(String::trim).filter(tag -> !tag.isBlank()).distinct().limit(10).toList()) {
-            Long tagId = upsertTag(tagName);
-            jdbcClient.sql("INSERT INTO post_tag(post_id, tag_id) VALUES (:postId, :tagId)")
-                    .param("postId", draftId).param("tagId", tagId).update();
-        }
+        replacePostTags(draftId, tags);
         jdbcClient.sql("DELETE FROM post_media WHERE post_id = :postId").param("postId", draftId).update();
         List<DraftMediaInput> items = media == null || media.isEmpty()
                 ? safeMediaIds(mediaIds).stream().distinct().limit(20)
@@ -958,18 +940,33 @@ public class PostRepository {
     }
 
     private void requireMediaUploadContract() {
-        Integer columns = jdbcClient.sql("""
-                        SELECT COUNT(*)
-                        FROM information_schema.columns
-                        WHERE table_schema = DATABASE() AND table_name = 'media_asset'
-                          AND column_name IN ('uploader_id', 'upload_status')
-                        """)
-                .query(Integer.class)
-                .single();
-        if (columns == null || columns < 2) {
+        Boolean ready = jdbcTemplate.execute((org.springframework.jdbc.core.ConnectionCallback<Boolean>) connection ->
+                columnExists(connection, "media_asset", "uploader_id")
+                        && columnExists(connection, "media_asset", "upload_status"));
+        if (!Boolean.TRUE.equals(ready)) {
             throw new BusinessException(ErrorCode.DEPENDENCY_UNAVAILABLE,
                     "媒体上传服务尚未完成初始化，请稍后重试");
         }
+    }
+
+    private boolean columnExists(java.sql.Connection connection, String table, String column) throws SQLException {
+        String catalog = connection.getCatalog();
+        String schema = connection.getSchema();
+        for (String tableName : List.of(table, table.toUpperCase())) {
+            for (String columnName : List.of(column, column.toUpperCase())) {
+                try (ResultSet result = connection.getMetaData()
+                        .getColumns(catalog, schema, tableName, columnName)) {
+                    if (result.next()) return true;
+                }
+                if (schema != null) {
+                    try (ResultSet result = connection.getMetaData()
+                            .getColumns(catalog, null, tableName, columnName)) {
+                        if (result.next()) return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     private record DraftMediaRow(Long postId, DraftMediaView media) {
@@ -1032,8 +1029,39 @@ public class PostRepository {
         }
     }
 
-    private Long upsertTag(String name) {
-        jdbcClient.sql("INSERT INTO tag(name, use_count) VALUES (:name, 1) ON DUPLICATE KEY UPDATE use_count = use_count + 1")
+    private void replacePostTags(Long postId, List<String> tags) {
+        List<Long> existingTagIds = jdbcClient.sql("SELECT tag_id FROM post_tag WHERE post_id = :postId")
+                .param("postId", postId)
+                .query(Long.class)
+                .list();
+        if (!existingTagIds.isEmpty()) {
+            jdbcClient.sql("DELETE FROM post_tag WHERE post_id = :postId")
+                    .param("postId", postId)
+                    .update();
+            jdbcClient.sql("UPDATE tag SET use_count = GREATEST(use_count - 1, 0) WHERE id IN (:tagIds)")
+                    .param("tagIds", existingTagIds)
+                    .update();
+        }
+        for (String tagName : normalizedTags(tags)) {
+            attachTag(postId, tagName);
+        }
+    }
+
+    private void attachTag(Long postId, String name) {
+        Long tagId = ensureTag(name);
+        int inserted = jdbcClient.sql("INSERT IGNORE INTO post_tag(post_id, tag_id) VALUES (:postId, :tagId)")
+                .param("postId", postId)
+                .param("tagId", tagId)
+                .update();
+        if (inserted == 1) {
+            jdbcClient.sql("UPDATE tag SET use_count = use_count + 1 WHERE id = :tagId")
+                    .param("tagId", tagId)
+                    .update();
+        }
+    }
+
+    private Long ensureTag(String name) {
+        jdbcClient.sql("INSERT IGNORE INTO tag(name, use_count) VALUES (:name, 0)")
                 .param("name", name)
                 .update();
         return jdbcClient.sql("SELECT id FROM tag WHERE name = :name")
@@ -1047,7 +1075,7 @@ public class PostRepository {
                 "postId", postId,
                 "authorId", authorId,
                 "title", request.title(),
-                "tags", safeTags(request.tags()),
+                "tags", normalizedTags(request.tags()),
                 "theme", normalizeTheme(request.theme()),
                 "contentKind", normalizeContentKind(request.contentKind())
         ));
@@ -1329,6 +1357,16 @@ public class PostRepository {
 
     private List<String> safeTags(List<String> tags) {
         return tags == null ? List.of() : tags;
+    }
+
+    private List<String> normalizedTags(List<String> tags) {
+        return safeTags(tags).stream()
+                .filter(tag -> tag != null)
+                .map(String::trim)
+                .filter(tag -> !tag.isBlank())
+                .distinct()
+                .limit(10)
+                .toList();
     }
 
     private List<Long> safeMediaIds(List<Long> mediaIds) {
