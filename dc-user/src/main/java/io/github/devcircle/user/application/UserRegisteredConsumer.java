@@ -2,43 +2,49 @@ package io.github.devcircle.user.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.devcircle.common.event.EventEnvelopeValidator;
 import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.user.infrastructure.UserGraphRepository;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
+import java.util.Map;
+import java.util.Set;
+
 @Component
 @ConditionalOnBean(name = "kafkaListenerContainerFactory")
 class UserRegisteredConsumer {
-    private final ObjectMapper objectMapper;
+    private static final Map<String, Set<String>> EVENT_CONTRACT =
+            Map.of(EventTopics.USER_REGISTERED, Set.of("dc-auth"));
+
+    private final EventEnvelopeValidator envelopeValidator;
     private final UserGraphRepository repository;
 
     UserRegisteredConsumer(ObjectMapper objectMapper, UserGraphRepository repository) {
-        this.objectMapper = objectMapper;
+        this.envelopeValidator = new EventEnvelopeValidator(objectMapper);
         this.repository = repository;
     }
 
     @KafkaListener(topics = EventTopics.USER_REGISTERED, groupId = "dc-user-profile")
     void consume(String message) throws Exception {
-        JsonNode envelope = objectMapper.readTree(message);
-        String eventId = required(envelope, "eventId");
-        String type = required(envelope, "type");
-        if (!EventTopics.USER_REGISTERED.equals(type)) {
-            throw new IllegalArgumentException("Unexpected user event type");
-        }
-        JsonNode payload = envelope.path("payload");
-        long userId = payload.path("userId").asLong(0);
-        String displayName = payload.path("displayName").asText("").trim();
-        if (userId <= 0 || displayName.isBlank() || displayName.length() > 64) {
+        ValidatedEvent event = envelopeValidator.parse(message, EVENT_CONTRACT);
+        JsonNode payload = event.payload();
+        JsonNode userIdNode = payload.get("userId");
+        JsonNode displayNameNode = payload.get("displayName");
+        if (userIdNode == null || !userIdNode.isIntegralNumber() || !userIdNode.canConvertToLong()
+                || userIdNode.longValue() <= 0 || displayNameNode == null || !displayNameNode.isTextual()) {
             throw new IllegalArgumentException("Invalid user registration event payload");
         }
-        repository.synchronizeProfile(eventId, type, userId, displayName);
-    }
-
-    private String required(JsonNode node, String field) {
-        String value = node.path(field).asText("");
-        if (value.isBlank()) throw new IllegalArgumentException("Event is missing " + field);
-        return value;
+        long userId = userIdNode.longValue();
+        String displayName = displayNameNode.textValue();
+        if (displayName.isBlank() || displayName.length() > 64 || !displayName.equals(displayName.strip())) {
+            throw new IllegalArgumentException("Invalid user registration event payload");
+        }
+        if (!event.aggregateId().equals(Long.toString(userId))) {
+            throw new IllegalArgumentException("User aggregateId does not match userId");
+        }
+        repository.synchronizeProfile(event.eventId().toString(), event.type(), userId, displayName);
     }
 }

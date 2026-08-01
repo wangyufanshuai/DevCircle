@@ -60,6 +60,16 @@ class UserGraphRepositoryTest {
     }
 
     @Test
+    void eventIdCannotBeSilentlyReusedAcrossTopics() {
+        assertThat(repository.synchronizeProfile("evt-conflict", EventTopics.USER_REGISTERED, 7L, "林墨")).isTrue();
+
+        assertThatThrownBy(() -> repository.synchronizeProfile(
+                "evt-conflict", EventTopics.FOLLOW_CHANGED, 7L, "林墨"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Event ID is already bound to topic user.registered");
+    }
+
+    @Test
     void followEventContainsBothSidesOfTheRelationship() {
         repository.synchronizeProfile("evt-a", EventTopics.USER_REGISTERED, 1L, "观测者");
         repository.synchronizeProfile("evt-b", EventTopics.USER_REGISTERED, 2L, "林墨");

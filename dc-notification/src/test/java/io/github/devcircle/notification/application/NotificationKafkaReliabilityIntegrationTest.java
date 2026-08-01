@@ -101,7 +101,7 @@ class NotificationKafkaReliabilityIntegrationTest {
         assertThat(count("notification")).isZero();
         assertThat(count("consumer_dedup")).isZero();
 
-        EventEnvelope valid = EventEnvelope.now(EventTopics.AUDIT_COMPLETED, "dc-content", "9001",
+        EventEnvelope valid = EventEnvelope.now(EventTopics.AUDIT_COMPLETED, "dc-admin", "9001",
                 Map.of("receiverId", 42L, "postId", 9001L, "status", "PUBLISHED"));
         String message = objectMapper.writeValueAsString(valid);
         kafkaTemplate.send(EventTopics.AUDIT_COMPLETED, valid.eventId().toString(), message).get(10, TimeUnit.SECONDS);

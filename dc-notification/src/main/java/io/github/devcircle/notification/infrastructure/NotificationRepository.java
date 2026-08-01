@@ -59,13 +59,7 @@ public class NotificationRepository {
     @Transactional
     public boolean createOnce(String eventId, String topic, Long receiverId, Long actorId, String type,
                               String title, String content, String targetType, Long targetId, String targetRoute) {
-        int claimed = jdbcClient.sql("INSERT IGNORE INTO consumer_dedup(event_id, topic) VALUES (:eventId, :topic)")
-                .param("eventId", eventId)
-                .param("topic", topic)
-                .update();
-        if (claimed == 0) {
-            return false;
-        }
+        if (!claimConsumerEvent(eventId, topic)) return false;
         jdbcClient.sql("""
                         INSERT INTO notification(receiver_id, actor_id, type, title, content, target_type, target_id, target_route, read_flag)
                         VALUES (:receiverId, :actorId, :type, :title, :content, :targetType, :targetId, :targetRoute, false)
@@ -83,10 +77,23 @@ public class NotificationRepository {
     }
 
     public boolean acknowledgeOnce(String eventId, String topic) {
-        return jdbcClient.sql("INSERT IGNORE INTO consumer_dedup(event_id, topic) VALUES (:eventId, :topic)")
+        return claimConsumerEvent(eventId, topic);
+    }
+
+    private boolean claimConsumerEvent(String eventId, String topic) {
+        int claimed = jdbcClient.sql("INSERT IGNORE INTO consumer_dedup(event_id, topic) VALUES (:eventId, :topic)")
                 .param("eventId", eventId)
                 .param("topic", topic)
-                .update() == 1;
+                .update();
+        if (claimed == 1) return true;
+        String existingTopic = jdbcClient.sql("SELECT topic FROM consumer_dedup WHERE event_id = :eventId")
+                .param("eventId", eventId)
+                .query(String.class)
+                .single();
+        if (!topic.equals(existingTopic)) {
+            throw new IllegalArgumentException("Event ID is already bound to topic " + existingTopic);
+        }
+        return false;
     }
 
     @Transactional

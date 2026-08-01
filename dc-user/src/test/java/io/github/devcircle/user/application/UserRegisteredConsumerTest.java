@@ -8,8 +8,10 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 class UserRegisteredConsumerTest {
     @Test
@@ -22,6 +24,22 @@ class UserRegisteredConsumerTest {
 
         consumer.consume(mapper.writeValueAsString(event));
 
-        verify(repository).synchronizeProfile(event.eventId().toString(), EventTopics.USER_REGISTERED, 42L, "观测者");
+        verify(repository).synchronizeProfile(
+                event.eventId().toString(), EventTopics.USER_REGISTERED, 42L, "观测者");
+    }
+
+    @Test
+    void aggregateIdentityMismatchIsRejectedBeforeProjection() throws Exception {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        UserGraphRepository repository = mock(UserGraphRepository.class);
+        UserRegisteredConsumer consumer = new UserRegisteredConsumer(mapper, repository);
+        EventEnvelope event = EventEnvelope.now(EventTopics.USER_REGISTERED, "dc-auth", "99",
+                Map.of("userId", 42L, "displayName", "观测者", "status", "ACTIVE"));
+
+        assertThatThrownBy(() -> consumer.consume(mapper.writeValueAsString(event)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("User aggregateId does not match userId");
+
+        verifyNoInteractions(repository);
     }
 }

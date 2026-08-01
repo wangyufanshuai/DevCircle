@@ -113,14 +113,26 @@ public class UserGraphRepository {
 
     @Transactional
     public boolean synchronizeProfile(String eventId, String topic, Long userId, String displayName) {
-        int claimed = jdbcClient.sql("INSERT IGNORE INTO consumer_dedup(event_id, topic) VALUES (:eventId, :topic)")
-                .param("eventId", eventId).param("topic", topic).update();
-        if (claimed == 0) return false;
+        if (!claimConsumerEvent(eventId, topic)) return false;
         jdbcClient.sql("INSERT IGNORE INTO user_profile(user_id, username) VALUES (:userId, :username)")
                 .param("userId", userId).param("username", displayName).update();
         jdbcClient.sql("UPDATE user_profile SET username = :username WHERE user_id = :userId")
                 .param("userId", userId).param("username", displayName).update();
         return true;
+    }
+
+    private boolean claimConsumerEvent(String eventId, String topic) {
+        int claimed = jdbcClient.sql("INSERT IGNORE INTO consumer_dedup(event_id, topic) VALUES (:eventId, :topic)")
+                .param("eventId", eventId).param("topic", topic).update();
+        if (claimed == 1) return true;
+        String existingTopic = jdbcClient.sql("SELECT topic FROM consumer_dedup WHERE event_id = :eventId")
+                .param("eventId", eventId)
+                .query(String.class)
+                .single();
+        if (!topic.equals(existingTopic)) {
+            throw new IllegalArgumentException("Event ID is already bound to topic " + existingTopic);
+        }
+        return false;
     }
 
     public void writeFollowChanged(Long actorId, UserProfile actor, Long receiverId, UserProfile receiver,

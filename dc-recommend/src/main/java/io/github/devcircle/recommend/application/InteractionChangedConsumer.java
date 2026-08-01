@@ -2,37 +2,50 @@ package io.github.devcircle.recommend.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.devcircle.common.event.EventEnvelopeValidator;
 import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.common.event.ValidatedEvent;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
+import java.util.Map;
+import java.util.Set;
+
 @Component
 class InteractionChangedConsumer {
-    private final ObjectMapper objectMapper;
+    private static final Map<String, Set<String>> EVENT_CONTRACT =
+            Map.of(EventTopics.INTERACTION_CHANGED, Set.of("dc-interaction"));
+    private static final Set<String> ALLOWED_INTERACTIONS = Set.of("LIKE", "UNLIKE", "FAVORITE", "UNFAVORITE");
+
+    private final EventEnvelopeValidator envelopeValidator;
     private final InteractionConsumerDedup dedup;
     private final InteractionSignalStore signalStore;
 
     InteractionChangedConsumer(ObjectMapper objectMapper,
                                InteractionConsumerDedup dedup,
                                InteractionSignalStore signalStore) {
-        this.objectMapper = objectMapper;
+        this.envelopeValidator = new EventEnvelopeValidator(objectMapper);
         this.dedup = dedup;
         this.signalStore = signalStore;
     }
 
     @KafkaListener(topics = EventTopics.INTERACTION_CHANGED, groupId = "dc-recommend")
     void consume(String message) throws Exception {
-        JsonNode envelope = objectMapper.readTree(message);
-        String eventId = required(envelope, "eventId");
-        String topic = required(envelope, "type");
-        if (!EventTopics.INTERACTION_CHANGED.equals(topic)) throw new IllegalArgumentException("Unexpected interaction topic");
+        ValidatedEvent event = envelopeValidator.parse(message, EVENT_CONTRACT);
+        String eventId = event.eventId().toString();
+        String topic = event.type();
         if (!dedup.claim(eventId, topic)) return;
         try {
-            JsonNode payload = envelope.path("payload");
-            long actorId = payload.path("actorId").asLong(0);
-            long postId = payload.path("postId").asLong(0);
-            String type = payload.path("interactionType").asText("");
-            if (actorId <= 0 || postId <= 0 || type.isBlank()) throw new IllegalArgumentException("Invalid interaction event payload");
+            JsonNode payload = event.payload();
+            long actorId = requiredPositiveLong(payload, "actorId");
+            long postId = requiredPositiveLong(payload, "postId");
+            String type = requiredText(payload, "interactionType");
+            if (!ALLOWED_INTERACTIONS.contains(type)) {
+                throw new IllegalArgumentException("Unsupported interaction type: " + type);
+            }
+            if (!event.aggregateId().equals(Long.toString(postId))) {
+                throw new IllegalArgumentException("Interaction aggregateId does not match postId");
+            }
             signalStore.apply(eventId, actorId, postId, type);
             dedup.markCompleted(eventId);
         } catch (Exception ex) {
@@ -42,9 +55,19 @@ class InteractionChangedConsumer {
         }
     }
 
-    private String required(JsonNode node, String field) {
-        String value = node.path(field).asText("");
-        if (value.isBlank()) throw new IllegalArgumentException("Event is missing " + field);
-        return value;
+    private long requiredPositiveLong(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || !value.isIntegralNumber() || !value.canConvertToLong() || value.longValue() <= 0) {
+            throw new IllegalArgumentException("Interaction payload " + field + " must be a positive integer");
+        }
+        return value.longValue();
+    }
+
+    private String requiredText(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || !value.isTextual() || value.textValue().isBlank()) {
+            throw new IllegalArgumentException("Interaction payload " + field + " must be a non-blank string");
+        }
+        return value.textValue();
     }
 }

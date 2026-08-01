@@ -1,5 +1,7 @@
 package io.github.devcircle.common.event;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
+
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
@@ -7,7 +9,7 @@ import java.util.UUID;
 public record EventEnvelope(UUID eventId,
                             String type,
                             int version,
-                            Instant occurredAt,
+                            @JsonFormat(shape = JsonFormat.Shape.STRING) Instant occurredAt,
                             String producer,
                             String aggregateId,
                             Map<String, Object> payload) {
