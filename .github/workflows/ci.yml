@@ -21,7 +21,7 @@ jobs:
           java-version: "21"
           cache: maven
       - run: ./mvnw -B verify -Pcoverage
-      - run: MIN_LINE_COVERAGE=40 MIN_BRANCH_COVERAGE=40 bash scripts/ops/assert-coverage.sh
+      - run: MIN_LINE_COVERAGE=41 MIN_BRANCH_COVERAGE=41 bash scripts/ops/assert-coverage.sh
       - run: bash scripts/ops/assert-no-skipped-tests.sh
       - uses: actions/upload-artifact@v5
         if: always()
