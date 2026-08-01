@@ -42,13 +42,13 @@ public class InteractionService {
     }
 
     private InteractionResult setActive(Long userId, Long postId, String type, boolean active, String idempotencyKey) {
-        requireKey(idempotencyKey);
         if (userId == null || userId <= 0) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录");
         }
         if (postId == null || postId <= 0) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "内容 ID 无效");
         }
+        requireKey(idempotencyKey);
         PostPublicationGateway.PublishedPost publishedPost = postPublicationGateway.requirePublished(postId);
         InteractionRepository.InteractionWriteResult result;
         if ("LIKE".equals(type)) {
