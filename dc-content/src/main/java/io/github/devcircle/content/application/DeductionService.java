@@ -27,7 +27,9 @@ public class DeductionService {
 
     @Transactional
     public DeductionAnswerResult submitAnswer(Long userId, Long postId, String answer, String idempotencyKey) {
-        requireRequest(userId, idempotencyKey);
+        requireRequest(userId, postId, idempotencyKey);
+        requireAnswer(answer);
+        requirePublishedCase(postId);
         if (!claim(userId, postId, "ANSWER", idempotencyKey)) {
             return existingAttempt(userId, postId, true);
         }
@@ -60,7 +62,8 @@ public class DeductionService {
 
     @Transactional
     public DeductionAnswerResult reveal(Long userId, Long postId, String idempotencyKey) {
-        requireRequest(userId, idempotencyKey);
+        requireRequest(userId, postId, idempotencyKey);
+        requirePublishedCase(postId);
         if (!claim(userId, postId, "REVEAL", idempotencyKey)) {
             return existingAttempt(userId, postId, true);
         }
@@ -77,13 +80,22 @@ public class DeductionService {
                                 """)
                         .param("postId", postId).param("userId", userId).update();
             } catch (DuplicateKeyException ignored) {
-                // A concurrent answer won the unique constraint. Return its persisted state.
+                // A concurrent wrong answer may have won the unique constraint after the first
+                // update saw no row. Apply the reveal once more so the requested state is not lost.
+                jdbcClient.sql("""
+                                UPDATE deduction_attempt SET revealed = TRUE, points = 0, revealed_at = CURRENT_TIMESTAMP
+                                WHERE user_id = :userId AND post_id = :postId AND correct = FALSE
+                                """)
+                        .param("userId", userId).param("postId", postId).update();
             }
         }
         return existingAttempt(userId, postId, false);
     }
 
     public DeductionAnswerResult myAttempt(Long userId, Long postId) {
+        requireUser(userId);
+        requirePostId(postId);
+        requirePublishedCase(postId);
         Integer count = jdbcClient.sql("""
                         SELECT COUNT(*) FROM deduction_attempt WHERE user_id = :userId AND post_id = :postId
                         """)
@@ -164,15 +176,49 @@ public class DeductionService {
         return false;
     }
 
-    private void requireRequest(Long userId, String key) {
-        if (userId == null || userId <= 0) throw new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录");
+    private void requireRequest(Long userId, Long postId, String key) {
+        requireUser(userId);
+        requirePostId(postId);
         if (key == null || key.isBlank() || key.length() > 128) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "写操作必须提供有效的 Idempotency-Key");
         }
     }
 
+    private void requireUser(Long userId) {
+        if (userId == null || userId <= 0) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "请先登录");
+        }
+    }
+
+    private void requirePostId(Long postId) {
+        if (postId == null || postId <= 0) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "内容标识无效");
+        }
+    }
+
+    private void requireAnswer(String answer) {
+        if (answer == null || answer.isBlank()) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "推理答案不能为空");
+        }
+    }
+
+    private void requirePublishedCase(Long postId) {
+        boolean available = jdbcClient.sql("""
+                        SELECT EXISTS(
+                            SELECT 1 FROM post p
+                            INNER JOIN post_content pc ON pc.post_id = p.id
+                            WHERE p.id = :postId AND p.status = 'PUBLISHED' AND p.solvable = TRUE
+                        )
+                        """)
+                .param("postId", postId)
+                .query(Boolean.class)
+                .single();
+        if (!available) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "内容不存在、尚未发布或不可解谜");
+        }
+    }
+
     private boolean isCorrect(Long postId, String answer) {
-        if (answer == null || answer.isBlank()) return false;
         String normalizedAnswer = normalize(answer);
         List<String> keywords = answerKeywords(postId);
         Set<String> normalizedKeywords = expandKeywords(keywords);
@@ -184,9 +230,13 @@ public class DeductionService {
     }
 
     private List<String> answerKeywords(Long postId) {
-        String json = jdbcClient.sql("SELECT answer_keywords FROM post_content WHERE post_id = :postId")
-                .param("postId", postId).query(String.class).single();
-        if (json == null || json.isBlank()) return List.of();
+        String json = jdbcClient.sql("""
+                        SELECT COALESCE(answer_keywords, '[]')
+                        FROM post_content WHERE post_id = :postId
+                        """)
+                .param("postId", postId)
+                .query(String.class)
+                .single();
         return Arrays.stream(json.replace("[", "").replace("]", "").replace("\"", "").split(","))
                 .map(String::trim).filter(value -> !value.isBlank()).toList();
     }
@@ -236,9 +286,8 @@ public class DeductionService {
     }
 
     private String solution(Long postId) {
-        String value = jdbcClient.sql("SELECT solution FROM post_content WHERE post_id = :postId")
+        return jdbcClient.sql("SELECT solution FROM post_content WHERE post_id = :postId")
                 .param("postId", postId).query(String.class).optional().orElse("");
-        return value == null ? "" : value;
     }
 
     private record Idempotency(Long userId, Long postId, String operation) {
