@@ -69,7 +69,7 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 41%、�
 
 随后在 Git Bash（不要使用 `C:\Windows\System32\bash.exe`）中执行 `bash scripts/ops/assert-coverage.sh`。
 
-2026-08-01 在 `b721935` 后的纯单元基线为 168 个测试、0 skipped，行覆盖率 41.30%、分支覆盖率 41.62%。其中 `DeductionService` 为 100% 行覆盖率、95.29% 分支覆盖率；认证事务测试确认 Refresh/Logout 的令牌族撤销不会被幂等事务回滚。完整 CI 仍必须运行下列 Testcontainers 链路：
+2026-08-01 在 `e6525e6` 后的纯单元基线为 171 个测试、0 skipped，行覆盖率 41.68%、分支覆盖率 41.77%。其中 `DeductionService` 为 100% 行覆盖率、95.29% 分支覆盖率；认证事务测试确认 Refresh/Logout 的令牌族撤销不会被幂等事务回滚，禁用账号也不能通过登录或刷新重放取得新会话。完整 CI 仍必须运行下列 Testcontainers 链路：
 
 - Docker preflight：启动最小容器，确认 Testcontainers 能连接 Docker。
 - `dc-content`: 发帖写入帖子、正文、标签、媒体关联和 Outbox；真实 Kafka 发送成功后事件才变为 `PUBLISHED`。
