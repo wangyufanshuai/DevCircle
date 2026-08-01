@@ -1,5 +1,6 @@
 package io.github.devcircle.gateway.filter;
 
+import io.netty.util.NetUtil;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
@@ -9,6 +10,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
+import java.net.InetAddress;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -21,8 +23,7 @@ class RateLimitFilter implements GlobalFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         long minute = Instant.now().getEpochSecond() / 60;
-        String client = exchange.getRequest().getRemoteAddress() == null
-                ? "unknown" : exchange.getRequest().getRemoteAddress().getAddress().getHostAddress();
+        String client = clientIdentity(exchange);
         String path = exchange.getRequest().getPath().value();
         int limit = path.startsWith("/api/auth/") ? 20 : isWrite(exchange) ? 60 : 240;
         String key = client + ':' + (path.startsWith("/api/auth/") ? "auth" : isWrite(exchange) ? "write" : "read");
@@ -39,6 +40,22 @@ class RateLimitFilter implements GlobalFilter, Ordered {
             windows.entrySet().removeIf(entry -> entry.getValue().minute() < minute - 2);
         }
         return chain.filter(exchange);
+    }
+
+    private String clientIdentity(ServerWebExchange exchange) {
+        var remote = exchange.getRequest().getRemoteAddress();
+        if (remote == null) return "unknown";
+        InetAddress peer = remote.getAddress();
+        if (peer != null && (peer.isSiteLocalAddress() || peer.isLoopbackAddress())) {
+            String forwarded = exchange.getRequest().getHeaders().getFirst("X-Forwarded-For");
+            if (forwarded != null) {
+                String candidate = forwarded.split(",", 2)[0].trim();
+                if (NetUtil.isValidIpV4Address(candidate) || NetUtil.isValidIpV6Address(candidate)) {
+                    return candidate;
+                }
+            }
+        }
+        return peer == null ? remote.getHostString() : peer.getHostAddress();
     }
 
     private boolean isWrite(ServerWebExchange exchange) {
