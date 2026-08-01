@@ -75,6 +75,35 @@ class NotificationEventEnvelopeValidationTest {
     }
 
     @Test
+    void interactionActorAndTransitionMustBeSupported() {
+        assertInvalid(EventTopics.INTERACTION_CHANGED, "dc-interaction", "9001",
+                Map.of("postId", 9001L, "interactionType", "LIKE"),
+                "Interaction notification event is missing actorId");
+        assertInvalid(EventTopics.INTERACTION_CHANGED, "dc-interaction", "9001",
+                Map.of("actorId", 2L, "postId", 9001L),
+                "Unsupported interaction type: ");
+        assertInvalid(EventTopics.INTERACTION_CHANGED, "dc-interaction", "9001",
+                Map.of("actorId", 2L, "postId", 9001L, "interactionType", "SHARE"),
+                "Unsupported interaction type: SHARE");
+
+        verifyNoInteractions(repository, resolver);
+    }
+
+    @Test
+    void followTransitionRequiresActorIdentity() {
+        for (String status : new String[]{"FOLLOWED", "UNFOLLOWED"}) {
+            EventEnvelope event = EventEnvelope.now(EventTopics.FOLLOW_CHANGED, "dc-user", "7",
+                    Map.of("receiverId", 7L, "status", status));
+
+            assertThatThrownBy(() -> consumer.consume(objectMapper.writeValueAsString(event)))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Follow notification event is missing actorId");
+        }
+
+        verifyNoInteractions(repository, resolver);
+    }
+
+    @Test
     void auditStatusMustBePresentTextualAndNonBlank() {
         assertInvalid(EventTopics.AUDIT_COMPLETED, "dc-admin", "12",
                 Map.of("receiverId", 2L, "postId", 12L),

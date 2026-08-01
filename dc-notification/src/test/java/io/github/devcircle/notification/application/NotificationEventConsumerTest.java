@@ -10,6 +10,7 @@ import java.util.Map;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 class NotificationEventConsumerTest {
@@ -61,6 +62,27 @@ class NotificationEventConsumerTest {
         verify(repository).createOnce(followed.eventId().toString(), EventTopics.FOLLOW_CHANGED, 7L, 2L,
                 "FOLLOW", "新的关注者", "观测者 关注了你", "USER", 2L, "/me");
         verify(repository).acknowledgeOnce(unfollowed.eventId().toString(), EventTopics.FOLLOW_CHANGED);
-        org.mockito.Mockito.verifyNoMoreInteractions(repository);
+        verifyNoMoreInteractions(repository);
+    }
+
+    @Test
+    void negativeAndSelfInteractionsAreAcknowledgedWithoutNotifying() throws Exception {
+        NotificationRepository repository = mock(NotificationRepository.class);
+        NotificationTargetResolver resolver = mock(NotificationTargetResolver.class);
+        when(resolver.postAuthorId(9001L)).thenReturn(7L);
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+        NotificationEventConsumer consumer = new NotificationEventConsumer(repository, objectMapper, resolver);
+        EventEnvelope unlike = EventEnvelope.now(EventTopics.INTERACTION_CHANGED, "dc-interaction", "9001",
+                Map.of("actorId", 2L, "postId", 9001L, "interactionType", "UNLIKE"));
+        EventEnvelope selfLike = EventEnvelope.now(EventTopics.INTERACTION_CHANGED, "dc-interaction", "9001",
+                Map.of("actorId", 7L, "postId", 9001L, "interactionType", "LIKE"));
+
+        consumer.consume(objectMapper.writeValueAsString(unlike));
+        consumer.consume(objectMapper.writeValueAsString(selfLike));
+
+        verify(repository).acknowledgeOnce(unlike.eventId().toString(), EventTopics.INTERACTION_CHANGED);
+        verify(repository).acknowledgeOnce(selfLike.eventId().toString(), EventTopics.INTERACTION_CHANGED);
+        verify(resolver).postAuthorId(9001L);
+        verifyNoMoreInteractions(repository, resolver);
     }
 }

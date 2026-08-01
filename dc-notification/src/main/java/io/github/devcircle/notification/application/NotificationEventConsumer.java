@@ -50,6 +50,7 @@ class NotificationEventConsumer {
         boolean appeal = EventTopics.APPEAL_RESOLVED.equals(topic);
         boolean follow = EventTopics.FOLLOW_CHANGED.equals(topic);
         long receiverId = optionalPositiveLong(payload, "receiverId");
+        long actorId = optionalPositiveLong(payload, "actorId");
         long targetIdValue = optionalPositiveLong(payload, "targetId");
         if (targetIdValue == 0) targetIdValue = optionalPositiveLong(payload, "postId");
         if (follow && receiverId > 0 && !event.aggregateId().equals(Long.toString(receiverId))) {
@@ -58,6 +59,19 @@ class NotificationEventConsumer {
         if (!follow && targetIdValue > 0 && !event.aggregateId().equals(Long.toString(targetIdValue))) {
             throw new IllegalArgumentException("Notification aggregateId does not match targetId");
         }
+        if (interaction) {
+            if (actorId <= 0) {
+                throw new IllegalArgumentException("Interaction notification event is missing actorId");
+            }
+            String interactionType = optionalText(payload, "interactionType", "");
+            if ("UNLIKE".equals(interactionType) || "UNFAVORITE".equals(interactionType)) {
+                notificationRepository.acknowledgeOnce(eventId, topic);
+                return;
+            }
+            if (!"LIKE".equals(interactionType) && !"FAVORITE".equals(interactionType)) {
+                throw new IllegalArgumentException("Unsupported interaction type: " + interactionType);
+            }
+        }
         if (interaction && receiverId <= 0 && targetResolver != null && targetIdValue > 0) {
             receiverId = targetResolver.postAuthorId(targetIdValue);
         }
@@ -65,10 +79,17 @@ class NotificationEventConsumer {
             throw new IllegalArgumentException("Notification event is missing receiverId");
         }
         String status = optionalText(payload, "status", "UNKNOWN");
+        if (follow && actorId <= 0) {
+            throw new IllegalArgumentException("Follow notification event is missing actorId");
+        }
         if (follow && !"FOLLOWED".equals(status)) {
             if (!"UNFOLLOWED".equals(status)) {
                 throw new IllegalArgumentException("Unsupported follow status: " + status);
             }
+            notificationRepository.acknowledgeOnce(eventId, topic);
+            return;
+        }
+        if ((follow || interaction) && actorId == receiverId) {
             notificationRepository.acknowledgeOnce(eventId, topic);
             return;
         }
@@ -82,7 +103,6 @@ class NotificationEventConsumer {
                 : interaction ? "你的内容收到了一次新的互动"
                 : appeal ? ("PENDING".equals(status) ? "你的申诉已受理，投稿已进入人工复审队列" : "你的申诉已处理，请查看审核时间线")
                 : "你的投稿状态已更新为 " + status;
-        long actorId = optionalPositiveLong(payload, "actorId");
         Long targetId = targetIdValue > 0 ? targetIdValue : null;
         String targetType = optionalText(payload, "targetType", targetId == null ? "" : follow ? "USER" : "POST");
         String targetRoute = optionalText(payload, "targetRoute", targetId == null ? "" : follow ? "/me" : "/posts/" + targetId);
