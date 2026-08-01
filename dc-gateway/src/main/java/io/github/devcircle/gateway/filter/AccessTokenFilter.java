@@ -20,10 +20,15 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Component
 public class AccessTokenFilter implements GlobalFilter, Ordered {
+    private static final Pattern PUBLIC_POST_READ_PATH = Pattern.compile(
+            "^/api/posts(?:/?|/summaries/?|/\\d+(?:/?|/related/?|/comments/?))$");
+    private static final Pattern PUBLIC_FILE_READ_PATH = Pattern.compile(
+            "^/api/files(?:/access|/\\d+/access)/?$");
     private final SecretKey jwtKey;
     private final Set<String> bannedUserIds;
     private final Set<String> noPostUserIds;
@@ -137,9 +142,9 @@ public class AccessTokenFilter implements GlobalFilter, Ordered {
         if (!HttpMethod.GET.equals(exchange.getRequest().getMethod())) {
             return false;
         }
-        return path.startsWith("/api/posts")
-                || path.startsWith("/api/search")
-                || (path.startsWith("/api/files/") && path.endsWith("/access"))
+        return PUBLIC_POST_READ_PATH.matcher(path).matches()
+                || path.equals("/api/search/posts")
+                || PUBLIC_FILE_READ_PATH.matcher(path).matches()
                 || path.equals("/api/recommend/feed")
                 || path.equals("/api/deduction/leaderboard");
     }

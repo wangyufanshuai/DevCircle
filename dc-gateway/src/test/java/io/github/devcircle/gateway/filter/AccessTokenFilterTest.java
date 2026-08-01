@@ -3,6 +3,8 @@ package io.github.devcircle.gateway.filter;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -49,6 +51,42 @@ class AccessTokenFilterTest {
         filter.filter(exchange, captureUser(userId)).block();
 
         assertThat(userId).hasValue("0");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/api/posts/7",
+            "/api/posts/7/related",
+            "/api/posts/7/comments",
+            "/api/posts/summaries",
+            "/api/search/posts",
+            "/api/files/access",
+            "/api/files/7/access"
+    })
+    void anonymousReadersCanBrowseOnlyExplicitPublicPostResources(String path) {
+        var exchange = MockServerWebExchange.from(MockServerHttpRequest.get(path).build());
+        AtomicReference<String> userId = new AtomicReference<>();
+
+        filter.filter(exchange, captureUser(userId)).block();
+
+        assertThat(userId).hasValue("0");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/api/posts/drafts",
+            "/api/posts/drafts/7",
+            "/api/posts/drafts/7/audits",
+            "/api/posts/7/interaction-state",
+            "/api/search/admin/reindex",
+            "/api/files/private/7/access"
+    })
+    void anonymousReadersCannotReachProtectedPostResources(String path) {
+        var exchange = MockServerWebExchange.from(MockServerHttpRequest.get(path).build());
+
+        filter.filter(exchange, ignored -> Mono.empty()).block();
+
+        assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
     }
 
     @Test
