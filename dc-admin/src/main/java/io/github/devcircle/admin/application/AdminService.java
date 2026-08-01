@@ -716,7 +716,7 @@ public class AdminService {
             writeOutbox(postId, action, postStatus, topic);
             return new AdminActionResult(action, Map.of("postId", postId, "status", postStatus, "event", topic));
         } catch (DataAccessException ex) {
-            throw ex;
+            throw dependencyUnavailable(ex);
         }
     }
 
@@ -752,15 +752,24 @@ public class AdminService {
         requireReason(reason);
         String normalizedReason = reason.trim();
         try {
-            Long postId = jdbcClient.sql("SELECT post_id FROM moderation_task WHERE id = :taskId")
+            Long postId = jdbcClient.sql("""
+                            SELECT mt.post_id
+                            FROM moderation_task mt
+                            JOIN post p ON p.id = mt.post_id
+                            WHERE mt.id = :taskId AND p.status = 'PENDING'
+                            FOR UPDATE
+                            """)
                     .param("taskId", taskId)
                     .query(Long.class)
                     .optional()
-                    .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "审核任务不存在"));
+                    .orElseThrow(() -> new BusinessException(
+                            ErrorCode.RESOURCE_NOT_FOUND, "审核任务不存在或投稿状态已变化"));
             int updated = jdbcClient.sql("""
                             UPDATE moderation_task
                             SET status = :status, review_level = :reviewLevel, reviewer_id = :auditorId, reviewed_at = CURRENT_TIMESTAMP
-                            WHERE id = :taskId AND status IN ('PENDING', 'ESCALATED')
+                            WHERE id = :taskId
+                              AND ((:status = 'ESCALATED' AND status = 'PENDING')
+                                OR (:status <> 'ESCALATED' AND status IN ('PENDING', 'ESCALATED')))
                             """)
                     .param("status", status)
                     .param("reviewLevel", reviewLevel)
@@ -806,7 +815,7 @@ public class AdminService {
                     Map.of("postId", postId, "status", status, "reason", normalizedReason));
             return new AdminActionResult(action, Map.of("taskId", taskId, "postId", postId, "status", status));
         } catch (DataAccessException ex) {
-            throw ex;
+            throw dependencyUnavailable(ex);
         }
     }
 
@@ -820,7 +829,7 @@ public class AdminService {
                     .optional()
                     .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "审核任务不存在"));
         } catch (DataAccessException ex) {
-            throw ex;
+            throw dependencyUnavailable(ex);
         }
     }
 
@@ -870,16 +879,20 @@ public class AdminService {
 
     private AdminActionResult idempotent(Long actorId, String operation, String key, Long resourceId,
                                          String action, Supplier<AdminActionResult> mutation) {
-        Long duplicateId = claimIdempotency(actorId, operation, key);
-        if (duplicateId != null) {
-            return new AdminActionResult(action, Map.of("resourceId", duplicateId, "duplicateRequest", true));
+        try {
+            Long duplicateId = claimIdempotency(actorId, operation, key);
+            if (duplicateId != null) {
+                return new AdminActionResult(action, Map.of("resourceId", duplicateId, "duplicateRequest", true));
+            }
+            AdminActionResult result = mutation.get();
+            jdbcClient.sql("UPDATE content_idempotency_record SET resource_id = :resourceId WHERE idempotency_key = :key")
+                    .param("resourceId", resourceId)
+                    .param("key", key)
+                    .update();
+            return result;
+        } catch (DataAccessException ex) {
+            throw dependencyUnavailable(ex);
         }
-        AdminActionResult result = mutation.get();
-        jdbcClient.sql("UPDATE content_idempotency_record SET resource_id = :resourceId WHERE idempotency_key = :key")
-                .param("resourceId", resourceId)
-                .param("key", key)
-                .update();
-        return result;
     }
 
     private Long claimIdempotency(Long actorId, String operation, String key) {
@@ -922,6 +935,12 @@ public class AdminService {
 
     private BusinessException dependencyUnavailable() {
         return new BusinessException(ErrorCode.DEPENDENCY_UNAVAILABLE, "运营数据暂时不可用");
+    }
+
+    private BusinessException dependencyUnavailable(DataAccessException cause) {
+        BusinessException failure = dependencyUnavailable();
+        failure.initCause(cause);
+        return failure;
     }
 
     private void requireReason(String reason) {

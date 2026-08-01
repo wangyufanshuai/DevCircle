@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.test.context.junit.jupiter.SpringJUnitConfig;
@@ -222,6 +223,62 @@ class AdminServiceStateTest {
         assertThat(decisionTaskIds()).containsExactly(requested);
         assertThat(count("post_audit_record")).isEqualTo(1);
         assertThat(count("outbox_event")).isEqualTo(1);
+    }
+
+    @Test
+    void escalationIsSingleStepAndRequiresAPendingPost() {
+        long postId = post(7L, "升级复审档案", "PENDING");
+        long taskId = task(postId, 7L, "PENDING");
+
+        service.escalateModerationTask(taskId, 9L, "trace-escalate",
+                "风险信号需要高级审核员复核", "escalate-once");
+
+        assertThat(postStatus(postId)).isEqualTo("PENDING");
+        assertThat(taskStatus(taskId)).isEqualTo("ESCALATED");
+        assertThat(decisionTaskIds()).containsExactly(taskId);
+        assertThat(count("audit_log")).isEqualTo(1);
+        assertThat(count("outbox_event")).isZero();
+
+        assertCode(() -> service.escalateModerationTask(taskId, 9L, "trace-escalate-again",
+                "不能重复升级", "escalate-again"), ErrorCode.RESOURCE_NOT_FOUND);
+        assertThat(idempotencyCount("escalate-again")).isZero();
+        assertThat(count("moderation_decision")).isEqualTo(1);
+
+        service.requireChanges(taskId, 9L, "trace-after-escalate",
+                "高级复核确认需要作者补充来源", "changes-after-escalate");
+        assertThat(postStatus(postId)).isEqualTo("CHANGES_REQUIRED");
+        assertThat(taskStatus(taskId)).isEqualTo("CHANGES_REQUIRED");
+        assertThat(count("moderation_decision")).isEqualTo(2);
+
+        long publishedPost = post(8L, "已发布但残留任务", "PUBLISHED");
+        long staleTask = task(publishedPost, 8L, "PENDING");
+        assertCode(() -> service.escalateModerationTask(staleTask, 9L, "trace-stale",
+                "不应升级已发布投稿", "stale-escalate"), ErrorCode.RESOURCE_NOT_FOUND);
+        assertThat(taskStatus(staleTask)).isEqualTo("PENDING");
+        assertThat(idempotencyCount("stale-escalate")).isZero();
+    }
+
+    @Test
+    void databaseFailureDuringOutboxWriteRollsBackTheWholeDecision() {
+        long postId = post(7L, "数据库故障档案", "PENDING");
+        long taskId = task(postId, 7L, "PENDING");
+        jdbcClient.sql("DROP TABLE outbox_event").update();
+
+        assertThatThrownBy(() -> service.approveModerationTask(taskId, 9L, "trace-db-failure",
+                "Outbox 写入失败必须整体回滚", "db-failure-key"))
+                .isInstanceOfSatisfying(BusinessException.class, error -> {
+                    assertThat(error.code()).isEqualTo(ErrorCode.DEPENDENCY_UNAVAILABLE);
+                    assertThat(error.getMessage()).isEqualTo("运营数据暂时不可用");
+                    assertThat(error.getCause()).isInstanceOf(DataAccessException.class);
+                    assertThat(error.getMessage()).doesNotContain("outbox_event", "SQL");
+                });
+
+        assertThat(postStatus(postId)).isEqualTo("PENDING");
+        assertThat(taskStatus(taskId)).isEqualTo("PENDING");
+        assertThat(count("moderation_decision")).isZero();
+        assertThat(count("post_audit_record")).isZero();
+        assertThat(count("audit_log")).isZero();
+        assertThat(idempotencyCount("db-failure-key")).isZero();
     }
 
     @Test
