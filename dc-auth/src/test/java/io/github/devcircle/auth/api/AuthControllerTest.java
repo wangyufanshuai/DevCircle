@@ -86,6 +86,52 @@ class AuthControllerTest {
     }
 
     @Test
+    void successfulOAuthCallbackCreatesSessionAndClearsOneTimeState() throws Exception {
+        AuthService authService = mock(AuthService.class);
+        GitHubOAuthService oauthService = mock(GitHubOAuthService.class);
+        var account = new AuthTokenRepository.Account(
+                7L, "reader@example.com", "星海读者", "unused", "ACTIVE", List.of("USER"));
+        var user = new AuthService.UserSession(7L, "星海读者", List.of("USER"));
+        when(oauthService.callback("code", "state")).thenReturn(account);
+        when(authService.oauthLogin(account, "trace-oauth")).thenReturn(new AuthService.SessionTokens(
+                "access", Instant.now().plusSeconds(900), "refresh", "csrf",
+                Instant.now().plusSeconds(3600), user));
+        AuthController controller = new AuthController(authService, oauthService,
+                "https://mysticverse.example.com/auth/callback", true);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("X-Trace-Id", "trace-oauth");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        controller.finishGitHubOAuth("code", "state", "state", request, response);
+
+        assertThat(response.getRedirectedUrl()).isEqualTo("https://mysticverse.example.com/auth/callback");
+        assertThat(response.getHeaders("Set-Cookie")).hasSize(3);
+        assertThat(response.getHeaders("Set-Cookie")).anySatisfy(cookie ->
+                assertThat(cookie).contains("dc_refresh=refresh", "HttpOnly", "Secure"));
+        assertThat(response.getHeaders("Set-Cookie")).anySatisfy(cookie ->
+                assertThat(cookie).contains("dc_csrf=csrf", "Path=/", "Secure"));
+        assertThat(response.getHeaders("Set-Cookie")).anySatisfy(cookie ->
+                assertThat(cookie).contains("dc_oauth_state=", "Max-Age=0", "HttpOnly", "Secure"));
+        verify(oauthService).callback("code", "state");
+        verify(authService).oauthLogin(account, "trace-oauth");
+    }
+
+    @Test
+    void oauthStateMismatchStopsBeforeCallingTheProvider() {
+        AuthService authService = mock(AuthService.class);
+        GitHubOAuthService oauthService = mock(GitHubOAuthService.class);
+        AuthController controller = new AuthController(authService, oauthService,
+                "https://mysticverse.example.com/auth/callback", true);
+
+        assertThatThrownBy(() -> controller.finishGitHubOAuth(
+                "code", "state", "different-state", new MockHttpServletRequest(),
+                new MockHttpServletResponse()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.code()).isEqualTo(ErrorCode.TOKEN_REVOKED));
+        verifyNoInteractions(authService, oauthService);
+    }
+
+    @Test
     void secureSessionCookiesUseSeparateRefreshAndCsrfScopes() {
         AuthService authService = mock(AuthService.class);
         GitHubOAuthService oauthService = mock(GitHubOAuthService.class);

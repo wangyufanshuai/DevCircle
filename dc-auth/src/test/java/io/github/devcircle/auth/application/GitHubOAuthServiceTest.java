@@ -11,21 +11,64 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 import java.util.List;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.time.Instant;
+import java.util.Base64;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
+import org.mockito.ArgumentCaptor;
+import org.springframework.web.util.UriComponentsBuilder;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 
 class GitHubOAuthServiceTest {
+    @Test
+    void startPersistsOneTimeStateAndBuildsTheMatchingPkceChallenge() throws Exception {
+        AuthTokenRepository repository = mock(AuthTokenRepository.class);
+        GitHubOAuthService service = new GitHubOAuthService(
+                "client-id", "client-secret", "https://example.com/callback", repository,
+                mock(PasswordEncoder.class), RestClient.builder());
+
+        GitHubOAuthService.OAuthStart start = service.start();
+
+        ArgumentCaptor<String> verifier = ArgumentCaptor.forClass(String.class);
+        verify(repository).saveOAuthState(eq(start.state()), verifier.capture(), any(Instant.class));
+        var query = UriComponentsBuilder.fromUriString(start.authorizationUrl()).build().getQueryParams();
+        String expectedChallenge = Base64.getUrlEncoder().withoutPadding().encodeToString(
+                MessageDigest.getInstance("SHA-256").digest(
+                        verifier.getValue().getBytes(StandardCharsets.US_ASCII)));
+        assertThat(query.getFirst("state")).isEqualTo(start.state());
+        assertThat(query.getFirst("code_challenge")).isEqualTo(expectedChallenge);
+        assertThat(query.getFirst("code_challenge_method")).isEqualTo("S256");
+        assertThat(start.authorizationUrl()).contains("client_id=client-id", "redirect_uri=")
+                .doesNotContain("client-secret");
+    }
+
+    @Test
+    void unconfiguredProviderIsRejectedBeforePersistingState() {
+        AuthTokenRepository repository = mock(AuthTokenRepository.class);
+        GitHubOAuthService service = new GitHubOAuthService(
+                "", "", "https://example.com/callback", repository,
+                mock(PasswordEncoder.class), RestClient.builder());
+
+        assertThatThrownBy(service::start)
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.code()).isEqualTo(ErrorCode.OAUTH_NOT_CONFIGURED));
+        verifyNoInteractions(repository);
+    }
+
     @Test
     void callbackUsesOnlyAnEmailVerifiedByGitHub() {
         AuthTokenRepository repository = mock(AuthTokenRepository.class);
