@@ -89,6 +89,10 @@ class AuthController {
                              @RequestHeader("Idempotency-Key") String idempotencyKey,
                              HttpServletRequest servletRequest,
                              HttpServletResponse servletResponse) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            clearSessionCookies(servletResponse);
+            return ApiResponse.ok();
+        }
         requireMatchingCsrf(csrfCookie, csrfHeader);
         authService.logout(refreshToken, csrfHeader, idempotencyKey, traceId(servletRequest));
         clearSessionCookies(servletResponse);

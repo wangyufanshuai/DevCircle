@@ -68,6 +68,19 @@ public class GitHubOAuthService {
         if (code == null || code.isBlank() || state == null || state.isBlank()) {
             throw new BusinessException(ErrorCode.OAUTH_STATE_INVALID, "GitHub 登录回调缺少必要参数");
         }
+        try {
+            return exchangeIdentity(code, state);
+        } catch (BusinessException ex) {
+            throw ex;
+        } catch (RuntimeException ex) {
+            BusinessException failure = new BusinessException(
+                    ErrorCode.DEPENDENCY_UNAVAILABLE, "GitHub 登录暂时不可用，请稍后重试");
+            failure.initCause(ex);
+            throw failure;
+        }
+    }
+
+    private AuthTokenRepository.Account exchangeIdentity(String code, String state) {
         String verifier = repository.consumeOAuthState(state);
         LinkedMultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("client_id", clientId);

@@ -3,6 +3,7 @@ package io.github.devcircle.auth.application;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -22,6 +23,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 
 class GitHubOAuthServiceTest {
     @Test
@@ -70,6 +72,33 @@ class GitHubOAuthServiceTest {
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.code()).isEqualTo(ErrorCode.AUTHENTICATION_FAILED));
         verify(repository, never()).bindOrCreateOAuthAccount(anyString(), anyString(), anyString(), anyString(), anyString());
+        server.verify();
+    }
+
+    @Test
+    void providerOutageReturnsASafeDependencyFailure() {
+        AuthTokenRepository repository = mock(AuthTokenRepository.class);
+        PasswordEncoder passwordEncoder = mock(PasswordEncoder.class);
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        when(repository.consumeOAuthState("state-outage")).thenReturn("verifier-outage");
+        GitHubOAuthService service = new GitHubOAuthService(
+                "client-id", "client-secret", "https://example.com/callback", repository, passwordEncoder, builder);
+        server.expect(requestTo("https://github.com/login/oauth/access_token"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE)
+                        .body("upstream node github-internal-3 unavailable")
+                        .contentType(MediaType.TEXT_PLAIN));
+
+        assertThatThrownBy(() -> service.callback("code-outage", "state-outage"))
+                .isInstanceOfSatisfying(BusinessException.class, exception -> {
+                    assertThat(exception.code()).isEqualTo(ErrorCode.DEPENDENCY_UNAVAILABLE);
+                    assertThat(exception.getMessage()).isEqualTo("GitHub 登录暂时不可用，请稍后重试");
+                    assertThat(exception.getMessage()).doesNotContain("github-internal-3");
+                    assertThat(exception.getCause()).isNotNull();
+                });
+        verify(repository, never()).bindOrCreateOAuthAccount(
+                anyString(), anyString(), anyString(), anyString(), anyString());
         server.verify();
     }
 

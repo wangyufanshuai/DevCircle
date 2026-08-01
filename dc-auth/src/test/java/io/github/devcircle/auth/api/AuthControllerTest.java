@@ -20,6 +20,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class AuthControllerTest {
@@ -82,5 +83,66 @@ class AuthControllerTest {
             assertThat(cookie).contains("Max-Age=0");
             assertThat(cookie).contains("Secure");
         });
+    }
+
+    @Test
+    void secureSessionCookiesUseSeparateRefreshAndCsrfScopes() {
+        AuthService authService = mock(AuthService.class);
+        GitHubOAuthService oauthService = mock(GitHubOAuthService.class);
+        Instant accessExpires = Instant.now().plusSeconds(900);
+        Instant refreshExpires = Instant.now().plusSeconds(3600);
+        var user = new AuthService.UserSession(7L, "星海读者", List.of("USER"));
+        when(authService.login("reader@example.com", "correct-password1", "login-key", "trace-cookie"))
+                .thenReturn(new AuthService.SessionTokens(
+                        "access-token", accessExpires, "refresh-token", "csrf-token", refreshExpires, user));
+        AuthController controller = new AuthController(authService, oauthService,
+                "https://mysticverse.example.com/auth/callback", true);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("X-Trace-Id", "trace-cookie");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        controller.login(new AuthController.LoginRequest("reader@example.com", "correct-password1"),
+                "login-key", request, response);
+
+        assertThat(response.getHeaders("Set-Cookie")).hasSize(2);
+        assertThat(response.getHeaders("Set-Cookie")).anySatisfy(cookie -> assertThat(cookie)
+                .contains("dc_refresh=refresh-token", "Path=/api/auth", "Secure", "HttpOnly", "SameSite=Lax"));
+        assertThat(response.getHeaders("Set-Cookie")).anySatisfy(cookie -> {
+            assertThat(cookie).contains("dc_csrf=csrf-token", "Path=/", "Secure", "SameSite=Lax");
+            assertThat(cookie).doesNotContain("HttpOnly");
+        });
+    }
+
+    @Test
+    void logoutWithoutARefreshSessionIdempotentlyClearsStaleCookies() {
+        AuthService authService = mock(AuthService.class);
+        AuthController controller = new AuthController(authService, mock(GitHubOAuthService.class),
+                "https://mysticverse.example.com/auth/callback", true);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        controller.logout(null, null, null, "logout-key",
+                new MockHttpServletRequest(), response);
+
+        verifyNoInteractions(authService);
+        assertThat(response.getHeaders("Set-Cookie")).hasSize(2).allSatisfy(cookie ->
+                assertThat(cookie).contains("Max-Age=0", "Secure", "SameSite=Lax"));
+    }
+
+    @Test
+    void failedServerSideLogoutDoesNotPretendTheBrowserSessionWasCleared() {
+        AuthService authService = mock(AuthService.class);
+        BusinessException outage = new BusinessException(
+                ErrorCode.DEPENDENCY_UNAVAILABLE, "认证服务暂时不可用");
+        org.mockito.Mockito.doThrow(outage).when(authService)
+                .logout("refresh", "csrf", "logout-key", "trace-logout");
+        AuthController controller = new AuthController(authService, mock(GitHubOAuthService.class),
+                "https://mysticverse.example.com/auth/callback", true);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("X-Trace-Id", "trace-logout");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        assertThatThrownBy(() -> controller.logout(
+                "refresh", "csrf", "csrf", "logout-key", request, response)).isSameAs(outage);
+        assertThat(response.getHeaders("Set-Cookie")).isEmpty();
     }
 }
