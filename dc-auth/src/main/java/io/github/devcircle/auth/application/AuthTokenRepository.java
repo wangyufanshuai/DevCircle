@@ -258,6 +258,12 @@ public class AuthTokenRepository {
             revokeFamily(session.familyId());
             throw new TokenRevokedException("检测到刷新令牌重复使用，请重新登录");
         }
+        Account account = findAccountById(session.userId())
+                .orElseThrow(() -> new IllegalStateException("Refresh token account no longer exists"));
+        if (!"ACTIVE".equals(account.status())) {
+            revokeFamily(session.familyId());
+            throw new TokenRevokedException("账号当前不可用，请重新登录");
+        }
         int revoked = jdbcClient.sql("""
                         UPDATE refresh_token
                         SET revoked = true, used_at = CURRENT_TIMESTAMP, replaced_by_hash = :replacementHash
@@ -271,8 +277,7 @@ public class AuthTokenRepository {
             throw new TokenRevokedException("检测到刷新令牌重复使用，请重新登录");
         }
         saveRefreshToken(session.userId(), replacementToken, replacementCsrf, session.familyId(), replacementExpiresAt);
-        return findAccountById(session.userId())
-                .orElseThrow(() -> new IllegalStateException("Refresh token account no longer exists"));
+        return account;
     }
 
     @Transactional(noRollbackFor = TokenRevokedException.class)
@@ -303,6 +308,13 @@ public class AuthTokenRepository {
     public void revokeFamily(String familyId) {
         jdbcClient.sql("UPDATE refresh_token SET revoked = true WHERE family_id = :familyId")
                 .param("familyId", familyId)
+                .update();
+    }
+
+    @Transactional
+    public void revokeUserSessions(Long userId) {
+        jdbcClient.sql("UPDATE refresh_token SET revoked = true WHERE user_id = :userId AND revoked = false")
+                .param("userId", userId)
                 .update();
     }
 

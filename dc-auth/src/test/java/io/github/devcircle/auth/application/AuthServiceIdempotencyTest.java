@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -69,5 +70,42 @@ class AuthServiceIdempotencyTest {
         assertThat(retry.csrfToken()).isEqualTo(first.csrfToken());
         verify(repository, times(2)).saveRefreshTokenIfAbsent(eq(7L), eq(first.refreshToken()), eq(first.csrfToken()), anyString(), any());
         verify(repository, times(2)).findAccountByEmail("reader@example.com");
+    }
+
+    @Test
+    void completedLoginReplayCannotIssueASessionForADisabledAccount() {
+        var disabled = new AuthTokenRepository.Account(7L, "reader@example.com", "Reader",
+                "argon2-hash", "BANNED", List.of("USER"));
+        when(repository.findAccountByEmail("reader@example.com"))
+                .thenReturn(java.util.Optional.of(account), java.util.Optional.of(disabled));
+        when(passwordEncoder.matches("correct-password1", "argon2-hash")).thenReturn(true);
+
+        service.login("reader@example.com", "correct-password1", "disabled-replay-key", "trace");
+
+        assertThatThrownBy(() -> service.login(
+                "reader@example.com", "correct-password1", "disabled-replay-key", "trace"))
+                .isInstanceOfSatisfying(io.github.devcircle.common.error.BusinessException.class,
+                        error -> assertThat(error.code()).isEqualTo(ErrorCode.TOKEN_REVOKED));
+        verify(repository).revokeUserSessions(7L);
+    }
+
+    @Test
+    void completedRefreshReplayCannotIssueASessionForADisabledAccount() {
+        var disabled = new AuthTokenRepository.Account(7L, "reader@example.com", "Reader",
+                "argon2-hash", "BANNED", List.of("USER"));
+        Instant expiresAt = Instant.now().plusSeconds(3600);
+        when(repository.rotateRefreshToken(eq("refresh-old"), eq("csrf-old"), anyString(), anyString(), any()))
+                .thenReturn(account);
+        when(repository.findRefreshToken(anyString()))
+                .thenReturn(java.util.Optional.of(new AuthTokenRepository.RefreshTokenView(7L, expiresAt)));
+        when(repository.findAccountById(7L)).thenReturn(java.util.Optional.of(disabled));
+
+        service.refresh("refresh-old", "csrf-old", "disabled-refresh-key", "trace");
+
+        assertThatThrownBy(() -> service.refresh(
+                "refresh-old", "csrf-old", "disabled-refresh-key", "trace"))
+                .isInstanceOfSatisfying(io.github.devcircle.common.error.BusinessException.class,
+                        error -> assertThat(error.code()).isEqualTo(ErrorCode.TOKEN_REVOKED));
+        verify(repository).revokeUserSessions(7L);
     }
 }

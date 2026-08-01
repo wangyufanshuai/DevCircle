@@ -155,6 +155,23 @@ class RefreshTokenRotationTest {
                 .query(Long.class).single()).isZero();
     }
 
+    @Test
+    void disabledAccountCannotRotateARefreshTokenAndLosesTheWholeFamily() {
+        Instant expiresAt = Instant.now().plus(7, ChronoUnit.DAYS);
+        repository.saveRefreshToken(7L, "disabled-primary", "disabled-csrf", "family-5", expiresAt);
+        repository.saveRefreshToken(7L, "disabled-sibling", "sibling-csrf", "family-5", expiresAt);
+        jdbcClient.sql("UPDATE user_account SET status = 'BANNED' WHERE id = 7").update();
+
+        assertThatThrownBy(() -> repository.rotateRefreshToken(
+                "disabled-primary", "disabled-csrf", "must-not-exist", "replacement-csrf", expiresAt))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.code()).isEqualTo(ErrorCode.TOKEN_REVOKED));
+
+        assertThat(revocationStates("family-5")).containsExactly(true, true);
+        assertThat(jdbcClient.sql("SELECT COUNT(*) FROM refresh_token WHERE family_id = 'family-5'")
+                .query(Long.class).single()).isEqualTo(2);
+    }
+
     private List<Boolean> revocationStates(String familyId) {
         return jdbcClient.sql("SELECT revoked FROM refresh_token WHERE family_id = :familyId ORDER BY id")
                 .param("familyId", familyId)

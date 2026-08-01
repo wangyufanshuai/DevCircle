@@ -180,6 +180,7 @@ public class AuthService {
     }
 
     private SessionTokens newSession(AuthTokenRepository.Account account, String idempotencyKey) {
+        requireActiveSessionAccount(account);
         boolean deterministic = idempotencyKey != null;
         String refreshToken = deterministic ? idempotency.deriveOpaqueToken("refresh", idempotencyKey) : randomToken();
         String csrfToken = deterministic ? idempotency.deriveOpaqueToken("csrf", idempotencyKey) : randomToken();
@@ -199,6 +200,7 @@ public class AuthService {
                                     String refreshToken,
                                     String csrfToken,
                                     Instant refreshExpiresAt) {
+        requireActiveSessionAccount(account);
         Instant accessExpiresAt = Instant.now().plusSeconds(ACCESS_SECONDS);
         String accessToken = jwtService.issueAccess(account.id(), account.displayName(), account.roles(), accessExpiresAt);
         return new SessionTokens(accessToken, accessExpiresAt, refreshToken, csrfToken, refreshExpiresAt,
@@ -234,6 +236,13 @@ public class AuthService {
     private void requireCookieTokens(String refreshToken, String csrfToken) {
         if (refreshToken == null || refreshToken.isBlank() || csrfToken == null || csrfToken.isBlank()) {
             throw new BusinessException(ErrorCode.TOKEN_REVOKED, "登录状态已失效，请重新登录");
+        }
+    }
+
+    private void requireActiveSessionAccount(AuthTokenRepository.Account account) {
+        if (!"ACTIVE".equals(account.status())) {
+            repository.revokeUserSessions(account.id());
+            throw new TokenRevokedException("账号当前不可用，请重新登录");
         }
     }
 
