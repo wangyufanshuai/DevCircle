@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -67,6 +69,80 @@ class EventEnvelopeValidatorTest {
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("must not be blank");
         assertThatThrownBy(() -> validator.parse(envelope(root -> root.putArray("payload")), CONTRACT))
                 .isInstanceOf(IllegalArgumentException.class).hasMessage("Event payload must be a JSON object");
+    }
+
+    @Test
+    void rejectsEmptyMalformedAndNonObjectMessages() {
+        assertThatThrownBy(() -> validator.parse(null, CONTRACT))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Event envelope is empty");
+        assertThatThrownBy(() -> validator.parse(" ", CONTRACT))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Event envelope is empty");
+        assertThatThrownBy(() -> validator.parse("{", CONTRACT))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Event envelope is not valid JSON");
+        assertThatThrownBy(() -> validator.parse("[]", CONTRACT))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Event envelope must be a JSON object");
+    }
+
+    @Test
+    void rejectsMissingNonIntegralAndOutOfRangeVersions() {
+        assertThatThrownBy(() -> validator.parse(envelope(root -> root.remove("version")), CONTRACT))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Event version must be an integer");
+        assertThatThrownBy(() -> validator.parse(envelope(root -> root.put("version", "1")), CONTRACT))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Event version must be an integer");
+        assertThatThrownBy(() -> validator.parse(envelope(root -> root.put("version", Long.MAX_VALUE)), CONTRACT))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Event version must be an integer");
+    }
+
+    @Test
+    void rejectsInvalidContractDefinitions() {
+        assertThatThrownBy(() -> validator.parse(envelope(root -> { }), null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Allowed event contracts must not be empty");
+        assertThatThrownBy(() -> validator.parse(envelope(root -> { }), Map.of()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Allowed event contracts must not be empty");
+
+        Map<String, Set<String>> nullType = new HashMap<>();
+        nullType.put(null, Set.of("dc-interaction"));
+        assertThatThrownBy(() -> validator.parse(envelope(root -> { }), nullType))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Allowed event type must not be blank");
+        assertThatThrownBy(() -> validator.parse(envelope(root -> { }), Map.of(" ", Set.of("dc-interaction"))))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Allowed event type must not be blank");
+
+        Map<String, Set<String>> nullProducers = new HashMap<>();
+        nullProducers.put("interaction.changed", null);
+        assertThatThrownBy(() -> validator.parse(envelope(root -> { }), nullProducers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Allowed producers for interaction.changed must not be empty");
+        assertThatThrownBy(() -> validator.parse(envelope(root -> { }), Map.of("interaction.changed", Set.of())))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Allowed producers for interaction.changed must not be empty");
+
+        Set<String> producerWithNull = new HashSet<>();
+        producerWithNull.add(null);
+        assertThatThrownBy(() -> validator.parse(
+                envelope(root -> { }), Map.of("interaction.changed", producerWithNull)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Allowed producers for interaction.changed must not be empty");
+        assertThatThrownBy(() -> validator.parse(
+                envelope(root -> { }), Map.of("interaction.changed", Set.of(" "))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Allowed producers for interaction.changed must not be empty");
+    }
+
+    @Test
+    void rejectsMissingTypedWhitespaceAndOversizedTextFields() {
+        assertThatThrownBy(() -> validator.parse(envelope(root -> root.remove("eventId")), CONTRACT))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Event eventId must be a string");
+        assertThatThrownBy(() -> validator.parse(envelope(root -> root.put("eventId", 7)), CONTRACT))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Event eventId must be a string");
+        assertThatThrownBy(() -> validator.parse(envelope(root -> root.put("type", " interaction.changed")), CONTRACT))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Event type must not contain surrounding whitespace");
+        assertThatThrownBy(() -> validator.parse(envelope(root -> root.put("type", "x".repeat(129))), CONTRACT))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Event type is too long");
+        assertThatThrownBy(() -> validator.parse(envelope(root -> root.remove("payload")), CONTRACT))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Event payload must be a JSON object");
+        assertThatThrownBy(() -> validator.parse(envelope(root -> root.put("eventId", "1-1-1-1-1")), CONTRACT))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Event eventId must be a canonical UUID");
     }
 
     private String envelope(Consumer<ObjectNode> customize) {
