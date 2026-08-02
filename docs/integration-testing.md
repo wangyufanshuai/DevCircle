@@ -81,7 +81,7 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 完整 CI 不设置该例外；`dc-file`、其余生产模块或 Testcontainers 未执行都会阻断构建。不要使用 `C:\Windows\System32\bash.exe`，Windows 上请使用 Git Bash。
 
-除全局覆盖率外，CI 还执行 `scripts/ops/assert-critical-state-coverage.py`，对 Outbox、内容状态机、通知、推荐租约、搜索水位线和注册投影等 11 个关键类强制分支覆盖率不低于 85%。认证控制器、后台治理等尚未达到该门槛的类不会被列入当前关键门禁，仍保留在后续补测清单。
+除全局覆盖率外，CI 还执行 `scripts/ops/assert-critical-state-coverage.py`，对认证服务、Outbox、内容状态机、通知、推荐租约、搜索水位线和注册投影等 12 个关键类强制分支覆盖率不低于 85%。认证控制器、GitHub OAuth 和后台治理等尚未达到该门槛的类不会被列入当前关键门禁，仍保留在后续补测清单。
 
 2026-08-02 前端回归基线：`cd web && npm run test:e2e` 在 Chromium、桌面、平板和移动四个 Playwright project 中共运行 112 项，112 项通过（34 秒）。该套件使用显式 API 拦截，验证路由、状态、错误处理、幂等键、响应式布局和键盘交互，不等同于真实服务 E2E。真实认证、内容、审核和社区脚本使用独立 Compose；当前 Docker 配额为 2068439040 bytes（约 1.93 GiB），低于 2147483648 bytes 的最小门槛，`run-real-auth.sh` 在打包前明确阻断，未记为业务通过。
 
@@ -102,6 +102,8 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 最后 `ContentOutboxIntegrationTest` 以 MySQL 8.4 + Kafka 4.1.1 真实容器通过 3 项测试：内容、标签、Outbox 在同一事务写入后可正常发布到 Kafka，重复评论/互动投影保持一次性计数。至此本轮单基础设施真实回归累计 23 项；完整 Gateway/Compose E2E、跨服务事件追平、性能和恢复演练仍未验收。
 
 随后推荐消费者租约回归覆盖 `dc-common`、`dc-content`、`dc-recommend` 共 170 项纯单元/H2 测试，行/分支覆盖率为 `78.86%/72.29%`；`recommend_consumer_dedup.lease_token` 迁移和过期 worker 状态隔离已验证。该结果仍不替代真实 Kafka、Redis 和 Compose 故障恢复演练。
+
+认证边界回归新增 5 项测试，覆盖输入规范化、禁用账号、随机 Refresh 轮换、双提交 Cookie、OAuth 登录和 Bearer 解析；`AuthService` 行/分支覆盖率提升到 `96.06%/95.71%` 并加入关键状态机门禁。当前 38 项 `dc-auth` 测试通过，但真实 Cookie、Gateway 和数据库链路仍以 Compose E2E 为准。
 
 2026-08-02 在 `cd75565` 后的完整纯单元/H2 回归为 351 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 76.05%、分支覆盖率为 68.26%，覆盖报告完整性与禁止 skipped 门禁均通过。`dc-user` 为 82.23%/91.84%，本批核心 `UserGraphRepository` 为 99.20%/97.62%。用户 V6 为 `consumer_dedup` 增加事件指纹，并验证迁移会回填旧记录且旧应用省略新列的写入仍可兼容一个版本。注册消费者现在把完整 `ValidatedEvent` 传入资料投影事务：同 ID 同载荷保持幂等，同 ID 更换 topic、发生时间、生产者、聚合标识或 payload 会明确冲突；旧全零记录在首次重放时升级绑定但不会再次修改资料。状态测试通过真实 Spring 事务代理确认资料写入失败会回滚消费者声明，依赖恢复后原事件可用同一 ID 重试。当前本机 Docker 资源不足以执行完整多服务链路，因此 V6 的真实 MySQL 迁移和 Kafka 注册事件重投尚未验证。
 
