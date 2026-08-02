@@ -126,6 +126,8 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 - `dc-file`: 图片上传到 MinIO，媒体元数据写入 MySQL。
 - `dc-auth`/`dc-gateway`: OAuth2 mock 回调、JWT 签发、刷新令牌、Gateway 鉴权和透传。
 
+当前工作批次补强了 `web/tests-real/review.spec.ts`：审核通过后的真实详情现在继续验证正确答题会解锁解析并获得 20 分，同时使用浏览器实际生成的 `Idempotency-Key` 重放答题请求，确认返回 `duplicated=true` 且积分不重复。该用例已通过 `npx playwright test -c playwright.real.config.ts tests-real/review.spec.ts --list` 编译/发现检查，但尚未在 Compose 中执行；本机执行 `REAL_E2E_PULL_POLICY=never bash scripts/e2e/run-real-review.sh` 仍因 Docker 配额 `2068439040` bytes 低于 `2147483648` bytes 门槛而在打包前阻断。同期 `npm run build` 和 112 项拦截式 Playwright 回归通过；这些结果不替代真实审核 E2E。
+
 ## 排查建议
 
 - 拉取镜像慢：先手动执行 `docker pull`。
