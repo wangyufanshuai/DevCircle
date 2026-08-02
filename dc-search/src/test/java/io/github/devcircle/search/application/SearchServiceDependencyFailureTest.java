@@ -4,19 +4,27 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
+import io.github.devcircle.search.infrastructure.PostSearchDocument;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
+import org.springframework.data.elasticsearch.core.IndexOperations;
 import org.springframework.data.elasticsearch.core.query.Query;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.StreamSupport;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -78,16 +86,59 @@ class SearchServiceDependencyFailureTest {
                 });
     }
 
+    @Test
+    void reindexReadsAllContentPagesAndRefreshesTheCompleteSnapshot() throws IOException {
+        String firstPageRecords = IntStream.rangeClosed(1, 20)
+                .mapToObj(this::postJson)
+                .collect(Collectors.joining(","));
+        startContentServer(query -> query != null && query.contains("page=1")
+                ? page(firstPageRecords, 21, 1)
+                : page(postJson(21), 21, 2));
+        ElasticsearchOperations operations = mock(ElasticsearchOperations.class);
+        IndexOperations indexOperations = mock(IndexOperations.class);
+        when(operations.indexOps(PostSearchDocument.class)).thenReturn(indexOperations);
+        SearchService service = service(operations,
+                "http://127.0.0.1:" + contentServer.getAddress().getPort());
+
+        assertThat(service.reindexSeedPosts()).isEqualTo(21);
+
+        @SuppressWarnings("rawtypes")
+        ArgumentCaptor<Iterable> documents = ArgumentCaptor.forClass(Iterable.class);
+        verify(operations).save(documents.capture());
+        assertThat(StreamSupport.stream(documents.getValue().spliterator(), false)).hasSize(21);
+        verify(indexOperations).refresh();
+    }
+
     private void startContentServer(String response) throws IOException {
+        startContentServer(ignored -> response);
+    }
+
+    private void startContentServer(Function<String, String> response) throws IOException {
         contentServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         contentServer.createContext("/api/posts", exchange -> {
-            byte[] body = response.getBytes(StandardCharsets.UTF_8);
+            byte[] body = response.apply(exchange.getRequestURI().getRawQuery()).getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
         });
         contentServer.start();
+    }
+
+    private String page(String records, int total, int page) {
+        return """
+                {"code":"OK","data":{"records":[%s],"total":%d,"page":%d,"size":20}}
+                """.formatted(records, total, page);
+    }
+
+    private String postJson(int id) {
+        return """
+                {"id":%d,"type":"TEXT","theme":"DEDUCTION","contentKind":"CASE_FILE",
+                 "difficulty":"MEDIUM","solvable":false,"solvedCount":0,"title":"恢复内容 %d",
+                 "excerpt":"用于索引恢复的内容","author":"恢复验证员","authorId":7,"tags":["恢复"],
+                 "mediaAssets":[],"likes":0,"comments":0,"views":0,"status":"PUBLISHED",
+                 "createdAt":"2026-08-02T08:00:00Z"}
+                """.formatted(id, id);
     }
 
     private SearchService service(ElasticsearchOperations operations, String contentBaseUrl) {

@@ -172,6 +172,26 @@ class SearchServiceEventTest {
     }
 
     @Test
+    void indexingFailureRemainsPrimaryWhenSearchStatePersistenceAlsoFails() {
+        String eventId = "67676767-6767-4676-8676-676767676767";
+        IllegalStateException indexFailure = new IllegalStateException("elasticsearch write failed");
+        IllegalStateException stateFailure = new IllegalStateException("search state database failed");
+        when(coordinator.claim(any(ValidatedEvent.class), eq(931L))).thenReturn(true);
+        when(operations.save(any(PostSearchDocument.class))).thenThrow(indexFailure);
+        org.mockito.Mockito.doThrow(stateFailure).when(coordinator).fail(eventId, 931L, indexFailure);
+
+        assertThatThrownBy(() -> service.upsertPostFromEvent("""
+                {"eventId":"67676767-6767-4676-8676-676767676767","type":"post.created","version":1,
+                 "occurredAt":"2026-07-30T13:05:00Z","producer":"dc-content","aggregateId":"931",
+                 "payload":{"postId":931,"title":"失联观测站","tags":["宇宙"],"status":"PUBLISHED"}}
+                """))
+                .isSameAs(indexFailure)
+                .satisfies(error -> assertThat(error.getSuppressed()).containsExactly(stateFailure));
+
+        verify(coordinator, never()).complete(any(), eq(931L), any(), any());
+    }
+
+    @Test
     void producerAndAggregateIdentityAreRejectedBeforeClaimingSearchState() {
         assertThatThrownBy(() -> service.upsertPostFromEvent("""
                 {"eventId":"77777777-7777-4777-8777-777777777777","type":"content.rejected","version":1,
