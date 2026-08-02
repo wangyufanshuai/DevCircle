@@ -132,7 +132,7 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 同一工作批次的离线交付门禁均通过：`test-docker-preflight.sh`、`test-assert-coverage.sh`、`test-validate-production-env.sh`、`test-backup-restore.sh`、`test_assert_production_resource_budgets.py`，以及生产/基础设施 Compose `config --quiet`。当前 Windows 环境未安装 Helm，故本轮没有把 Helm lint 记为通过；CI 仍需在带 Helm 的 Runner 上执行该门禁。
 
-随后新增 `SearchServiceCursorContractTest`，用模拟 Elasticsearch 命中验证稳定 `search_after` 游标、第二页无重复、旧索引主题/内容类型推断，以及第一页成功后 Elasticsearch 故障时不得切换到 Seed 数据。搜索模块非容器定向回归为 30/30 通过；`SearchService` 行覆盖率 89.69%、分支覆盖率 73.53%，`SearchEventCoordinator` 为 100%/92.31%。该结果不包含真实 Elasticsearch 容器；完整纯单元/H2 聚合基线仍以 365 项、76.47%/68.83% 为准。
+随后新增 `SearchServiceCursorContractTest`，用模拟 Elasticsearch 命中验证稳定 `search_after` 游标、第二页无重复、旧索引主题/内容类型推断，以及第一页成功后 Elasticsearch 故障时不得切换到 Seed 数据；事件契约还补充审核通过完整载荷索引并刷新、普通更新变为非公开时删除索引，以及重复上行事件不触碰 Elasticsearch。搜索模块非容器定向回归为 33/33 通过；`SearchService` 行覆盖率 90.84%、分支覆盖率 75.29%，`SearchEventCoordinator` 为 100%/92.31%。该结果不包含真实 Elasticsearch 容器；完整纯单元/H2 聚合基线仍以 365 项、76.47%/68.83% 为准。
 
 ## 排查建议
 
