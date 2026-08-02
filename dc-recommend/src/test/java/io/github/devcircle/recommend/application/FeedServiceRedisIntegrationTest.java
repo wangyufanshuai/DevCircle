@@ -8,6 +8,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.jdbc.Sql;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -22,8 +23,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(properties = {
         "devcircle.recommend.read-fallback-enabled=true",
         "spring.kafka.listener.auto-startup=false",
-        "devcircle.kafka.topics.enabled=false"
+        "devcircle.kafka.topics.enabled=false",
+        "devcircle.outbox.initial-delay-ms=3600000"
 })
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @Sql(statements = {
         "CREATE TABLE IF NOT EXISTS recommend_write_idempotency (idempotency_key VARCHAR(128) PRIMARY KEY, user_id BIGINT NOT NULL, operation VARCHAR(48) NOT NULL, request_fingerprint CHAR(64) NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
         "CREATE TABLE IF NOT EXISTS recommendation_exposure (user_id BIGINT NOT NULL, post_id BIGINT NOT NULL, scene VARCHAR(64) NOT NULL, exposed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, post_id, scene))",

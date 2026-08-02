@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.annotation.DirtiesContext;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -25,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         "spring.kafka.bootstrap-servers=127.0.0.1:1",
         "devcircle.outbox.enabled=false"
 })
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @Import(CommentRepositoryIntegrationTest.TestBeans.class)
 class CommentRepositoryIntegrationTest {
     @Container
@@ -89,7 +91,11 @@ class CommentRepositoryIntegrationTest {
 
         assertThat(jdbcClient.sql("SELECT status FROM comment WHERE id = :id")
                 .param("id", root.id()).query(String.class).single()).isEqualTo("DELETED");
-        assertThat(outboxCount("comment.changed")).isEqualTo(1);
+        assertThat(jdbcClient.sql("""
+                        SELECT COUNT(*) FROM outbox_event
+                        WHERE topic = 'comment.changed'
+                          AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.payload.changeType')) = 'DELETED'
+                        """).query(Long.class).single()).isEqualTo(1);
     }
 
     private long outboxCount(String topic) {

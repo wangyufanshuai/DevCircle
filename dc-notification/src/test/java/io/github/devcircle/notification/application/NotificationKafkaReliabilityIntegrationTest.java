@@ -19,6 +19,7 @@ import org.springframework.kafka.support.KafkaHeaders;
 import org.springframework.kafka.test.utils.ContainerTestUtils;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.annotation.DirtiesContext;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -39,12 +40,14 @@ import static org.junit.jupiter.api.Assertions.fail;
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(properties = {
         "spring.lifecycle.timeout-per-shutdown-phase=2s",
+        "devcircle.outbox.initial-delay-ms=3600000",
         "spring.kafka.admin.fail-fast=true",
         "devcircle.kafka.retry.initial-interval-ms=50",
         "devcircle.kafka.retry.multiplier=2.0",
         "devcircle.kafka.retry.max-interval-ms=200",
         "devcircle.kafka.retry.max-attempts=3"
 })
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class NotificationKafkaReliabilityIntegrationTest {
     @Container
     static final MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.4")

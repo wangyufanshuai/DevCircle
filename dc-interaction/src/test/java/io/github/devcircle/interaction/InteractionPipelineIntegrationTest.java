@@ -8,6 +8,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -23,8 +24,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(properties = {
         "spring.kafka.bootstrap-servers=localhost:65535",
-        "devcircle.outbox.poll-interval-ms=60000"
+        "devcircle.outbox.poll-interval-ms=60000",
+        "devcircle.outbox.initial-delay-ms=3600000"
 })
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @Import(InteractionPipelineIntegrationTest.PublicationTestConfig.class)
 class InteractionPipelineIntegrationTest {
     @Container
