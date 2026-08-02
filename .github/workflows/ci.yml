@@ -180,6 +180,7 @@ jobs:
       - run: docker compose --profile demo config
       - run: docker compose --env-file .env.production.example -f docker-compose.prod.yml config --quiet
       - run: python -m unittest scripts/ops/test_assert_production_resource_budgets.py
+      - run: python -m unittest scripts/ops/test_k6_contract.py
       - run: python scripts/ops/assert-production-resource-budgets.py
 
   images:

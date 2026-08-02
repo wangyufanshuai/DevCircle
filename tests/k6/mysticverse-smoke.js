@@ -10,12 +10,18 @@ const tokens = (__ENV.TOKENS || __ENV.TOKEN || '')
   .filter(Boolean)
 const searchKeyword = __ENV.SEARCH_KEYWORD || '钟楼'
 const answer = __ENV.ANSWER || '无法确定'
+const runId = (__ENV.RUN_ID || `${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`)
+  .replace(/[^A-Za-z0-9._-]/g, '-')
+  .slice(0, 48)
 
 if (!Number.isInteger(postId) || postId <= 0) {
   throw new Error('POST_ID must identify an existing published deduction post')
 }
 if (tokens.length === 0) {
   throw new Error('TOKEN or TOKENS must contain at least one real access token')
+}
+if (!runId) {
+  throw new Error('RUN_ID must contain at least one letter, digit, dot, underscore or dash')
 }
 
 const readFailures = new Rate('read_failures')
@@ -43,12 +49,24 @@ export const options = {
     read_failures: ['rate<0.01'],
     write_failures: ['rate<0.01'],
     'http_req_duration{kind:read}': ['p(95)<300'],
-    'http_req_duration{kind:write}': ['p(95)<600']
+    'http_req_duration{kind:write}': ['p(95)<600'],
+    'http_req_duration{operation:feed}': ['p(95)<300'],
+    'http_req_duration{operation:search}': ['p(95)<300'],
+    'http_req_duration{operation:detail}': ['p(95)<300'],
+    'http_req_duration{operation:like}': ['p(95)<600'],
+    'http_req_duration{operation:unlike}': ['p(95)<600'],
+    'http_req_duration{operation:answer}': ['p(95)<600'],
+    'http_req_failed{operation:feed}': ['rate<0.01'],
+    'http_req_failed{operation:search}': ['rate<0.01'],
+    'http_req_failed{operation:detail}': ['rate<0.01'],
+    'http_req_failed{operation:like}': ['rate<0.01'],
+    'http_req_failed{operation:unlike}': ['rate<0.01'],
+    'http_req_failed{operation:answer}': ['rate<0.01']
   }
 }
 
-function authorizationHeaders() {
-  const token = tokens[(__VU - 1) % tokens.length]
+function authorizationHeaders(vu = __VU) {
+  const token = tokens[Math.max(0, vu - 1) % tokens.length]
   return { Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}` }
 }
 
@@ -56,6 +74,26 @@ function verify(response, name, failureRate) {
   const ok = check(response, { [`${name} returns 200`]: (result) => result.status === 200 })
   failureRate.add(!ok)
   return ok
+}
+
+export function setup() {
+  const response = http.get(`${baseUrl}/api/posts/${postId}`, {
+    headers: authorizationHeaders(1),
+    tags: { kind: 'setup', operation: 'setup-detail' }
+  })
+  if (response.status !== 200) {
+    throw new Error(`POST_ID preflight failed with HTTP ${response.status}`)
+  }
+  let body
+  try {
+    body = response.json()
+  } catch {
+    throw new Error('POST_ID preflight did not return JSON')
+  }
+  if (body?.data?.status !== 'PUBLISHED' || body?.data?.solvable !== true) {
+    throw new Error('POST_ID must identify a published solvable post')
+  }
+  return { postId }
 }
 
 export function readFlow() {
@@ -77,7 +115,7 @@ export function readFlow() {
 
 export function writeFlow() {
   const headers = authorizationHeaders()
-  const requestId = `${__VU}-${__ITER}`
+  const requestId = `${runId}-${__VU}-${__ITER}`
   verify(http.post(`${baseUrl}/api/posts/${postId}/like`, null, {
     headers: { ...headers, 'Idempotency-Key': `k6-like-${requestId}` },
     tags: { kind: 'write', operation: 'like' }

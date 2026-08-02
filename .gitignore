@@ -4,6 +4,8 @@ target/
 node_modules/
 dist/
 coverage/
+__pycache__/
+*.py[cod]
 playwright-report/
 test-results/
 web/tsconfig.tsbuildinfo
