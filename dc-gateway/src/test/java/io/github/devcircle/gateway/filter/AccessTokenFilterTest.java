@@ -139,17 +139,45 @@ class AccessTokenFilterTest {
         assertThat(exchange.getResponse().getBodyAsString().block()).contains("Idempotency-Key");
     }
 
-    @Test
-    void nonAdminCannotReachAdminRoutes() {
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/api/admin/metrics/overview",
+            "/api/search/admin/reindex",
+            "/api/content/admin/outbox/publish"
+    })
+    void nonAdminCannotReachAdminRoutes(String path) {
         String token = Jwts.builder().subject("7").claim("roles", "USER").claim("type", "access")
                 .expiration(Date.from(Instant.now().plusSeconds(60)))
                 .signWith(Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8))).compact();
-        var exchange = MockServerWebExchange.from(MockServerHttpRequest.get("/api/admin/metrics/overview")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token).build());
+        var request = path.equals("/api/admin/metrics/overview")
+                ? MockServerHttpRequest.get(path).header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                : MockServerHttpRequest.post(path).header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .header("Idempotency-Key", "admin-operation");
+        var exchange = MockServerWebExchange.from(request.build());
 
         filter.filter(exchange, ignored -> Mono.empty()).block();
 
         assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/api/search/admin/reindex",
+            "/api/content/admin/outbox/publish"
+    })
+    void adminCanReachInternalOperationsWithAWriteKey(String path) {
+        String token = Jwts.builder().subject("9").claim("roles", "USER,ADMIN").claim("type", "access")
+                .expiration(Date.from(Instant.now().plusSeconds(60)))
+                .signWith(Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8))).compact();
+        var exchange = MockServerWebExchange.from(MockServerHttpRequest.post(path)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                .header("Idempotency-Key", "admin-operation")
+                .build());
+        AtomicReference<String> userId = new AtomicReference<>();
+
+        filter.filter(exchange, captureUser(userId)).block();
+
+        assertThat(userId).hasValue("9");
     }
 
     private GatewayFilterChain captureUser(AtomicReference<String> userId) {

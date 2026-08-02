@@ -90,7 +90,7 @@ public class AccessTokenFilter implements GlobalFilter, Ordered {
             return GatewayResponses.error(exchange, HttpStatus.BAD_REQUEST, "VALIDATION_FAILED",
                     "写操作必须提供 Idempotency-Key");
         }
-        if (path.startsWith("/api/admin/") && !context.roles().contains("ADMIN")) {
+        if (isAdminPath(path) && !context.roles().contains("ADMIN")) {
             return reject(exchange, HttpStatus.FORBIDDEN);
         }
         if (bannedUserIds.contains(context.userId()) && isWriteRequest(exchange)) {
@@ -158,6 +158,12 @@ public class AccessTokenFilter implements GlobalFilter, Ordered {
     private boolean hasIdempotencyKey(ServerWebExchange exchange) {
         String value = exchange.getRequest().getHeaders().getFirst("Idempotency-Key");
         return value != null && !value.isBlank() && value.length() <= 128;
+    }
+
+    private boolean isAdminPath(String path) {
+        return path.startsWith("/api/admin/")
+                || path.startsWith("/api/search/admin/")
+                || path.startsWith("/api/content/admin/");
     }
 
     private Set<String> configuredIds(String configured) {
