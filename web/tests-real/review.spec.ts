@@ -5,13 +5,19 @@ const adminPassword = process.env.REAL_REVIEW_ADMIN_PASSWORD ?? 'OrbitAdmin2026!
 
 async function registerCreator(page: Page) {
   const unique = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const registrationResponse = page.waitForResponse(response =>
+    response.url().endsWith('/api/auth/register') && response.request().method() === 'POST')
   await page.goto('/auth?redirect=/write')
   await page.getByRole('group', { name: '认证方式' }).getByRole('button', { name: '注册' }).click()
   await page.getByLabel('显示名称').fill(`真实投稿人${unique.slice(-6)}`)
   await page.getByLabel('邮箱').fill(`real-review-author-${unique}@example.test`)
   await page.getByLabel('密码').fill('OrbitReader2026!')
   await page.getByRole('button', { name: '创建账号' }).click()
+  const response = await registrationResponse
+  expect(response.ok()).toBe(true)
+  const payload = await response.json()
   await expect(page).toHaveURL('/write')
+  return { accessToken: String(payload.data.accessToken) }
 }
 
 async function loginAdministrator(context: BrowserContext) {
@@ -36,8 +42,9 @@ test('submits, moderates and publishes content without leaking its solution', as
   const answerKeyword = '林默'
   const solution = '林默利用慢七分钟的怀表制造了不在场证明。'
 
+  let authorAccessToken = ''
   await test.step('the author submits a real draft for review', async () => {
-    await registerCreator(page)
+    ({ accessToken: authorAccessToken } = await registerCreator(page))
     await page.getByLabel('标题').fill(title)
     await page.getByLabel('正文 Markdown').fill(markdown)
     await page.getByLabel('问题').fill('谁制造了错误时间线？')
@@ -133,6 +140,35 @@ test('submits, moderates and publishes content without leaking its solution', as
     await expect(page.getByText('已发布', { exact: true })).toBeVisible()
     await expect(page.getByText(`审核意见：${decisionReason}`)).toBeVisible()
     await expect(page.getByText('审核通过', { exact: true })).toBeVisible()
+  })
+
+  await test.step('the published case awards points once and unlocks its solution after a correct answer', async () => {
+    await page.goto(`/posts/${postId}`)
+    await expect(page.getByLabel('推理结论')).toBeVisible()
+    const requestPromise = page.waitForRequest(request =>
+      request.url().endsWith(`/api/deduction/cases/${postId}/answers`) && request.method() === 'POST')
+    const responsePromise = page.waitForResponse(response =>
+      response.url().endsWith(`/api/deduction/cases/${postId}/answers`) && response.request().method() === 'POST')
+    await page.getByLabel('推理结论').fill(answerKeyword)
+    await page.getByRole('button', { name: '提交推理' }).click()
+    const [request, response] = await Promise.all([requestPromise, responsePromise])
+    expect(response.ok()).toBe(true)
+    const answerKey = request.headers()['idempotency-key']
+    expect(answerKey).toBeTruthy()
+    await expect(response.json()).resolves.toMatchObject({
+      data: { correct: true, duplicated: false, revealed: false, solutionUnlocked: true, points: 20, solution }
+    })
+    await expect(page.getByText('推理成立，获得 20 分。', { exact: true })).toBeVisible()
+    await expect(page.locator('.solution-copy')).toHaveText(solution)
+
+    const replay = await page.request.post(`/api/deduction/cases/${postId}/answers`, {
+      headers: { Authorization: `Bearer ${authorAccessToken}`, 'Idempotency-Key': answerKey },
+      data: { answer: answerKeyword }
+    })
+    expect(replay.ok()).toBe(true)
+    await expect(replay.json()).resolves.toMatchObject({
+      data: { correct: true, duplicated: true, solutionUnlocked: true, points: 20 }
+    })
   })
 
   await adminContext.close()
