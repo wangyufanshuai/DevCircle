@@ -5,8 +5,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.support.SendResult;
 
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -152,9 +155,58 @@ class ReliableOutboxWorkerTest {
     }
 
     @Test
+    void operatorReplayReportsAMissingOutboxTable() {
+        jdbc.sql("DROP TABLE outbox_event").update();
+        ReliableOutboxWorker worker = new ReliableOutboxWorker(jdbc, kafka, 10, 3);
+
+        assertThatThrownBy(() -> worker.publishBatch(10))
+                .isInstanceOf(org.springframework.jdbc.BadSqlGrammarException.class);
+        verifyNoInteractions(kafka);
+    }
+
+    @Test
+    void concurrentScheduledAndOperatorRunsCannotEnterThePublisherTwice() throws Exception {
+        insert("evt-concurrent", "NEW", 0, null);
+        CountDownLatch sendStarted = new CountDownLatch(1);
+        CompletableFuture<SendResult<String, String>> brokerResult = new CompletableFuture<>();
+        when(kafka.send(anyString(), anyString(), anyString())).thenAnswer(invocation -> {
+            sendStarted.countDown();
+            return brokerResult;
+        });
+        ReliableOutboxWorker worker = new ReliableOutboxWorker(jdbc, kafka, 10, 3);
+
+        CompletableFuture<Integer> activeRun = CompletableFuture.supplyAsync(() -> worker.publishBatch(10));
+        assertThat(sendStarted.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThatCode(worker::publishAvailable).doesNotThrowAnyException();
+        assertThatThrownBy(() -> worker.publishBatch(10))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Outbox publisher is already running");
+
+        brokerResult.complete(null);
+        assertThat(activeRun.get(2, TimeUnit.SECONDS)).isEqualTo(1);
+        assertThat(status()).isEqualTo("PUBLISHED");
+        verify(kafka, times(1)).send(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void failureMessageIsTruncatedBeforePersistence() {
+        insert("evt-long-error", "NEW", 0, null);
+        when(kafka.send(anyString(), anyString(), anyString()))
+                .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("x".repeat(2_000))));
+        ReliableOutboxWorker worker = new ReliableOutboxWorker(jdbc, kafka, 10, 3);
+
+        assertThatThrownBy(() -> worker.publishBatch(10)).isInstanceOf(IllegalStateException.class);
+        Integer length = jdbc.sql("SELECT LENGTH(last_error) FROM outbox_event WHERE event_id = 'evt-long-error'")
+                .query(Integer.class).single();
+        assertThat(length).isEqualTo(1_000);
+        assertThat(status()).isEqualTo("FAILED");
+    }
+
+    @Test
     void interruptedKafkaSendKeepsTheEventRetryableAndRestoresInterruptFlag() throws Exception {
         insert("evt-interrupted", "NEW", 0, null);
-        CompletableFuture future = mock(CompletableFuture.class);
+        @SuppressWarnings("unchecked")
+        CompletableFuture<SendResult<String, String>> future = mock(CompletableFuture.class);
         when(kafka.send(anyString(), anyString(), anyString())).thenReturn(future);
         when(future.get()).thenThrow(new InterruptedException("worker interrupted"));
         ReliableOutboxWorker worker = new ReliableOutboxWorker(jdbc, kafka, 10, 3);
