@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.seed.ThemeContentLibrary;
+import io.github.devcircle.content.api.CreatePostRequest;
 import io.github.devcircle.content.api.DraftMediaInput;
 import io.github.devcircle.content.api.ReadingProgressRequest;
 import io.github.devcircle.content.api.SaveDraftRequest;
@@ -160,6 +161,15 @@ class PostRepositoryStateTest {
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
                 """).update();
         jdbcClient.sql("""
+                CREATE TABLE appeal_record (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    post_id BIGINT NOT NULL,
+                    user_id BIGINT NOT NULL,
+                    reason VARCHAR(512) NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
+        jdbcClient.sql("""
                 CREATE TABLE moderation_task (
                     id BIGINT AUTO_INCREMENT PRIMARY KEY,
                     post_id BIGINT NOT NULL,
@@ -174,17 +184,89 @@ class PostRepositoryStateTest {
                     sla_deadline TIMESTAMP NOT NULL,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
                 """).update();
-        jdbcClient.sql("""
-                CREATE TABLE outbox_event (
-                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                    event_id CHAR(36) NOT NULL UNIQUE,
-                    topic VARCHAR(128) NOT NULL,
-                    aggregate_type VARCHAR(64) NOT NULL,
-                    aggregate_id VARCHAR(64) NOT NULL,
-                    payload JSON NOT NULL,
-                    status VARCHAR(32) NOT NULL DEFAULT 'NEW',
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
-                """).update();
+        createOutboxTable();
+    }
+
+    @Test
+    void postCreationPersistsModerationAndOutboxAtomicallyAndBindsPayload() {
+        CreatePostRequest request = postRequest("雾港观测记录", "潮位记录、值班日志与停摆怀表共同指向七分钟的人为时间差。");
+
+        var created = repository.create(7L, request, "create-post-bound");
+        var replay = repository.create(7L, request, "create-post-bound");
+
+        assertThat(replay.id()).isEqualTo(created.id());
+        assertThat(created.status()).isEqualTo("PENDING");
+        assertThat(count("post")).isEqualTo(1);
+        assertThat(count("post_content")).isEqualTo(1);
+        assertThat(count("moderation_task")).isEqualTo(1);
+        assertThat(count("outbox_event")).isEqualTo(1);
+        assertThat(outboxTopics()).containsExactly("post.submitted");
+        assertThat(idempotencyCount("create-post-bound")).isEqualTo(1);
+
+        assertCode(() -> repository.create(7L,
+                postRequest("被替换的标题", "同一个请求键不得覆盖已经持久化的投稿载荷。"),
+                "create-post-bound"), ErrorCode.DUPLICATE_OPERATION);
+        assertThat(count("post")).isEqualTo(1);
+        assertThat(count("outbox_event")).isEqualTo(1);
+    }
+
+    @Test
+    void postOutboxFailureRollsBackEveryWriteAndAllowsTheSameKeyToRetry() {
+        CreatePostRequest request = postRequest("事务回滚观测", "Outbox 写入失败时，帖子、正文、标签、审核任务和请求键必须一起回滚。");
+        jdbcClient.sql("DROP TABLE outbox_event").update();
+
+        assertThatThrownBy(() -> repository.create(7L, request, "create-post-retry"))
+                .isInstanceOf(DataAccessException.class);
+        assertThat(count("post")).isZero();
+        assertThat(count("post_content")).isZero();
+        assertThat(count("post_tag")).isZero();
+        assertThat(count("moderation_task")).isZero();
+        assertThat(idempotencyCount("create-post-retry")).isZero();
+
+        createOutboxTable();
+        var retried = repository.create(7L, request, "create-post-retry");
+        assertThat(retried.status()).isEqualTo("PENDING");
+        assertThat(count("outbox_event")).isEqualTo(1);
+    }
+
+    @Test
+    void appealPersistsAuditAndOutboxOnceAndBindsItsReason() {
+        long postId = post(7L, "需要补证的档案", "CHANGES_REQUIRED");
+
+        var created = repository.createAppeal(7L, postId, "附件已经包含来源说明，请重新核对。", "appeal-bound");
+        var replay = repository.createAppeal(7L, postId, "附件已经包含来源说明，请重新核对。", "appeal-bound");
+
+        assertThat(replay).containsEntry("appealId", created.get("appealId"))
+                .containsEntry("duplicateRequest", true);
+        assertThat(count("appeal_record")).isEqualTo(1);
+        assertThat(count("post_audit_record")).isEqualTo(1);
+        assertThat(outboxTopics()).containsExactly("appeal.created");
+
+        assertCode(() -> repository.createAppeal(7L, postId, "同一键不能替换申诉理由。", "appeal-bound"),
+                ErrorCode.DUPLICATE_OPERATION);
+        assertCode(() -> repository.createAppeal(8L, postId, "不能申诉他人的投稿。", "appeal-foreign"),
+                ErrorCode.FORBIDDEN);
+        assertThat(idempotencyCount("appeal-foreign")).isZero();
+        assertThat(count("appeal_record")).isEqualTo(1);
+    }
+
+    @Test
+    void appealOutboxFailureRollsBackAuditAndAllowsTheSameKeyToRetry() {
+        long postId = post(7L, "申诉事务档案", "REJECTED");
+        jdbcClient.sql("DROP TABLE outbox_event").update();
+
+        assertThatThrownBy(() -> repository.createAppeal(7L, postId,
+                "申诉事件写入失败时不能留下半条记录。", "appeal-retry"))
+                .isInstanceOf(DataAccessException.class);
+        assertThat(count("appeal_record")).isZero();
+        assertThat(count("post_audit_record")).isZero();
+        assertThat(idempotencyCount("appeal-retry")).isZero();
+
+        createOutboxTable();
+        repository.createAppeal(7L, postId, "申诉事件写入失败时不能留下半条记录。", "appeal-retry");
+        assertThat(count("appeal_record")).isEqualTo(1);
+        assertThat(count("post_audit_record")).isEqualTo(1);
+        assertThat(count("outbox_event")).isEqualTo(1);
     }
 
     @Test
@@ -393,6 +475,12 @@ class PostRepositoryStateTest {
                 "守夜人", "怀表提供了七分钟时差。", version);
     }
 
+    private CreatePostRequest postRequest(String title, String content) {
+        return new CreatePostRequest(title, content, List.of("推理", "观测"), "TEXT", List.of(),
+                "DEDUCTION", "CASE_FILE", "MEDIUM", true,
+                "潮位记录\n停摆怀表", "守夜人利用七分钟时差制造了不在场证明");
+    }
+
     private SaveDraftRequest draftWithMedia(long mediaId, String altText) {
         return new SaveDraftRequest(
                 "媒体草稿", "# 媒体证物", List.of("证物"), "IMAGE", List.of(mediaId),
@@ -438,6 +526,24 @@ class PostRepositoryStateTest {
 
     private long count(String table) {
         return jdbcClient.sql("SELECT COUNT(*) FROM " + table).query(Long.class).single();
+    }
+
+    private List<String> outboxTopics() {
+        return jdbcClient.sql("SELECT topic FROM outbox_event ORDER BY id").query(String.class).list();
+    }
+
+    private void createOutboxTable() {
+        jdbcClient.sql("""
+                CREATE TABLE outbox_event (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    event_id CHAR(36) NOT NULL UNIQUE,
+                    topic VARCHAR(128) NOT NULL,
+                    aggregate_type VARCHAR(64) NOT NULL,
+                    aggregate_id VARCHAR(64) NOT NULL,
+                    payload JSON NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'NEW',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
     }
 
     private long idempotencyCount(String key) {
