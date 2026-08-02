@@ -28,9 +28,11 @@ command_line="$*"
 case "${command_line}" in
   *mysqldump*) printf '%s\n' '-- deterministic fake SQL dump' ;;
   *'tar -C /minio-data -czf - .'*) printf '%s\n' 'deterministic fake MinIO archive' ;;
+  *'SELECT COUNT(*) FROM post WHERE status'*) printf '%s\n' "${FAKE_PUBLISHED_POST_COUNT:-180}" ;;
   *'SELECT COUNT(*) FROM post'*) printf '%s\n' "${FAKE_POST_COUNT:-180}" ;;
   *'SHA2(CONCAT_WS'*) printf '1\trow-hash-one\n2\trow-hash-two\n' ;;
-  *'posts/_count'*) printf '{"count":%s,"_shards":{"total":1}}\n' "${FAKE_ES_COUNT:-0}" ;;
+  *'devcircle-posts/_count?q=-status'*) printf '{"count":%s,"_shards":{"total":1}}\n' "${FAKE_ES_COUNT:-0}" ;;
+  *'devcircle-posts/_count'*) printf '{"count":%s,"_shards":{"total":1}}\n' "${FAKE_ES_INDEXED_COUNT:-180}" ;;
   *'exec mysql '*|*'tar -C /minio-data -xzf -'*) cat >/dev/null ;;
 esac
 EOF
@@ -69,6 +71,19 @@ ENV_FILE="${ENV_FILE}" CONFIRM_RESTORE=RESTORE \
 verification="$(ENV_FILE="${ENV_FILE}" EXPECTED_POST_COUNT=180 FAKE_ES_COUNT=0 \
   bash "${ROOT_DIR}/scripts/ops/verify-migration.sh")"
 [[ "${verification}" == *'"postCount":180'* && "${verification}" == *'"unexpectedSearchDocuments":0'* ]]
+[[ "${verification}" == *'"publishedPostCount":180'* && "${verification}" == *'"indexedSearchDocuments":180'* ]]
+
+if ENV_FILE="${ENV_FILE}" EXPECTED_POST_COUNT=180 FAKE_ES_COUNT=0 FAKE_ES_INDEXED_COUNT=179 \
+  bash "${ROOT_DIR}/scripts/ops/verify-migration.sh" >/dev/null 2>&1; then
+  echo "Expected an Elasticsearch document count mismatch to block verification" >&2
+  exit 1
+fi
+
+if ENV_FILE="${ENV_FILE}" EXPECTED_POST_COUNT=180 FAKE_ES_COUNT=0 FAKE_PUBLISHED_POST_COUNT=179 \
+  bash "${ROOT_DIR}/scripts/ops/verify-migration.sh" >/dev/null 2>&1; then
+  echo "Expected a published database count mismatch to block verification" >&2
+  exit 1
+fi
 
 if ENV_FILE="${ENV_FILE}" EXPECTED_POST_COUNT=180 FAKE_ES_COUNT=1 \
   bash "${ROOT_DIR}/scripts/ops/verify-migration.sh" >/dev/null 2>&1; then

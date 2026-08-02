@@ -10,6 +10,7 @@ test -f "${ENV_FILE}" || { echo "Missing ${ENV_FILE}" >&2; exit 2; }
 bash "${ROOT_DIR}/scripts/ops/validate-production-env.sh" "${ENV_FILE}" >/dev/null
 
 COUNT_SQL='SELECT COUNT(*) FROM post;'
+PUBLISHED_COUNT_SQL="SELECT COUNT(*) FROM post WHERE status = 'PUBLISHED';"
 # MYSQL_ROOT_PASSWORD and $1 are expanded inside the container.
 # shellcheck disable=SC2016
 COUNT="$("${COMPOSE[@]}" exec -T mysql sh -c \
@@ -17,6 +18,13 @@ COUNT="$("${COMPOSE[@]}" exec -T mysql sh -c \
 
 test "${COUNT}" = "${EXPECTED_POST_COUNT}" || {
   echo "Post count mismatch: expected ${EXPECTED_POST_COUNT}, got ${COUNT}" >&2
+  exit 1
+}
+
+PUBLISHED_COUNT="$("${COMPOSE[@]}" exec -T mysql sh -c \
+  'exec mysql -N -B -uroot -p"$MYSQL_ROOT_PASSWORD" dc_content -e "$1"' _ "${PUBLISHED_COUNT_SQL}")"
+[[ "${PUBLISHED_COUNT}" =~ ^[0-9]+$ ]] || {
+  echo "Could not parse published post count" >&2
   exit 1
 }
 
@@ -36,8 +44,20 @@ CHECKSUM="$("${COMPOSE[@]}" exec -T mysql sh -c \
   'exec mysql -N -B -uroot -p"$MYSQL_ROOT_PASSWORD" dc_content -e "$1"' _ "${CONTENT_HASH_SQL}" \
   | sha256sum | awk '{print $1}')"
 
+INDEX_RESPONSE="$("${COMPOSE[@]}" exec -T elasticsearch sh -c \
+  "curl --fail --silent --show-error 'http://localhost:9200/devcircle-posts/_count'")"
+INDEXED_DOCUMENTS="$(printf '%s' "${INDEX_RESPONSE}" | sed -n 's/.*"count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
+[[ "${INDEXED_DOCUMENTS}" =~ ^[0-9]+$ ]] || {
+  echo "Could not parse Elasticsearch document count" >&2
+  exit 1
+}
+test "${INDEXED_DOCUMENTS}" = "${PUBLISHED_COUNT}" || {
+  echo "Elasticsearch document count mismatch: expected ${PUBLISHED_COUNT}, got ${INDEXED_DOCUMENTS}" >&2
+  exit 1
+}
+
 SEARCH_RESPONSE="$("${COMPOSE[@]}" exec -T elasticsearch sh -c \
-  "curl --fail --silent --show-error 'http://localhost:9200/posts/_count?q=-status%3APUBLISHED'")"
+  "curl --fail --silent --show-error 'http://localhost:9200/devcircle-posts/_count?q=-status%3APUBLISHED'")"
 UNPUBLISHED_INDEXED="$(printf '%s' "${SEARCH_RESPONSE}" | sed -n 's/.*"count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
 [[ "${UNPUBLISHED_INDEXED}" =~ ^[0-9]+$ ]] || {
   echo "Could not parse Elasticsearch verification response" >&2
@@ -48,5 +68,5 @@ test "${UNPUBLISHED_INDEXED}" = "0" || {
   exit 1
 }
 
-printf '{"postCount":%s,"contentChecksum":"%s","unexpectedSearchDocuments":%s}\n' \
-  "${COUNT}" "${CHECKSUM}" "${UNPUBLISHED_INDEXED}"
+printf '{"postCount":%s,"publishedPostCount":%s,"indexedSearchDocuments":%s,"contentChecksum":"%s","unexpectedSearchDocuments":%s}\n' \
+  "${COUNT}" "${PUBLISHED_COUNT}" "${INDEXED_DOCUMENTS}" "${CHECKSUM}" "${UNPUBLISHED_INDEXED}"
