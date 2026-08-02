@@ -1,7 +1,6 @@
 package io.github.devcircle.recommend.api;
 
 import io.github.devcircle.recommend.application.FeedService;
-import io.github.devcircle.recommend.application.LightweightMlRanker;
 import io.github.devcircle.recommend.application.RecommendationScorer;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -12,7 +11,7 @@ import static org.mockito.Mockito.mock;
 class RecommendControllerTest {
     @Test
     void feedReturnsCursorPageWithReasons() {
-        var service = new FeedService(new RecommendationScorer(), new LightweightMlRanker(), mock(StringRedisTemplate.class));
+        var service = new FeedService(new RecommendationScorer(), mock(StringRedisTemplate.class));
         var response = new RecommendController(service).feed(2L, null, 2, "home");
 
         assertThat(response.data().records()).hasSize(2);
@@ -23,7 +22,7 @@ class RecommendControllerTest {
 
     @Test
     void feedUsesExpandedThemeLibrary() {
-        var service = new FeedService(new RecommendationScorer(), new LightweightMlRanker(), mock(StringRedisTemplate.class));
+        var service = new FeedService(new RecommendationScorer(), mock(StringRedisTemplate.class));
 
         var firstPage = new RecommendController(service).feed(2L, null, 50, "mixed");
         var secondPage = new RecommendController(service).feed(2L, firstPage.data().nextCursor(), 50, "mixed");

@@ -59,7 +59,6 @@ class FeedServiceRedisIntegrationTest {
     void redisSignalsAffectRankingAndExposureDownranksSeenPosts() {
         Long userId = 77L;
         redisTemplate.opsForSet().add("user:" + userId + ":interest-tags", "Kafka");
-        redisTemplate.opsForHash().put("user:" + userId + ":graph-features", "mutual:lin", "3");
         redisTemplate.opsForZSet().incrementScore("feed:hot-posts", "2", 80.0);
         followSignals.apply("evt-follow-integration", userId, 701L, "FOLLOWED");
 

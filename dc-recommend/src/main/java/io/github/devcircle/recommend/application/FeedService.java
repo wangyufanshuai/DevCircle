@@ -26,7 +26,6 @@ import java.util.UUID;
 @Service
 public class FeedService {
     private final RecommendationScorer scorer;
-    private final LightweightMlRanker mlRanker;
     private final StringRedisTemplate redisTemplate;
     private final RecommendationImpressionRepository impressionRepository;
     private final FollowSignalStore followSignalStore;
@@ -36,28 +35,25 @@ public class FeedService {
     @Value("${devcircle.recommend.read-fallback-enabled:false}")
     private boolean readFallbackEnabled;
 
-    public FeedService(RecommendationScorer scorer, LightweightMlRanker mlRanker, StringRedisTemplate redisTemplate) {
-        this(scorer, mlRanker, redisTemplate, null, "http://localhost:8103", null);
+    public FeedService(RecommendationScorer scorer, StringRedisTemplate redisTemplate) {
+        this(scorer, redisTemplate, null, "http://localhost:8103", null);
         this.readFallbackEnabled = true;
     }
 
     public FeedService(RecommendationScorer scorer,
-                       LightweightMlRanker mlRanker,
                        StringRedisTemplate redisTemplate,
                        RecommendationImpressionRepository impressionRepository,
                        String contentBaseUrl) {
-        this(scorer, mlRanker, redisTemplate, impressionRepository, contentBaseUrl, null);
+        this(scorer, redisTemplate, impressionRepository, contentBaseUrl, null);
     }
 
     @Autowired
     public FeedService(RecommendationScorer scorer,
-                       LightweightMlRanker mlRanker,
                        StringRedisTemplate redisTemplate,
                        RecommendationImpressionRepository impressionRepository,
                        @Value("${devcircle.content.base-url:http://localhost:8103}") String contentBaseUrl,
                        FollowSignalStore followSignalStore) {
         this.scorer = scorer;
-        this.mlRanker = mlRanker;
         this.redisTemplate = redisTemplate;
         this.impressionRepository = impressionRepository;
         this.followSignalStore = followSignalStore;
@@ -209,21 +205,6 @@ public class FeedService {
                 recallSources(post, scene, interests, followedAuthor, hotScore));
     }
 
-    private String reason(PostSummary post, Set<String> interests, double hotScore, boolean followedAuthor, long mutualFollowees) {
-        var seedReason = ThemeContentLibrary.find(post.id()).map(io.github.devcircle.common.seed.ThemeSeedPost::reason).orElse("");
-        if (!seedReason.isBlank()) return seedReason;
-        if (post.solvable()) return "可解谜案件，已有 " + post.solvedCount() + " 人完成推理";
-        if (followedAuthor) return "来自你关注的创作者";
-        if (mutualFollowees > 0) return "存在共同关注，社交图谱亲密度较高";
-        if (post.tags().stream().anyMatch(interests::contains)) return "与你最近关注的主题标签相关";
-        if (hotScore > 20 || post.likes() > 300) return "近期互动热度较高";
-        return switch (post.theme()) {
-            case "SCI_FI" -> "科幻设定与短篇创作精选";
-            case "COSMOS" -> "宇宙档案与观测日志推荐";
-            default -> "推理馆编辑精选";
-        };
-    }
-
     private ExperimentContext experiment(Long userId, String scene) {
         if (impressionRepository != null) {
             Map<String, Object> value = impressionRepository.activeExperiment(scene, userId);
@@ -315,16 +296,6 @@ public class FeedService {
         } catch (RuntimeException ex) {
             if (!readFallbackEnabled) throw dependency("关注图谱暂时不可用", ex);
             return Set.of();
-        }
-    }
-
-    private long mutualFollowees(Long userId, String author) {
-        try {
-            String value = (String) redisTemplate.opsForHash().get("user:" + userId + ":graph-features", "mutual:" + author);
-            return value == null ? 0L : Long.parseLong(value);
-        } catch (RuntimeException ex) {
-            if (!readFallbackEnabled) throw dependency("关注图谱暂时不可用", ex);
-            return 0L;
         }
     }
 

@@ -1,20 +1,19 @@
-# 轻量 ML 推荐
+# 可解释规则推荐
 
-当前推荐系统不是训练平台，而是 Java 本地可解释模型，用于展示真实社交平台推荐链路中的特征工程、打分、实验分桶和降级策略。
+当前推荐系统不训练模型，使用 Java 本地固定权重规则，保证每条结果的分数、特征和推荐理由均可解释、可审计。
 
 ## 特征
 
-- `tagMatch`: 用户兴趣标签和帖子标签匹配度。
-- `hot`: Redis 热度和帖子互动量。
-- `freshness`: 内容新鲜度。
-- `followedAuthor`: 是否关注作者。
-- `mutualFollowees`: 共同关注数量。
-- `mediaSceneMatch`: 是否匹配 home/image/video 场景。
-- `exposed`: 是否已曝光。
+- `themeInterest35`: 主题与标签兴趣，最高 35 分。
+- `followedAuthor20`: 关注作者，最高 20 分。
+- `qualityHotness20`: 内容质量与互动热度，最高 20 分。
+- `freshness15`: 内容新鲜度，最高 15 分。
+- `exploration10`: 确定性探索，最高 10 分。
+- `exposurePenalty`: 已曝光内容降权 100 分。
 
 ## 打分
 
-`LightweightMlRanker` 使用固定线性权重输出分数和特征明细。推荐响应包含：
+`RecommendationScorer` 输出总分、特征分解和一条面向用户的推荐理由。推荐响应包含：
 
 - `algorithm`
 - `features`
@@ -24,4 +23,4 @@
 
 ## 降级
 
-当模型不可用或特征缺失时，`dc-recommend` 回退到规则公式：标签匹配、热度、新鲜度、关注作者和曝光惩罚。
+生产环境不使用 Seed 或 Mock 伪造推荐成功。内容、Redis、关注图谱或推荐持久化在严格模式下不可用时返回明确依赖错误；只有显式开启开发读取降级时才允许使用种子候选或缺省特征。

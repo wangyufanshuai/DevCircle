@@ -24,7 +24,7 @@ class FeedServiceDependencyFailureTest {
         RecommendationImpressionRepository impressions = mock(RecommendationImpressionRepository.class);
         when(impressions.activeExperiment(anyString(), anyLong()))
                 .thenReturn(Map.of("experimentId", "exp-theme-feed-v1", "bucket", "control"));
-        FeedService service = new FeedService(new RecommendationScorer(), new LightweightMlRanker(), redis,
+        FeedService service = new FeedService(new RecommendationScorer(), redis,
                 impressions, "http://localhost:8103");
 
         PostSummary post = new PostSummary(1L, "TEXT", "DEDUCTION", "CASE_FILE", "MEDIUM", false, 0,

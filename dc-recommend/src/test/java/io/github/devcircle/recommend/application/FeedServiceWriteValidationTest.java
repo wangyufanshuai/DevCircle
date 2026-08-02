@@ -24,8 +24,8 @@ class FeedServiceWriteValidationTest {
         @SuppressWarnings("unchecked")
         HashOperations<String, Object, Object> hashes = mock(HashOperations.class);
         when(redis.opsForHash()).thenReturn(hashes);
-        service = new FeedService(new RecommendationScorer(), new LightweightMlRanker(),
-                redis, mock(RecommendationImpressionRepository.class),
+        service = new FeedService(new RecommendationScorer(), redis,
+                mock(RecommendationImpressionRepository.class),
                 "http://localhost:8103");
     }
 
