@@ -87,7 +87,7 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 同日 `FileUploadIntegrationTest` 以 MySQL 8.4 + MinIO 真实容器通过 1 项媒体测试：预签名 PUT 上传真实 PNG 魔数，完成校验后媒体保持 `PENDING_REVIEW`、公开 URL 为空，并确认申请/完成幂等记录写入载荷指纹。至此本轮单基础设施真实回归累计 10 项；Elasticsearch、完整 Gateway/多服务 E2E 和目标主机性能仍未验收。
 
-随后 `SearchIndexIntegrationTest` 以 Elasticsearch 9.2.2 真实容器（256MB 堆、单节点、禁用 ML）通过 1 项测试：发布事件写入真实索引后，文档详情和关键词搜索均可读。连同 V19 投影迁移测试，本轮真实基础设施回归累计 16 项，五类基础设施均已有切片证据；完整 Gateway/Compose E2E、跨服务事件追平、性能和恢复演练仍未验收。
+随后 `SearchIndexIntegrationTest` 以 Elasticsearch 9.2.2 真实容器（256MB 堆、单节点、禁用 ML）通过 2 项测试：发布事件写入真实索引后，文档详情和关键词搜索均可读；乱序旧事件不能覆盖新版本，内容驳回后会 refresh 索引并从关键词搜索中立即消失。连同 V19 投影迁移测试，本轮真实基础设施回归累计 17 项，五类基础设施均已有切片证据；完整 Gateway/Compose E2E、跨服务事件追平、性能和恢复演练仍未验收。
 
 2026-08-02 在 `cd75565` 后的完整纯单元/H2 回归为 351 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 76.05%、分支覆盖率为 68.26%，覆盖报告完整性与禁止 skipped 门禁均通过。`dc-user` 为 82.23%/91.84%，本批核心 `UserGraphRepository` 为 99.20%/97.62%。用户 V6 为 `consumer_dedup` 增加事件指纹，并验证迁移会回填旧记录且旧应用省略新列的写入仍可兼容一个版本。注册消费者现在把完整 `ValidatedEvent` 传入资料投影事务：同 ID 同载荷保持幂等，同 ID 更换 topic、发生时间、生产者、聚合标识或 payload 会明确冲突；旧全零记录在首次重放时升级绑定但不会再次修改资料。状态测试通过真实 Spring 事务代理确认资料写入失败会回滚消费者声明，依赖恢复后原事件可用同一 ID 重试。当前本机 Docker 资源不足以执行完整多服务链路，因此 V6 的真实 MySQL 迁移和 Kafka 注册事件重投尚未验证。
 
