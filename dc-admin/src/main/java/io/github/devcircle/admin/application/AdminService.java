@@ -105,8 +105,7 @@ public class AdminService {
         }
     }
 
-    @Transactional
-    public AdminActionResult approve(Long postId, Long auditorId, String traceId, String reason) {
+    private AdminActionResult approveInternal(Long postId, Long auditorId, String traceId, String reason) {
         return auditPost(postId, null, auditorId, traceId, "APPROVE_POST", "PUBLISHED", "APPROVED", EventTopics.AUDIT_COMPLETED, reason);
     }
 
@@ -114,15 +113,10 @@ public class AdminService {
     public AdminActionResult approve(Long postId, Long auditorId, String traceId, String reason, String idempotencyKey) {
         return idempotent(auditorId, "ADMIN_APPROVE_POST:" + postId, idempotencyKey, postId, "APPROVE_POST",
                 requestFingerprint("admin-decision-v1", reason),
-                () -> approve(postId, auditorId, traceId, reason));
+                () -> approveInternal(postId, auditorId, traceId, reason));
     }
 
-    public AdminActionResult approve(Long postId) {
-        return approve(postId, 1L, null, "审核通过");
-    }
-
-    @Transactional
-    public AdminActionResult reject(Long postId, Long auditorId, String traceId, String reason) {
+    private AdminActionResult rejectInternal(Long postId, Long auditorId, String traceId, String reason) {
         return auditPost(postId, null, auditorId, traceId, "REJECT_POST", "REJECTED", "REJECTED", EventTopics.CONTENT_REJECTED, reason);
     }
 
@@ -130,15 +124,10 @@ public class AdminService {
     public AdminActionResult reject(Long postId, Long auditorId, String traceId, String reason, String idempotencyKey) {
         return idempotent(auditorId, "ADMIN_REJECT_POST:" + postId, idempotencyKey, postId, "REJECT_POST",
                 requestFingerprint("admin-decision-v1", reason),
-                () -> reject(postId, auditorId, traceId, reason));
+                () -> rejectInternal(postId, auditorId, traceId, reason));
     }
 
-    public AdminActionResult reject(Long postId) {
-        return reject(postId, 1L, null, "审核驳回");
-    }
-
-    @Transactional
-    public AdminActionResult approveModerationTask(Long taskId, Long auditorId, String traceId, String reason) {
+    private AdminActionResult approveModerationTaskInternal(Long taskId, Long auditorId, String traceId, String reason) {
         Long postId = postIdByTask(taskId);
         return auditPost(postId, taskId, auditorId, traceId, "APPROVE_POST", "PUBLISHED", "APPROVED", EventTopics.AUDIT_COMPLETED, reason);
     }
@@ -147,11 +136,10 @@ public class AdminService {
     public AdminActionResult approveModerationTask(Long taskId, Long auditorId, String traceId, String reason, String idempotencyKey) {
         return idempotent(auditorId, "ADMIN_APPROVE_TASK:" + taskId, idempotencyKey, taskId, "APPROVE_POST",
                 requestFingerprint("admin-decision-v1", reason),
-                () -> approveModerationTask(taskId, auditorId, traceId, reason));
+                () -> approveModerationTaskInternal(taskId, auditorId, traceId, reason));
     }
 
-    @Transactional
-    public AdminActionResult rejectModerationTask(Long taskId, Long auditorId, String traceId, String reason) {
+    private AdminActionResult rejectModerationTaskInternal(Long taskId, Long auditorId, String traceId, String reason) {
         Long postId = postIdByTask(taskId);
         return auditPost(postId, taskId, auditorId, traceId, "REJECT_POST", "REJECTED", "REJECTED", EventTopics.CONTENT_REJECTED, reason);
     }
@@ -160,37 +148,29 @@ public class AdminService {
     public AdminActionResult rejectModerationTask(Long taskId, Long auditorId, String traceId, String reason, String idempotencyKey) {
         return idempotent(auditorId, "ADMIN_REJECT_TASK:" + taskId, idempotencyKey, taskId, "REJECT_POST",
                 requestFingerprint("admin-decision-v1", reason),
-                () -> rejectModerationTask(taskId, auditorId, traceId, reason));
+                () -> rejectModerationTaskInternal(taskId, auditorId, traceId, reason));
     }
 
-    @Transactional
-    public AdminActionResult escalateModerationTask(Long taskId, Long auditorId, String traceId, String decisionReason) {
-        if (decisionReason != null) {
-            return updateModerationTask(taskId, auditorId, traceId, "ESCALATE_REVIEW", "ESCALATED", "ESCALATED", decisionReason);
-        }
-        return updateModerationTask(taskId, auditorId, traceId, "ESCALATE_REVIEW", "ESCALATED", "ESCALATED", "升级复审");
+    private AdminActionResult escalateModerationTaskInternal(Long taskId, Long auditorId, String traceId, String reason) {
+        return updateModerationTask(taskId, auditorId, traceId, "ESCALATE_REVIEW", "ESCALATED", "ESCALATED", reason);
     }
 
     @Transactional
     public AdminActionResult escalateModerationTask(Long taskId, Long auditorId, String traceId, String reason, String idempotencyKey) {
         return idempotent(auditorId, "ADMIN_ESCALATE_TASK:" + taskId, idempotencyKey, taskId, "ESCALATE_REVIEW",
                 requestFingerprint("admin-decision-v1", reason),
-                () -> escalateModerationTask(taskId, auditorId, traceId, reason));
+                () -> escalateModerationTaskInternal(taskId, auditorId, traceId, reason));
     }
 
-    @Transactional
-    public AdminActionResult requireChanges(Long taskId, Long auditorId, String traceId, String decisionReason) {
-        if (decisionReason != null) {
-            return updateModerationTask(taskId, auditorId, traceId, "REQUIRE_CHANGES", "CHANGES_REQUIRED", "NORMAL", decisionReason);
-        }
-        return updateModerationTask(taskId, auditorId, traceId, "REQUIRE_CHANGES", "CHANGES_REQUIRED", "NORMAL", "要求作者修改");
+    private AdminActionResult requireChangesInternal(Long taskId, Long auditorId, String traceId, String reason) {
+        return updateModerationTask(taskId, auditorId, traceId, "REQUIRE_CHANGES", "CHANGES_REQUIRED", "NORMAL", reason);
     }
 
     @Transactional
     public AdminActionResult requireChanges(Long taskId, Long auditorId, String traceId, String reason, String idempotencyKey) {
         return idempotent(auditorId, "ADMIN_REQUIRE_CHANGES:" + taskId, idempotencyKey, taskId, "REQUIRE_CHANGES",
                 requestFingerprint("admin-decision-v1", reason),
-                () -> requireChanges(taskId, auditorId, traceId, reason));
+                () -> requireChangesInternal(taskId, auditorId, traceId, reason));
     }
 
     public List<Map<String, Object>> appeals(String status, int page, int size) {

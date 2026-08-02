@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class AdminServiceTest {
     @Test
     void moderationWriteNeverReturnsFakeSuccessWithoutDatabase() {
-        assertThatThrownBy(() -> new AdminService().approve(1002L))
+        assertThatThrownBy(() -> new AdminService().approve(1002L, 9L, "trace", "审核通过", "approve-1002"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         ex -> assertThat(ex.code()).isEqualTo(ErrorCode.DEPENDENCY_UNAVAILABLE));
     }

@@ -349,6 +349,13 @@ class AdminServiceStateTest {
         assertCode(() -> service.approveModerationTask(taskId, 9L, "trace", " ", "reason-key"),
                 ErrorCode.VALIDATION_FAILED);
         assertThat(idempotencyCount("reason-key")).isZero();
+        assertCode(() -> service.escalateModerationTask(taskId, 9L, "trace", null, "escalate-reason-key"),
+                ErrorCode.VALIDATION_FAILED);
+        assertThat(idempotencyCount("escalate-reason-key")).isZero();
+        assertCode(() -> service.requireChanges(taskId, 9L, "trace", " ", "changes-reason-key"),
+                ErrorCode.VALIDATION_FAILED);
+        assertThat(idempotencyCount("changes-reason-key")).isZero();
+        assertThat(taskStatus(taskId)).isEqualTo("PENDING");
         assertCode(() -> service.approveModerationTask(taskId, 9L, "trace", "x".repeat(513), "long-reason-key"),
                 ErrorCode.VALIDATION_FAILED);
         assertThat(idempotencyCount("long-reason-key")).isZero();
