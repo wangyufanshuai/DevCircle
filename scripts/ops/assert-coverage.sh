@@ -1,8 +1,37 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-line_min="${MIN_LINE_COVERAGE:-35.0}"
-branch_min="${MIN_BRANCH_COVERAGE:-32.0}"
+line_min="${MIN_LINE_COVERAGE:-68.0}"
+branch_min="${MIN_BRANCH_COVERAGE:-64.0}"
+required_modules_csv="${REQUIRED_COVERAGE_MODULES:-dc-common,dc-gateway,dc-identity,dc-content-deployment,dc-auth,dc-user,dc-content,dc-comment,dc-interaction,dc-search,dc-recommend,dc-notification,dc-file,dc-admin}"
+allowed_missing_csv="${ALLOW_MISSING_COVERAGE_MODULES:-}"
+
+IFS=',' read -r -a required_modules <<<"${required_modules_csv}"
+declare -A allowed_missing=()
+IFS=',' read -r -a allowed_modules <<<"${allowed_missing_csv}"
+for module in "${allowed_modules[@]}"; do
+  [[ -n "${module}" ]] && allowed_missing["${module}"]=1
+done
+
+missing_modules=()
+for module in "${required_modules[@]}"; do
+  [[ -n "${module}" ]] || { echo "REQUIRED_COVERAGE_MODULES contains an empty module name" >&2; exit 1; }
+  report="./${module}/target/site/jacoco/jacoco.xml"
+  if [[ ! -f "${report}" ]]; then
+    if [[ -n "${allowed_missing[${module}]:-}" ]]; then
+      echo "Coverage report intentionally absent for ${module}" >&2
+    else
+      missing_modules+=("${module}")
+    fi
+  fi
+done
+
+if (( ${#missing_modules[@]} > 0 )); then
+  printf 'Missing required JaCoCo reports for:' >&2
+  printf ' %s' "${missing_modules[@]}" >&2
+  printf '\nRun the full coverage suite; do not treat a partial aggregate as complete.\n' >&2
+  exit 1
+fi
 
 shopt -s nullglob
 reports=(./dc-*/target/site/jacoco/jacoco.xml)
