@@ -1,6 +1,7 @@
 package io.github.devcircle.search.application;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.search.infrastructure.PostSearchDocument;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,7 +34,7 @@ class SearchServiceEventTest {
     void rejectedContentIsRemovedWithoutCallingThePublicDetailEndpoint() throws Exception {
         String eventId = "44444444-4444-4444-4444-444444444444";
         Instant occurredAt = Instant.parse("2026-07-30T12:00:00Z");
-        when(coordinator.claim(eventId, "content.rejected", 91L, occurredAt)).thenReturn(true);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(91L))).thenReturn(true);
 
         service.upsertPostFromEvent("""
                 {"eventId":"44444444-4444-4444-4444-444444444444","type":"content.rejected","version":1,
@@ -49,7 +50,7 @@ class SearchServiceEventTest {
     void duplicateOrStaleEventDoesNotTouchElasticsearch() throws Exception {
         String eventId = "55555555-5555-5555-5555-555555555555";
         Instant occurredAt = Instant.parse("2026-07-30T12:30:00Z");
-        when(coordinator.claim(eventId, "post.deleted", 92L, occurredAt)).thenReturn(false);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(92L))).thenReturn(false);
 
         service.deletePostEvent("""
                 {"eventId":"55555555-5555-5555-5555-555555555555","type":"post.deleted","version":1,
@@ -65,7 +66,7 @@ class SearchServiceEventTest {
     void indexingFailureIsRecordedAndRetriedByKafka() {
         String eventId = "66666666-6666-6666-6666-666666666666";
         Instant occurredAt = Instant.parse("2026-07-30T13:00:00Z");
-        when(coordinator.claim(eventId, "post.created", 93L, occurredAt)).thenReturn(true);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(93L))).thenReturn(true);
         when(operations.save(any(PostSearchDocument.class))).thenThrow(new IllegalStateException("elasticsearch unavailable"));
 
         assertThatThrownBy(() -> service.upsertPostFromEvent("""
@@ -103,7 +104,7 @@ class SearchServiceEventTest {
     void nonTextualStatusIsRecordedAsAFailedIndexingAttempt() {
         String eventId = "9e45e6c2-3020-43bd-818d-f61b629d6ce1";
         Instant occurredAt = Instant.parse("2026-07-30T14:00:00Z");
-        when(coordinator.claim(eventId, "post.updated", 97L, occurredAt)).thenReturn(true);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(97L))).thenReturn(true);
 
         assertThatThrownBy(() -> service.upsertPostFromEvent("""
                 {"eventId":"9e45e6c2-3020-43bd-818d-f61b629d6ce1","type":"post.updated","version":1,

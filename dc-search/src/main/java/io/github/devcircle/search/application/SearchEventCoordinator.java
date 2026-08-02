@@ -1,5 +1,7 @@
 package io.github.devcircle.search.application;
 
+import io.github.devcircle.common.event.EventFingerprint;
+import io.github.devcircle.common.event.ValidatedEvent;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -9,45 +11,47 @@ import java.time.Instant;
 
 @Component
 class SearchEventCoordinator {
+    private static final String LEGACY_FINGERPRINT = "0".repeat(64);
+
     private final JdbcClient jdbcClient;
 
     SearchEventCoordinator(JdbcClient jdbcClient) {
         this.jdbcClient = jdbcClient;
     }
 
-    @Transactional
-    public boolean claim(String eventId, String topic, long postId, Instant occurredAt) {
+    @Transactional(noRollbackFor = SearchAggregateBusyException.class)
+    public boolean claim(ValidatedEvent event, long postId) {
+        String eventId = event.eventId().toString();
+        String topic = event.type();
+        Instant occurredAt = event.occurredAt();
+        String eventFingerprint = EventFingerprint.sha256(event);
         int inserted = jdbcClient.sql("""
-                        INSERT IGNORE INTO search_consumer_dedup(event_id, topic, post_id, status, attempts)
-                        VALUES (:eventId, :topic, :postId, 'PROCESSING', 1)
+                        INSERT IGNORE INTO search_consumer_dedup(
+                            event_id, topic, post_id, event_fingerprint, status, attempts)
+                        VALUES (:eventId, :topic, :postId, :eventFingerprint, 'PROCESSING', 1)
                         """)
                 .param("eventId", eventId)
                 .param("topic", topic)
                 .param("postId", postId)
+                .param("eventFingerprint", eventFingerprint)
                 .update();
         if (inserted == 0) {
-            EventIdentity identity = jdbcClient.sql("""
-                            SELECT topic, post_id
-                            FROM search_consumer_dedup
-                            WHERE event_id = :eventId
-                            """)
-                    .param("eventId", eventId)
-                    .query((rs, rowNum) -> new EventIdentity(rs.getString("topic"), rs.getLong("post_id")))
-                    .single();
-            if (!topic.equals(identity.topic()) || postId != identity.postId()) {
-                throw new IllegalArgumentException("Search event ID is already bound to "
-                        + identity.topic() + "/" + identity.postId());
-            }
+            validateIdentity(loadIdentity(eventId), topic, postId, eventFingerprint);
             int reclaimed = jdbcClient.sql("""
                             UPDATE search_consumer_dedup
-                            SET status = 'PROCESSING', attempts = attempts + 1, last_error = NULL
+                            SET status = 'PROCESSING', attempts = attempts + 1, last_error = NULL,
+                                event_fingerprint = :eventFingerprint
                             WHERE event_id = :eventId
+                              AND event_fingerprint IN (:eventFingerprint, :legacyFingerprint)
                               AND (status = 'FAILED'
                                 OR (status = 'PROCESSING' AND updated_at < TIMESTAMPADD(MINUTE, -5, CURRENT_TIMESTAMP)))
                             """)
                     .param("eventId", eventId)
+                    .param("eventFingerprint", eventFingerprint)
+                    .param("legacyFingerprint", LEGACY_FINGERPRINT)
                     .update();
             if (reclaimed == 0) {
+                validateIdentity(loadIdentity(eventId), topic, postId, eventFingerprint);
                 return false;
             }
         }
@@ -71,7 +75,8 @@ class SearchEventCoordinator {
                 .update();
         if (leased == 0) {
             markFailedRecord(eventId, "search aggregate is busy");
-            throw new IllegalStateException("Search event for post " + postId + " is already being processed");
+            throw new SearchAggregateBusyException(
+                    "Search event for post " + postId + " is already being processed");
         }
 
         EventWatermark watermark = jdbcClient.sql("""
@@ -89,6 +94,31 @@ class SearchEventCoordinator {
             return false;
         }
         return true;
+    }
+
+    private EventIdentity loadIdentity(String eventId) {
+        return jdbcClient.sql("""
+                        SELECT topic, post_id, event_fingerprint
+                        FROM search_consumer_dedup
+                        WHERE event_id = :eventId
+                        """)
+                .param("eventId", eventId)
+                .query((rs, rowNum) -> new EventIdentity(
+                        rs.getString("topic"),
+                        rs.getLong("post_id"),
+                        rs.getString("event_fingerprint")))
+                .single();
+    }
+
+    private void validateIdentity(EventIdentity identity, String topic, long postId, String eventFingerprint) {
+        if (!topic.equals(identity.topic()) || postId != identity.postId()) {
+            throw new IllegalArgumentException("Search event ID is already bound to "
+                    + identity.topic() + "/" + identity.postId());
+        }
+        if (!LEGACY_FINGERPRINT.equals(identity.eventFingerprint())
+                && !eventFingerprint.equals(identity.eventFingerprint())) {
+            throw new IllegalArgumentException("Search event ID is already bound to a different payload");
+        }
     }
 
     @Transactional
@@ -158,6 +188,12 @@ class SearchEventCoordinator {
     private record EventWatermark(Instant occurredAt) {
     }
 
-    private record EventIdentity(String topic, long postId) {
+    private record EventIdentity(String topic, long postId, String eventFingerprint) {
+    }
+
+    static final class SearchAggregateBusyException extends IllegalStateException {
+        SearchAggregateBusyException(String message) {
+            super(message);
+        }
     }
 }

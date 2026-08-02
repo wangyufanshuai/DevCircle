@@ -155,7 +155,7 @@ public class SearchService {
             throw new IllegalArgumentException("Search aggregateId does not match postId");
         }
         Instant occurredAt = event.occurredAt();
-        if (!eventCoordinator.claim(eventId, topic, postId, occurredAt)) {
+        if (!eventCoordinator.claim(event, postId)) {
             return;
         }
         try {
@@ -207,7 +207,7 @@ public class SearchService {
         if (!event.aggregateId().equals(Long.toString(postId))) {
             throw new IllegalArgumentException("Search aggregateId does not match postId");
         }
-        if (!eventCoordinator.claim(eventId, topic, postId, occurredAt)) {
+        if (!eventCoordinator.claim(event, postId)) {
             return;
         }
         try {

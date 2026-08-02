@@ -2,6 +2,7 @@ package io.github.devcircle.search.application;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
+import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.search.infrastructure.PostSearchDocument;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -64,7 +65,7 @@ class SearchServiceProjectionContractTest {
                 """);
         String eventId = "11111111-2222-4333-8444-555555555555";
         Instant occurredAt = Instant.parse("2026-07-30T11:00:00Z");
-        when(coordinator.claim(eventId, "post.updated", 101L, occurredAt)).thenReturn(true);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(101L))).thenReturn(true);
         when(operations.indexOps(PostSearchDocument.class)).thenReturn(mock(IndexOperations.class));
 
         service.upsertPostFromEvent("""
@@ -95,7 +96,7 @@ class SearchServiceProjectionContractTest {
                 """);
         String eventId = "22222222-3333-4444-8555-666666666666";
         Instant occurredAt = Instant.parse("2026-07-30T12:00:00Z");
-        when(coordinator.claim(eventId, "post.updated", 102L, occurredAt)).thenReturn(true);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(102L))).thenReturn(true);
 
         service.upsertPostFromEvent("""
                 {"eventId":"22222222-3333-4444-8555-666666666666","type":"post.updated","version":1,
@@ -114,7 +115,7 @@ class SearchServiceProjectionContractTest {
         Instant occurredAt = Instant.parse("2026-07-30T13:00:00Z");
         IllegalStateException indexFailure = new IllegalStateException("elasticsearch unavailable");
         IllegalStateException stateFailure = new IllegalStateException("dedup storage unavailable");
-        when(coordinator.claim(eventId, "post.deleted", 103L, occurredAt)).thenReturn(true);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(103L))).thenReturn(true);
         when(operations.delete("103", PostSearchDocument.class)).thenThrow(indexFailure);
         org.mockito.Mockito.doThrow(stateFailure).when(coordinator).fail(eq(eventId), eq(103L), eq(indexFailure));
 

@@ -27,5 +27,18 @@ class SearchMigrationTest {
                 .query(Integer.class)
                 .single();
         assertThat(tables).isEqualTo(2);
+
+        jdbcClient.sql("""
+                        INSERT INTO search_consumer_dedup(event_id, topic, post_id)
+                        VALUES ('11111111-1111-1111-1111-111111111111', 'post.updated', 42)
+                        """)
+                .update();
+        String legacyFingerprint = jdbcClient.sql("""
+                        SELECT event_fingerprint FROM search_consumer_dedup
+                        WHERE event_id = '11111111-1111-1111-1111-111111111111'
+                        """)
+                .query(String.class)
+                .single();
+        assertThat(legacyFingerprint).isEqualTo("0".repeat(64));
     }
 }
