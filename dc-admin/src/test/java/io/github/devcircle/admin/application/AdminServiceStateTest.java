@@ -4,6 +4,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
+import io.github.devcircle.common.event.EventEnvelopeValidator;
+import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.common.event.ValidatedEvent;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -205,6 +208,45 @@ class AdminServiceStateTest {
                 ErrorCode.DUPLICATE_OPERATION);
         assertCode(() -> service.approveModerationTask(requested, 10L, "trace", "另一个审核员", "approve-task"),
                 ErrorCode.DUPLICATE_OPERATION);
+    }
+
+    @Test
+    void moderationOutboxUsesTheSharedVersionedEnvelopeContract() throws Exception {
+        long postId = post(17L, "审核事件契约档案", "PENDING");
+        long taskId = task(postId, 17L, "PENDING");
+
+        service.approveModerationTask(taskId, 9L, "trace-event-contract",
+                "事件载荷需要能够被下游严格解析", "approve-event-contract");
+
+        Map<String, Object> row = jdbcClient.sql("""
+                        SELECT event_id, topic, aggregate_type, aggregate_id, payload
+                        FROM outbox_event
+                        """)
+                .query((rs, rowNum) -> Map.<String, Object>of(
+                        "eventId", rs.getString("event_id"),
+                        "topic", rs.getString("topic"),
+                        "aggregateType", rs.getString("aggregate_type"),
+                        "aggregateId", rs.getString("aggregate_id"),
+                        "payload", rs.getString("payload")))
+                .single();
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        String storedPayload = String.valueOf(row.get("payload"));
+        var storedJson = mapper.readTree(storedPayload);
+        String message = storedJson.isTextual() ? storedJson.textValue() : storedPayload;
+        ValidatedEvent event = new EventEnvelopeValidator(mapper)
+                .parse(message, Map.of(EventTopics.AUDIT_COMPLETED, java.util.Set.of("dc-admin")));
+
+        assertThat(row).containsEntry("eventId", event.eventId().toString())
+                .containsEntry("topic", EventTopics.AUDIT_COMPLETED)
+                .containsEntry("aggregateType", "POST_AUDIT")
+                .containsEntry("aggregateId", String.valueOf(postId));
+        assertThat(event.version()).isEqualTo(1);
+        assertThat(event.producer()).isEqualTo("dc-admin");
+        assertThat(event.aggregateId()).isEqualTo(String.valueOf(postId));
+        assertThat(event.payload().path("postId").asLong()).isEqualTo(postId);
+        assertThat(event.payload().path("receiverId").asLong()).isEqualTo(17L);
+        assertThat(event.payload().path("action").asText()).isEqualTo("APPROVE_POST");
+        assertThat(event.payload().path("status").asText()).isEqualTo("PUBLISHED");
     }
 
     @Test
