@@ -119,6 +119,7 @@ class PostRepositoryStateTest {
                     idempotency_key VARCHAR(128) PRIMARY KEY,
                     user_id BIGINT NOT NULL,
                     operation VARCHAR(48) NOT NULL,
+                    request_fingerprint CHAR(64) NOT NULL,
                     resource_id BIGINT NULL,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
                 """).update();
@@ -148,6 +149,41 @@ class PostRepositoryStateTest {
                     revealed BOOLEAN NOT NULL DEFAULT FALSE,
                     points INT NOT NULL DEFAULT 0,
                     UNIQUE(user_id, post_id))
+                """).update();
+        jdbcClient.sql("""
+                CREATE TABLE post_audit_record (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    post_id BIGINT NOT NULL,
+                    auditor_id BIGINT NULL,
+                    action VARCHAR(48) NOT NULL,
+                    reason VARCHAR(512) NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
+        jdbcClient.sql("""
+                CREATE TABLE moderation_task (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    post_id BIGINT NOT NULL,
+                    author_id BIGINT NOT NULL,
+                    queue_name VARCHAR(64) NOT NULL,
+                    machine_result VARCHAR(64) NOT NULL,
+                    risk_level VARCHAR(32) NOT NULL,
+                    risk_score DOUBLE NOT NULL,
+                    reason VARCHAR(512) NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+                    review_level VARCHAR(32) NOT NULL DEFAULT 'NORMAL',
+                    sla_deadline TIMESTAMP NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
+        jdbcClient.sql("""
+                CREATE TABLE outbox_event (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    event_id CHAR(36) NOT NULL UNIQUE,
+                    topic VARCHAR(128) NOT NULL,
+                    aggregate_type VARCHAR(64) NOT NULL,
+                    aggregate_id VARCHAR(64) NOT NULL,
+                    payload JSON NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'NEW',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
                 """).update();
     }
 
@@ -184,6 +220,50 @@ class PostRepositoryStateTest {
         var retried = repository.updateDraft(7L, created.id(), draft(List.of("最终版本"), updated.version()), "retry-key");
         assertThat(retried.version()).isEqualTo(2);
         assertThat(retried.tags()).containsExactly("最终版本");
+    }
+
+    @Test
+    void idempotencyKeyCannotReplayADifferentDraftPayload() {
+        SaveDraftRequest original = draft(List.of("推理"), null);
+        var created = repository.createDraft(7L, original, "payload-bound-create");
+        var replay = repository.createDraft(7L, original, "payload-bound-create");
+
+        assertThat(replay.id()).isEqualTo(created.id());
+        assertCode(() -> repository.createDraft(7L, draft(List.of("宇宙"), null), "payload-bound-create"),
+                ErrorCode.DUPLICATE_OPERATION);
+        assertThat(count("post")).isEqualTo(1);
+        assertThat(repository.getDraft(7L, created.id()).tags()).containsExactly("推理");
+
+        SaveDraftRequest update = draft(List.of("线索"), 0L);
+        var saved = repository.updateDraft(7L, created.id(), update, "payload-bound-update");
+        assertThat(repository.updateDraft(7L, created.id(), update, "payload-bound-update").version())
+                .isEqualTo(saved.version());
+        assertCode(() -> repository.updateDraft(7L, created.id(), draft(List.of("篡改"), 0L),
+                "payload-bound-update"), ErrorCode.DUPLICATE_OPERATION);
+        assertThat(repository.getDraft(7L, created.id()).tags()).containsExactly("线索");
+
+        var submitted = repository.submitDraft(7L, created.id(), saved.version(), "payload-bound-submit");
+        assertThat(repository.submitDraft(7L, created.id(), saved.version(), "payload-bound-submit").status())
+                .isEqualTo(submitted.status());
+        assertCode(() -> repository.submitDraft(7L, created.id(), submitted.version(), "payload-bound-submit"),
+                ErrorCode.DUPLICATE_OPERATION);
+    }
+
+    @Test
+    void legacyFingerprintKeepsSameOperationReplayCompatibleForOneVersion() {
+        var created = repository.createDraft(7L, draft(List.of("旧请求"), null), "legacy-content-key");
+        jdbcClient.sql("""
+                        UPDATE content_idempotency_record
+                        SET request_fingerprint = :legacy
+                        WHERE idempotency_key = 'legacy-content-key'
+                        """)
+                .param("legacy", "0".repeat(64)).update();
+
+        var replay = repository.createDraft(7L, draft(List.of("升级后的请求"), null), "legacy-content-key");
+
+        assertThat(replay.id()).isEqualTo(created.id());
+        assertThat(replay.tags()).containsExactly("旧请求");
+        assertThat(count("post")).isEqualTo(1);
     }
 
     @Test

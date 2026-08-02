@@ -30,6 +30,8 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -37,6 +39,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,6 +48,7 @@ import java.util.UUID;
 
 @Repository
 public class PostRepository {
+    private static final String LEGACY_REQUEST_FINGERPRINT = "0".repeat(64);
     private final JdbcTemplate jdbcTemplate;
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
@@ -451,7 +455,10 @@ public class PostRepository {
 
     @Transactional
     public PostSummary create(Long authorId, CreatePostRequest request, String idempotencyKey) {
-        Long existingId = claimIdempotency(authorId, "CREATE_POST", idempotencyKey);
+        Long existingId = claimIdempotency(authorId, "CREATE_POST", idempotencyKey,
+                requestFingerprint("create-post-v1", request.title(), request.content(), request.tags(), request.type(),
+                        request.mediaIds(), request.theme(), request.contentKind(), request.difficulty(),
+                        request.solvable(), request.clues(), request.solution()));
         if (existingId != null) {
             return detail(existingId);
         }
@@ -509,7 +516,8 @@ public class PostRepository {
 
     @Transactional
     public DraftView createDraft(Long authorId, SaveDraftRequest request, String idempotencyKey) {
-        Long existingId = claimIdempotency(authorId, "CREATE_DRAFT", idempotencyKey);
+        Long existingId = claimIdempotency(authorId, "CREATE_DRAFT", idempotencyKey,
+                draftFingerprint(request));
         if (existingId != null) {
             return getDraft(authorId, existingId);
         }
@@ -563,7 +571,8 @@ public class PostRepository {
 
     @Transactional
     public DraftView updateDraft(Long authorId, Long draftId, SaveDraftRequest request, String idempotencyKey) {
-        Long duplicateId = claimIdempotency(authorId, "UPDATE_DRAFT:" + draftId, idempotencyKey);
+        Long duplicateId = claimIdempotency(authorId, "UPDATE_DRAFT:" + draftId, idempotencyKey,
+                draftFingerprint(request));
         if (duplicateId != null) {
             return getDraft(authorId, duplicateId);
         }
@@ -597,7 +606,8 @@ public class PostRepository {
 
     @Transactional
     public DraftView submitDraft(Long authorId, Long draftId, long version, String idempotencyKey) {
-        Long duplicateId = claimIdempotency(authorId, "SUBMIT_DRAFT:" + draftId, idempotencyKey);
+        Long duplicateId = claimIdempotency(authorId, "SUBMIT_DRAFT:" + draftId, idempotencyKey,
+                requestFingerprint("submit-draft-v1", draftId, version));
         if (duplicateId != null) {
             return getDraft(authorId, duplicateId);
         }
@@ -694,7 +704,8 @@ public class PostRepository {
 
     @Transactional
     public Map<String, Object> createAppeal(Long userId, Long postId, String reason, String idempotencyKey) {
-        Long existingId = claimIdempotency(userId, "CREATE_APPEAL:" + postId, idempotencyKey);
+        Long existingId = claimIdempotency(userId, "CREATE_APPEAL:" + postId, idempotencyKey,
+                requestFingerprint("create-appeal-v1", postId, reason));
         if (existingId != null) {
             AppealState existing = jdbcClient.sql("SELECT post_id, status FROM appeal_record WHERE id = :appealId")
                     .param("appealId", existingId)
@@ -976,28 +987,35 @@ public class PostRepository {
     private record AppealState(long postId, String status) {
     }
 
-    private Long claimIdempotency(Long userId, String operation, String idempotencyKey) {
+    private Long claimIdempotency(Long userId, String operation, String idempotencyKey,
+                                  String requestFingerprint) {
         int inserted = jdbcClient.sql("""
-                        INSERT IGNORE INTO content_idempotency_record(idempotency_key, user_id, operation)
-                        VALUES (:key, :userId, :operation)
+                        INSERT IGNORE INTO content_idempotency_record(
+                            idempotency_key, user_id, operation, request_fingerprint)
+                        VALUES (:key, :userId, :operation, :requestFingerprint)
                         """)
                 .param("key", idempotencyKey)
                 .param("userId", userId)
                 .param("operation", operation)
+                .param("requestFingerprint", requestFingerprint)
                 .update();
         if (inserted == 1) {
             return null;
         }
         IdempotencyRecord existing = jdbcClient.sql("""
-                        SELECT user_id, operation, resource_id
+                        SELECT user_id, operation, request_fingerprint, resource_id
                         FROM content_idempotency_record WHERE idempotency_key = :key
                         """)
                 .param("key", idempotencyKey)
                 .query((rs, rowNum) -> new IdempotencyRecord(
-                        rs.getLong("user_id"), rs.getString("operation"), (Long) rs.getObject("resource_id")))
+                        rs.getLong("user_id"), rs.getString("operation"), rs.getString("request_fingerprint"),
+                        (Long) rs.getObject("resource_id")))
                 .single();
-        if (!existing.userId().equals(userId) || !existing.operation().equals(operation)) {
-            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已被其他写操作使用");
+        boolean legacyRecord = LEGACY_REQUEST_FINGERPRINT.equals(existing.requestFingerprint());
+        if (!existing.userId().equals(userId) || !existing.operation().equals(operation)
+                || (!legacyRecord && !existing.requestFingerprint().equals(requestFingerprint))) {
+            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION,
+                    "Idempotency-Key 已被其他写操作或请求载荷使用");
         }
         if (existing.resourceId() == null) {
             throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "相同请求正在处理中");
@@ -1010,6 +1028,32 @@ public class PostRepository {
                 .param("resourceId", resourceId)
                 .param("key", idempotencyKey)
                 .update();
+    }
+
+    private String draftFingerprint(SaveDraftRequest request) {
+        return requestFingerprint("draft-v1", request.title(), request.content(), request.tags(), request.type(),
+                request.mediaIds(), request.media(), request.theme(), request.contentKind(), request.difficulty(),
+                request.solvable(), request.clues(), request.suspects(), request.timeline(), request.question(),
+                request.answerKeywords(), request.solution(), request.version());
+    }
+
+    private String requestFingerprint(Object... values) {
+        StringBuilder canonical = new StringBuilder();
+        for (Object value : values) {
+            if (value == null) {
+                canonical.append("-1:|");
+            } else {
+                String text = String.valueOf(value);
+                canonical.append(text.length()).append(':').append(text).append('|');
+            }
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is unavailable", ex);
+        }
     }
 
     private void assertDraftWritable(Long authorId, Long draftId) {
@@ -1263,7 +1307,8 @@ public class PostRepository {
         ModerationRisk risk = moderationRisk(request);
         jdbcClient.sql("""
                         INSERT INTO moderation_task(post_id, author_id, queue_name, machine_result, risk_level, risk_score, reason, status, review_level, sla_deadline)
-                        VALUES (:postId, :authorId, :queueName, :machineResult, :riskLevel, :riskScore, :reason, 'PENDING', :reviewLevel, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL :slaHours HOUR))
+                        VALUES (:postId, :authorId, :queueName, :machineResult, :riskLevel, :riskScore, :reason,
+                                'PENDING', :reviewLevel, TIMESTAMPADD(HOUR, :slaHours, CURRENT_TIMESTAMP))
                         """)
                 .param("postId", postId)
                 .param("authorId", authorId)
@@ -1389,6 +1434,6 @@ public class PostRepository {
     private record ModerationRisk(String queueName, String machineResult, String riskLevel, double score, String reason, String reviewLevel, int slaHours, String signalType) {
     }
 
-    private record IdempotencyRecord(Long userId, String operation, Long resourceId) {
+    private record IdempotencyRecord(Long userId, String operation, String requestFingerprint, Long resourceId) {
     }
 }

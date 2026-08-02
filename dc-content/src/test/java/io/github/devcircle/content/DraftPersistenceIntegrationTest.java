@@ -90,6 +90,26 @@ class DraftPersistenceIntegrationTest {
     }
 
     @Test
+    void contentWriteKeysAreBoundToRequestFingerprints() {
+        String fingerprint = "b".repeat(64);
+        jdbcClient.sql("""
+                        INSERT INTO content_idempotency_record(
+                            idempotency_key, user_id, operation, request_fingerprint)
+                        VALUES ('content-migration-probe', 42, 'CREATE_DRAFT', :fingerprint)
+                        """)
+                .param("fingerprint", fingerprint)
+                .update();
+
+        assertThat(jdbcClient.sql("""
+                        SELECT request_fingerprint
+                        FROM content_idempotency_record
+                        WHERE idempotency_key = 'content-migration-probe'
+                        """)
+                .query(String.class)
+                .single()).isEqualTo(fingerprint);
+    }
+
+    @Test
     void submittedDraftBecomesPendingAndRemainsUnavailableToPublicReaders() {
         var created = postRepository.createDraft(43L, draft("未公开的钟楼答案", "只有审核通过后才能看到。", null),
                 "create-pending-draft");

@@ -14,8 +14,12 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.List;
 import java.util.LinkedHashMap;
+import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -24,6 +28,7 @@ import java.util.function.Supplier;
 
 @Service
 public class AdminService {
+    private static final String LEGACY_REQUEST_FINGERPRINT = "0".repeat(64);
     private static final Set<String> RESTRICTION_STATUSES = Set.of("WATCH", "RATE_LIMITED", "NO_POST", "BANNED");
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
@@ -108,6 +113,7 @@ public class AdminService {
     @Transactional
     public AdminActionResult approve(Long postId, Long auditorId, String traceId, String reason, String idempotencyKey) {
         return idempotent(auditorId, "ADMIN_APPROVE_POST:" + postId, idempotencyKey, postId, "APPROVE_POST",
+                requestFingerprint("admin-decision-v1", reason),
                 () -> approve(postId, auditorId, traceId, reason));
     }
 
@@ -123,6 +129,7 @@ public class AdminService {
     @Transactional
     public AdminActionResult reject(Long postId, Long auditorId, String traceId, String reason, String idempotencyKey) {
         return idempotent(auditorId, "ADMIN_REJECT_POST:" + postId, idempotencyKey, postId, "REJECT_POST",
+                requestFingerprint("admin-decision-v1", reason),
                 () -> reject(postId, auditorId, traceId, reason));
     }
 
@@ -139,6 +146,7 @@ public class AdminService {
     @Transactional
     public AdminActionResult approveModerationTask(Long taskId, Long auditorId, String traceId, String reason, String idempotencyKey) {
         return idempotent(auditorId, "ADMIN_APPROVE_TASK:" + taskId, idempotencyKey, taskId, "APPROVE_POST",
+                requestFingerprint("admin-decision-v1", reason),
                 () -> approveModerationTask(taskId, auditorId, traceId, reason));
     }
 
@@ -151,6 +159,7 @@ public class AdminService {
     @Transactional
     public AdminActionResult rejectModerationTask(Long taskId, Long auditorId, String traceId, String reason, String idempotencyKey) {
         return idempotent(auditorId, "ADMIN_REJECT_TASK:" + taskId, idempotencyKey, taskId, "REJECT_POST",
+                requestFingerprint("admin-decision-v1", reason),
                 () -> rejectModerationTask(taskId, auditorId, traceId, reason));
     }
 
@@ -165,6 +174,7 @@ public class AdminService {
     @Transactional
     public AdminActionResult escalateModerationTask(Long taskId, Long auditorId, String traceId, String reason, String idempotencyKey) {
         return idempotent(auditorId, "ADMIN_ESCALATE_TASK:" + taskId, idempotencyKey, taskId, "ESCALATE_REVIEW",
+                requestFingerprint("admin-decision-v1", reason),
                 () -> escalateModerationTask(taskId, auditorId, traceId, reason));
     }
 
@@ -179,6 +189,7 @@ public class AdminService {
     @Transactional
     public AdminActionResult requireChanges(Long taskId, Long auditorId, String traceId, String reason, String idempotencyKey) {
         return idempotent(auditorId, "ADMIN_REQUIRE_CHANGES:" + taskId, idempotencyKey, taskId, "REQUIRE_CHANGES",
+                requestFingerprint("admin-decision-v1", reason),
                 () -> requireChanges(taskId, auditorId, traceId, reason));
     }
 
@@ -218,6 +229,7 @@ public class AdminService {
         String operation = approved ? "APPROVE_APPEAL" : "REJECT_APPEAL";
         String resultAction = approved ? "APPEAL_APPROVED" : "APPEAL_REJECTED";
         return idempotent(auditorId, "ADMIN_" + operation + ":" + appealId, idempotencyKey, appealId, resultAction,
+                requestFingerprint("admin-appeal-v1", approved, reason),
                 () -> resolveAppeal(appealId, auditorId, traceId, reason, approved));
     }
 
@@ -367,6 +379,7 @@ public class AdminService {
         String normalizedStatus = normalizeRestrictionStatus(status);
         String normalizedReason = reason.trim();
         return idempotent(auditorId, "ADMIN_RESTRICT_USER:" + userId, idempotencyKey, userId, "RESTRICT_USER",
+                requestFingerprint("admin-restrict-v1", normalizedStatus, normalizedReason),
                 () -> applyRestriction(userId, auditorId, traceId, normalizedStatus, normalizedReason));
     }
 
@@ -404,6 +417,7 @@ public class AdminService {
         requireReason(reason);
         String normalizedReason = reason.trim();
         return idempotent(auditorId, "ADMIN_UNRESTRICT_USER:" + userId, idempotencyKey, userId, "UNRESTRICT_USER",
+                requestFingerprint("admin-unrestrict-v1", normalizedReason),
                 () -> applyUnrestriction(userId, auditorId, traceId, normalizedReason));
     }
 
@@ -913,9 +927,10 @@ public class AdminService {
     }
 
     private AdminActionResult idempotent(Long actorId, String operation, String key, Long resourceId,
-                                         String action, Supplier<AdminActionResult> mutation) {
+                                         String action, String requestFingerprint,
+                                         Supplier<AdminActionResult> mutation) {
         try {
-            Long duplicateId = claimIdempotency(actorId, operation, key);
+            Long duplicateId = claimIdempotency(actorId, operation, key, requestFingerprint);
             if (duplicateId != null) {
                 return new AdminActionResult(action, Map.of("resourceId", duplicateId, "duplicateRequest", true));
             }
@@ -930,36 +945,61 @@ public class AdminService {
         }
     }
 
-    private Long claimIdempotency(Long actorId, String operation, String key) {
+    private Long claimIdempotency(Long actorId, String operation, String key, String requestFingerprint) {
         requireDatabase();
         requireAuditor(actorId);
         if (key == null || key.isBlank() || key.length() > 128) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "审核写操作必须提供有效的 Idempotency-Key");
         }
         int inserted = jdbcClient.sql("""
-                        INSERT IGNORE INTO content_idempotency_record(idempotency_key, user_id, operation)
-                        VALUES (:key, :actorId, :operation)
+                        INSERT IGNORE INTO content_idempotency_record(
+                            idempotency_key, user_id, operation, request_fingerprint)
+                        VALUES (:key, :actorId, :operation, :requestFingerprint)
                         """)
                 .param("key", key)
                 .param("actorId", actorId)
                 .param("operation", operation)
+                .param("requestFingerprint", requestFingerprint)
                 .update();
         if (inserted == 1) return null;
         IdempotencyRecord existing = jdbcClient.sql("""
-                        SELECT user_id, operation, resource_id
+                        SELECT user_id, operation, request_fingerprint, resource_id
                         FROM content_idempotency_record WHERE idempotency_key = :key
                         """)
                 .param("key", key)
                 .query((rs, rowNum) -> new IdempotencyRecord(
-                        rs.getLong("user_id"), rs.getString("operation"), (Long) rs.getObject("resource_id")))
+                        rs.getLong("user_id"), rs.getString("operation"), rs.getString("request_fingerprint"),
+                        (Long) rs.getObject("resource_id")))
                 .single();
-        if (!existing.actorId().equals(actorId) || !existing.operation().equals(operation)) {
-            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已被其他审核操作使用");
+        boolean legacyRecord = LEGACY_REQUEST_FINGERPRINT.equals(existing.requestFingerprint());
+        if (!existing.actorId().equals(actorId) || !existing.operation().equals(operation)
+                || (!legacyRecord && !existing.requestFingerprint().equals(requestFingerprint))) {
+            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION,
+                    "Idempotency-Key 已被其他审核操作或请求载荷使用");
         }
         if (existing.resourceId() == null) {
             throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "相同审核请求正在处理中");
         }
         return existing.resourceId();
+    }
+
+    private String requestFingerprint(Object... values) {
+        StringBuilder canonical = new StringBuilder();
+        for (Object value : values) {
+            if (value == null) {
+                canonical.append("-1:|");
+            } else {
+                String text = String.valueOf(value);
+                canonical.append(text.length()).append(':').append(text).append('|');
+            }
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is unavailable", ex);
+        }
     }
 
     private void requireDatabase() {
@@ -1008,7 +1048,7 @@ public class AdminService {
         return value == null || value.isBlank() ? null : value;
     }
 
-    private record IdempotencyRecord(Long actorId, String operation, Long resourceId) {
+    private record IdempotencyRecord(Long actorId, String operation, String requestFingerprint, Long resourceId) {
     }
 
     private record AppealRow(Long postId, Long userId, String reason, String postStatus) {

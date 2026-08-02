@@ -124,6 +124,7 @@ class AdminServiceStateTest {
                     idempotency_key VARCHAR(128) PRIMARY KEY,
                     user_id BIGINT NOT NULL,
                     operation VARCHAR(48) NOT NULL,
+                    request_fingerprint CHAR(64) NOT NULL,
                     resource_id BIGINT NULL,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
                 """).update();
@@ -168,6 +169,10 @@ class AdminServiceStateTest {
         assertThat(count("post_audit_record")).isEqualTo(1);
         assertThat(count("audit_log")).isEqualTo(1);
         assertThat(count("outbox_event")).isEqualTo(1);
+
+        assertCode(() -> service.approveModerationTask(requested, 9L, "trace-approve",
+                "同一请求键不能更换审核理由", "approve-task"), ErrorCode.DUPLICATE_OPERATION);
+        assertThat(count("moderation_decision")).isEqualTo(1);
 
         assertCode(() -> service.rejectModerationTask(requested, 9L, "trace", "改为驳回", "approve-task"),
                 ErrorCode.DUPLICATE_OPERATION);
@@ -394,6 +399,11 @@ class AdminServiceStateTest {
         assertThat(count("audit_log")).isEqualTo(1);
         assertThat(auditUser("RESTRICT_USER")).isEqualTo(9L);
         assertThat(idempotencyCount("restrict-user-41")).isEqualTo(1);
+
+        assertCode(() -> service.restrictUser(41L, 9L, "trace-restrict", "BANNED",
+                "同一请求键不能更换治理状态", "restrict-user-41"), ErrorCode.DUPLICATE_OPERATION);
+        assertThat(riskStatus(41L)).isEqualTo("NO_POST");
+        assertThat(count("audit_log")).isEqualTo(1);
 
         assertCode(() -> service.unrestrictUser(41L, 9L, "trace-unrestrict",
                 "不能复用限制操作的请求键", "restrict-user-41"), ErrorCode.DUPLICATE_OPERATION);
