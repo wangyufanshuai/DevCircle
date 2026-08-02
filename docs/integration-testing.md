@@ -144,6 +144,8 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 公共 `EventEnvelope` 现在在生产端构造时拒绝空事件 ID、空/带首尾空格的 type、producer、aggregateId 和非正版本，并复制 payload 防止调用方后续修改已入队事件；`null` payload 明确归一为空对象。新增 2 项 common 事件不变量测试，随后完整纯单元/H2 回归为 377 个测试、0 failures/errors/skipped，聚合行/分支覆盖率为 77.40%/70.82%，覆盖报告与禁止 skipped 门禁均通过。该校验只提前阻断本地无效事件，仍需真实 Kafka 投递验证跨服务行为。
 
+媒体公开闭环补充了 5 项 `FileControllerTest`：不支持的扩展名在触碰对象存储前被拒绝，过期上传凭证不发起 HEAD，MIME/文件头不匹配会删除私有对象，合法 PNG 才能完成，已完成上传的重放直接返回持久化结果且不再依赖 MinIO 可用性。全仓纯单元/H2 回归为 382 个测试、0 failures/errors/skipped，聚合行/分支覆盖率提升至 78.19%/71.86%；`dc-file` 从原先 39.91%/21.74% 提升到 60.00%/45.30%。这些测试仍不替代真实 MinIO 上传和跨服务审核公开 E2E。
+
 ## 排查建议
 
 - 拉取镜像慢：先手动执行 `docker pull`。
