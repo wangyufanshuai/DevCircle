@@ -10,6 +10,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.IndexOperations;
+import org.springframework.data.elasticsearch.core.mapping.IndexCoordinates;
+import org.springframework.data.elasticsearch.core.query.UpdateQuery;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -75,16 +77,18 @@ class SearchServiceProjectionContractTest {
                  "payload":{"postId":101}}
                 """);
 
-        ArgumentCaptor<PostSearchDocument> document = ArgumentCaptor.forClass(PostSearchDocument.class);
-        verify(operations).save(document.capture());
-        assertThat(document.getValue().getId()).isEqualTo(101L);
-        assertThat(document.getValue().getTitle()).isEqualTo("引力井中的旧信号");
-        assertThat(document.getValue().getAuthor()).isEqualTo("轨道记录员");
-        assertThat(document.getValue().getAuthorId()).isEqualTo(17L);
-        assertThat(document.getValue().getTheme()).isEqualTo("COSMOS");
-        assertThat(document.getValue().getContentKind()).isEqualTo("COSMIC_ARTICLE");
-        assertThat(document.getValue().getDifficulty()).isEqualTo("HARD");
-        assertThat(document.getValue().getEventOccurredAt()).isEqualTo(occurredAt);
+        ArgumentCaptor<UpdateQuery> query = ArgumentCaptor.forClass(UpdateQuery.class);
+        verify(operations).update(query.capture(), any(IndexCoordinates.class));
+        assertThat(query.getValue().getId()).isEqualTo("101");
+        @SuppressWarnings("unchecked")
+        var document = (java.util.Map<String, Object>) query.getValue().getParams().get("document");
+        assertThat(document).containsEntry("title", "引力井中的旧信号")
+                .containsEntry("author", "轨道记录员")
+                .containsEntry("authorId", 17L)
+                .containsEntry("theme", "COSMOS")
+                .containsEntry("contentKind", "COSMIC_ARTICLE")
+                .containsEntry("difficulty", "HARD")
+                .containsEntry("eventOccurredAt", occurredAt.toEpochMilli());
         verify(coordinator).complete(eventId, 101L, occurredAt, "UPSERT", LEASE_TOKEN);
     }
 
@@ -107,7 +111,7 @@ class SearchServiceProjectionContractTest {
                  "payload":{"postId":102}}
                 """);
 
-        verify(operations).delete("102", PostSearchDocument.class);
+        verify(operations).update(any(UpdateQuery.class), any(IndexCoordinates.class));
         verify(indexOperations).refresh();
         verify(operations, never()).save(any(PostSearchDocument.class));
         verify(coordinator).complete(eventId, 102L, occurredAt, "REMOVE", LEASE_TOKEN);
@@ -120,7 +124,8 @@ class SearchServiceProjectionContractTest {
         IllegalStateException indexFailure = new IllegalStateException("elasticsearch unavailable");
         IllegalStateException stateFailure = new IllegalStateException("dedup storage unavailable");
         when(coordinator.claim(any(ValidatedEvent.class), eq(103L))).thenReturn(acquired());
-        when(operations.delete("103", PostSearchDocument.class)).thenThrow(indexFailure);
+        org.mockito.Mockito.doThrow(indexFailure)
+                .when(operations).update(any(UpdateQuery.class), any(IndexCoordinates.class));
         org.mockito.Mockito.doThrow(stateFailure).when(coordinator)
                 .fail(eq(eventId), eq(103L), eq(indexFailure), eq(LEASE_TOKEN));
 

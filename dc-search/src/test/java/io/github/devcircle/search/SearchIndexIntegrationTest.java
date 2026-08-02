@@ -17,6 +17,9 @@ import org.testcontainers.elasticsearch.ElasticsearchContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.Instant;
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -92,8 +95,56 @@ class SearchIndexIntegrationTest {
                  "payload":{"postId":8811,"status":"REJECTED"}}
                 """);
 
-        assertThat(elasticsearchOperations.get("8811", PostSearchDocument.class)).isNull();
+        PostSearchDocument tombstone = elasticsearchOperations.get("8811", PostSearchDocument.class);
+        assertThat(tombstone).isNotNull();
+        assertThat(tombstone.getStatus()).isEqualTo("DELETED");
+        assertThat(tombstone.getProjectionVersion()).isEqualTo(Instant.parse("2026-07-29T13:00:00Z").toEpochMilli());
         assertThat(searchService.search("neweralpha", null, "latest").records()).isEmpty();
+
+        searchService.upsertPostFromEvent("""
+                {"eventId":"dd093343-47bb-4b59-902c-260ece9e80ff","type":"post.updated","version":1,
+                 "occurredAt":"2026-07-29T12:30:00Z","producer":"dc-content","aggregateId":"8811",
+                 "payload":{"postId":8811,"title":"resurrectedstale","excerpt":"resurrectedstale","tags":[],"status":"PUBLISHED"}}
+                """);
+
+        assertThat(elasticsearchOperations.get("8811", PostSearchDocument.class).getStatus()).isEqualTo("DELETED");
+        assertThat(searchService.search("resurrectedstale", null, "latest").records()).isEmpty();
+    }
+
+    @Test
+    void staleUpsertCannotOverwriteAProjectionThatIsNewerThanTheDatabaseWatermark() throws Exception {
+        Instant createdAt = Instant.parse("2026-07-29T10:00:00Z");
+        Instant newerEvent = Instant.parse("2026-07-29T14:00:00Z");
+        elasticsearchOperations.save(new PostSearchDocument(8841L, "authoritative", "authoritative", "event",
+                7L, List.of(), "PUBLISHED", "COSMOS", "COSMIC_ARTICLE", "MEDIUM",
+                createdAt, newerEvent, newerEvent.toEpochMilli(), "newer-event"));
+        elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
+
+        searchService.upsertPostFromEvent("""
+                {"eventId":"ee093343-47bb-4b59-902c-260ece9e80ff","type":"post.updated","version":1,
+                 "occurredAt":"2026-07-29T13:00:00Z","producer":"dc-content","aggregateId":"8841",
+                 "payload":{"postId":8841,"title":"stale-overwrite","excerpt":"stale-overwrite","tags":[],"status":"PUBLISHED"}}
+                """);
+
+        assertThat(elasticsearchOperations.get("8841", PostSearchDocument.class).getTitle()).isEqualTo("authoritative");
+    }
+
+    @Test
+    void staleDeleteCannotRemoveAProjectionThatIsNewerThanTheDatabaseWatermark() throws Exception {
+        Instant createdAt = Instant.parse("2026-07-29T10:00:00Z");
+        Instant newerEvent = Instant.parse("2026-07-29T14:00:00Z");
+        elasticsearchOperations.save(new PostSearchDocument(8842L, "authoritative-delete", "authoritative-delete", "event",
+                7L, List.of(), "PUBLISHED", "COSMOS", "COSMIC_ARTICLE", "MEDIUM",
+                createdAt, newerEvent, newerEvent.toEpochMilli(), "newer-delete-event"));
+        elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
+
+        searchService.deletePostEvent("""
+                {"eventId":"fe093343-47bb-4b59-902c-260ece9e80ff","type":"post.deleted","version":1,
+                 "occurredAt":"2026-07-29T13:00:00Z","producer":"dc-content","aggregateId":"8842",
+                 "payload":{"postId":8842}}
+                """);
+
+        assertThat(elasticsearchOperations.get("8842", PostSearchDocument.class).getStatus()).isEqualTo("PUBLISHED");
     }
 
     @Test

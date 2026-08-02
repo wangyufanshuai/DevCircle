@@ -34,6 +34,14 @@ public class PostSearchDocument {
     private Instant createdAt;
     @Field(type = FieldType.Date)
     private Instant eventOccurredAt;
+    /**
+     * Monotonic projection watermark used by the Elasticsearch update script.
+     * This is intentionally separate from the event envelope schema version.
+     */
+    @Field(type = FieldType.Long)
+    private Long projectionVersion;
+    @Field(type = FieldType.Keyword)
+    private String projectionEventId;
 
     public PostSearchDocument() {
     }
@@ -55,6 +63,16 @@ public class PostSearchDocument {
     public PostSearchDocument(Long id, String title, String excerpt, String author, Long authorId,
                               List<String> tags, String status, String theme, String contentKind, String difficulty,
                               Instant createdAt, Instant eventOccurredAt) {
+        this(id, title, excerpt, author, authorId, tags, status, theme, contentKind, difficulty,
+                createdAt, eventOccurredAt,
+                eventOccurredAt == null ? null : eventOccurredAt.toEpochMilli(),
+                "reindex-" + id);
+    }
+
+    public PostSearchDocument(Long id, String title, String excerpt, String author, Long authorId,
+                              List<String> tags, String status, String theme, String contentKind, String difficulty,
+                              Instant createdAt, Instant eventOccurredAt, Long projectionVersion,
+                              String projectionEventId) {
         this.id = id;
         this.title = title;
         this.excerpt = excerpt;
@@ -67,6 +85,8 @@ public class PostSearchDocument {
         this.difficulty = difficulty;
         this.createdAt = createdAt;
         this.eventOccurredAt = eventOccurredAt;
+        this.projectionVersion = projectionVersion;
+        this.projectionEventId = projectionEventId;
     }
 
     public Long getId() {
@@ -107,5 +127,13 @@ public class PostSearchDocument {
 
     public Instant getEventOccurredAt() {
         return eventOccurredAt;
+    }
+
+    public Long getProjectionVersion() {
+        return projectionVersion;
+    }
+
+    public String getProjectionEventId() {
+        return projectionEventId;
     }
 }

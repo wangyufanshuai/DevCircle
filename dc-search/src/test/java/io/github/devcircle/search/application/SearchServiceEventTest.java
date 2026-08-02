@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.IndexOperations;
+import org.springframework.data.elasticsearch.core.mapping.IndexCoordinates;
+import org.springframework.data.elasticsearch.core.query.UpdateQuery;
 
 import java.time.Instant;
 
@@ -47,7 +49,7 @@ class SearchServiceEventTest {
                  "payload":{"postId":91,"status":"REJECTED"}}
                 """);
 
-        verify(operations).delete("91", PostSearchDocument.class);
+        verify(operations).update(any(UpdateQuery.class), any(IndexCoordinates.class));
         verify(indexOperations).refresh();
         verify(coordinator).complete(eventId, 91L, occurredAt, "REMOVE", LEASE_TOKEN);
     }
@@ -69,15 +71,19 @@ class SearchServiceEventTest {
                    "authorId":27,"tags":["宇宙","观测"]}}
                 """);
 
-        ArgumentCaptor<PostSearchDocument> document = ArgumentCaptor.forClass(PostSearchDocument.class);
-        verify(operations).save(document.capture());
-        assertThat(document.getValue().getId()).isEqualTo(912L);
-        assertThat(document.getValue().getTitle()).isEqualTo("引力井回声");
-        assertThat(document.getValue().getAuthorId()).isEqualTo(27L);
-        assertThat(document.getValue().getTheme()).isEqualTo("COSMOS");
-        assertThat(document.getValue().getContentKind()).isEqualTo("COSMIC_ARTICLE");
-        assertThat(document.getValue().getDifficulty()).isEqualTo("HARD");
-        assertThat(document.getValue().getEventOccurredAt()).isEqualTo(occurredAt);
+        ArgumentCaptor<UpdateQuery> query = ArgumentCaptor.forClass(UpdateQuery.class);
+        verify(operations).update(query.capture(), any(IndexCoordinates.class));
+        assertThat(query.getValue().getId()).isEqualTo("912");
+        assertThat(query.getValue().getScript()).contains("projectionVersion", "projectionEventId");
+        assertThat(query.getValue().getParams().get("projectionVersion")).isEqualTo(occurredAt.toEpochMilli());
+        @SuppressWarnings("unchecked")
+        var document = (java.util.Map<String, Object>) query.getValue().getParams().get("document");
+        assertThat(document).containsEntry("title", "引力井回声")
+                .containsEntry("authorId", 27L)
+                .containsEntry("theme", "COSMOS")
+                .containsEntry("contentKind", "COSMIC_ARTICLE")
+                .containsEntry("difficulty", "HARD")
+                .containsEntry("eventOccurredAt", occurredAt.toEpochMilli());
         verify(indexOperations).refresh();
         verify(coordinator).complete(eventId, 912L, occurredAt, "UPSERT", LEASE_TOKEN);
     }
@@ -96,7 +102,7 @@ class SearchServiceEventTest {
                  "payload":{"postId":913,"status":"CHANGES_REQUIRED"}}
                 """);
 
-        verify(operations).delete("913", PostSearchDocument.class);
+        verify(operations).update(any(UpdateQuery.class), any(IndexCoordinates.class));
         verify(indexOperations).refresh();
         verify(operations, never()).save(any(PostSearchDocument.class));
         verify(coordinator).complete(eventId, 913L, occurredAt, "REMOVE", LEASE_TOKEN);
@@ -161,7 +167,8 @@ class SearchServiceEventTest {
         String eventId = "66666666-6666-6666-6666-666666666666";
         Instant occurredAt = Instant.parse("2026-07-30T13:00:00Z");
         when(coordinator.claim(any(ValidatedEvent.class), eq(93L))).thenReturn(acquired());
-        when(operations.save(any(PostSearchDocument.class))).thenThrow(new IllegalStateException("elasticsearch unavailable"));
+        org.mockito.Mockito.doThrow(new IllegalStateException("elasticsearch unavailable"))
+                .when(operations).update(any(UpdateQuery.class), any(IndexCoordinates.class));
 
         assertThatThrownBy(() -> service.upsertPostFromEvent("""
                 {"eventId":"66666666-6666-6666-6666-666666666666","type":"post.created","version":1,
@@ -180,7 +187,8 @@ class SearchServiceEventTest {
         IllegalStateException indexFailure = new IllegalStateException("elasticsearch write failed");
         IllegalStateException stateFailure = new IllegalStateException("search state database failed");
         when(coordinator.claim(any(ValidatedEvent.class), eq(931L))).thenReturn(acquired());
-        when(operations.save(any(PostSearchDocument.class))).thenThrow(indexFailure);
+        org.mockito.Mockito.doThrow(indexFailure)
+                .when(operations).update(any(UpdateQuery.class), any(IndexCoordinates.class));
         org.mockito.Mockito.doThrow(stateFailure).when(coordinator)
                 .fail(eventId, 931L, indexFailure, LEASE_TOKEN);
 

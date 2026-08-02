@@ -18,8 +18,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.elasticsearch.client.elc.NativeQuery;
+import org.springframework.data.elasticsearch.core.document.Document;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.SearchHit;
+import org.springframework.data.elasticsearch.core.mapping.IndexCoordinates;
+import org.springframework.data.elasticsearch.core.query.UpdateQuery;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -32,6 +35,7 @@ import java.time.Instant;
 import java.time.temporal.TemporalAccessor;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +43,30 @@ import java.util.Set;
 
 @Service
 public class SearchService {
+    private static final IndexCoordinates POST_INDEX = IndexCoordinates.of("devcircle-posts");
+    private static final String MONOTONIC_UPSERT_SCRIPT = """
+            long incoming = params.projectionVersion;
+            long current = ctx._source.projectionVersion == null ? Long.MIN_VALUE : ctx._source.projectionVersion;
+            String currentEventId = ctx._source.projectionEventId;
+            boolean newer = incoming > current
+                    || (incoming == current && (currentEventId == null
+                        || params.projectionEventId.compareTo(currentEventId) > 0));
+            if (newer) {
+                ctx._source.putAll(params.document);
+            }
+            """;
+    private static final String MONOTONIC_REMOVE_SCRIPT = """
+            long incoming = params.projectionVersion;
+            long current = ctx._source.projectionVersion == null ? Long.MIN_VALUE : ctx._source.projectionVersion;
+            String currentEventId = ctx._source.projectionEventId;
+            boolean newer = incoming > current
+                    || (incoming == current && (currentEventId == null
+                        || params.projectionEventId.compareTo(currentEventId) > 0));
+            if (newer) {
+                ctx._source.clear();
+                ctx._source.putAll(params.tombstone);
+            }
+            """;
     private static final Map<String, Set<String>> UPSERT_EVENT_CONTRACTS = Map.of(
             EventTopics.POST_CREATED, Set.of("dc-content"),
             EventTopics.POST_UPDATED, Set.of("dc-content"),
@@ -256,7 +284,7 @@ public class SearchService {
             String eventStatus = optionalText(payload, "status", "");
             if (EventTopics.CONTENT_REJECTED.equals(topic)
                     || (!eventStatus.isBlank() && !"PUBLISHED".equals(eventStatus))) {
-                elasticsearchOperations.delete(String.valueOf(postId), PostSearchDocument.class);
+                removeProjection(postId, occurredAt, eventId);
                 elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
                 eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE", claim.leaseToken());
                 return;
@@ -275,12 +303,12 @@ public class SearchService {
                 post = loadPost(postId);
             }
             if (!"PUBLISHED".equals(post.status())) {
-                elasticsearchOperations.delete(String.valueOf(postId), PostSearchDocument.class);
+                removeProjection(postId, occurredAt, eventId);
                 elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
                 eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE", claim.leaseToken());
                 return;
             }
-            elasticsearchOperations.save(document(post, occurredAt));
+            upsertProjection(document(post, occurredAt, eventId));
             elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
             eventCoordinator.complete(eventId, postId, occurredAt, "UPSERT", claim.leaseToken());
         } catch (Exception ex) {
@@ -308,7 +336,7 @@ public class SearchService {
             return;
         }
         try {
-            elasticsearchOperations.delete(String.valueOf(postId), PostSearchDocument.class);
+            removeProjection(postId, occurredAt, eventId);
             elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
             eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE", claim.leaseToken());
         } catch (RuntimeException ex) {
@@ -419,8 +447,76 @@ public class SearchService {
     }
 
     private PostSearchDocument document(PostSummary post, Instant occurredAt) {
+        return document(post, occurredAt, "reindex-" + post.id());
+    }
+
+    private PostSearchDocument document(PostSummary post, Instant occurredAt, String eventId) {
         return new PostSearchDocument(post.id(), post.title(), post.excerpt(), post.author(), post.authorId(), post.tags(), post.status(),
-                post.theme(), post.contentKind(), post.difficulty(), post.createdAt(), occurredAt);
+                post.theme(), post.contentKind(), post.difficulty(), post.createdAt(), occurredAt,
+                occurredAt == null ? null : occurredAt.toEpochMilli(), eventId);
+    }
+
+    private void upsertProjection(PostSearchDocument document) {
+        if (document.getProjectionVersion() == null || document.getProjectionEventId() == null) {
+            throw new IllegalArgumentException("Search projection document is missing its ordering metadata");
+        }
+        Map<String, Object> source = projectionSource(document);
+        UpdateQuery query = UpdateQuery.builder(String.valueOf(document.getId()))
+                .withScript(MONOTONIC_UPSERT_SCRIPT)
+                .withLang("painless")
+                .withParams(Map.of(
+                        "projectionVersion", document.getProjectionVersion(),
+                        "projectionEventId", document.getProjectionEventId(),
+                        "document", source))
+                .withUpsert(Document.create())
+                .withScriptedUpsert(true)
+                .withRetryOnConflict(3)
+                .build();
+        elasticsearchOperations.update(query, POST_INDEX);
+    }
+
+    private void removeProjection(long postId, Instant occurredAt, String eventId) {
+        if (occurredAt == null || eventId == null || eventId.isBlank()) {
+            throw new IllegalArgumentException("Search removal is missing its ordering metadata");
+        }
+        Map<String, Object> tombstone = new LinkedHashMap<>();
+        tombstone.put("id", postId);
+        tombstone.put("status", "DELETED");
+        tombstone.put("eventOccurredAt", occurredAt.toEpochMilli());
+        tombstone.put("projectionVersion", occurredAt.toEpochMilli());
+        tombstone.put("projectionEventId", eventId);
+        UpdateQuery query = UpdateQuery.builder(String.valueOf(postId))
+                .withScript(MONOTONIC_REMOVE_SCRIPT)
+                .withLang("painless")
+                .withParams(Map.of(
+                        "projectionVersion", occurredAt.toEpochMilli(),
+                        "projectionEventId", eventId,
+                        "tombstone", tombstone))
+                .withUpsert(Document.create())
+                .withScriptedUpsert(true)
+                .withRetryOnConflict(3)
+                .build();
+        elasticsearchOperations.update(query, POST_INDEX);
+    }
+
+    private Map<String, Object> projectionSource(PostSearchDocument document) {
+        Map<String, Object> source = new LinkedHashMap<>();
+        source.put("id", document.getId());
+        source.put("title", document.getTitle());
+        source.put("excerpt", document.getExcerpt());
+        source.put("author", document.getAuthor());
+        source.put("authorId", document.getAuthorId());
+        source.put("tags", document.getTags());
+        source.put("status", document.getStatus());
+        source.put("theme", document.getTheme());
+        source.put("contentKind", document.getContentKind());
+        source.put("difficulty", document.getDifficulty());
+        source.put("createdAt", document.getCreatedAt() == null ? null : document.getCreatedAt().toEpochMilli());
+        source.put("eventOccurredAt", document.getEventOccurredAt() == null ? null : document.getEventOccurredAt().toEpochMilli());
+        source.put("projectionVersion", document.getProjectionVersion());
+        source.put("projectionEventId", document.getProjectionEventId());
+        source.values().removeIf(java.util.Objects::isNull);
+        return source;
     }
 
     private BusinessException dependency(String message, RuntimeException cause) {
