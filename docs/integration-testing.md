@@ -2,6 +2,12 @@
 
 DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测试会启动临时 MySQL、Redis、Kafka、Elasticsearch 和 MinIO 容器，执行结束后自动清理。
 
+## 当前证据（2026-08-02）
+
+提交 `937feda` 后的完整 `./mvnw.cmd -B verify -Pcoverage` 已通过：16 个 Maven 模块、440 个测试，0 failures、0 errors、0 skipped；聚合 JaCoCo 行覆盖率 84.03%、分支覆盖率 75.40%，关键状态机分支门禁全部通过 85%。本轮还验证了 Flyway 迁移版本、生产 Compose 配置和生产环境变量门禁。Outbox Kafka 发送现在受 `DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS`（默认 15 秒）约束，Future 超时会进入 FAILED 并按退避重试。
+
+前端当前基线为 `npm run build` 成功、四个 Playwright project 共 116/116 通过。该套件使用显式 API 拦截，不等同于真实多服务 E2E。真实认证、内容、审核和社区 Compose E2E 仍需在至少 2 GiB Docker（建议 4 GiB 以上）环境执行；本机当前 Docker 配额约 1.93 GiB，按设计阻断真实业务验收。
+
 ## 前置条件
 
 - 已安装 Docker Desktop 或兼容 Docker Engine。
@@ -71,7 +77,7 @@ $env:DOCKER_HOST='tcp://127.0.0.1:2375'
 
 ## 覆盖链路
 
-CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、分支覆盖率 64%，并在下一步拒绝任何 skipped 测试。覆盖率检查还要求所有有业务代码的生产模块都生成 JaCoCo 报告，缺少报告会直接失败，避免部分模块未执行时聚合覆盖率反而虚高。Docker 不可用时，可以只测量纯单元基线，但该结果不得替代容器验收：
+CI 使用完整 `verify -Pcoverage`，当前全局回归下限为行覆盖率 75%、分支覆盖率 70%，并拒绝任何 skipped 测试。覆盖率检查还要求所有有业务代码的生产模块都生成 JaCoCo 报告，缺少报告会直接失败，避免部分模块未执行时聚合覆盖率反而虚高。Docker 不可用时，可以只测量纯单元基线，但该结果不得替代容器验收：
 
 ```powershell
 .\mvnw.cmd -B -Pcoverage clean verify "-Dtest=!*IntegrationTest,!DockerPreflightTest,!KafkaContainerSmokeTest" "-Dsurefire.failIfNoSpecifiedTests=false"

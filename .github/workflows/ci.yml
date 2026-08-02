@@ -22,7 +22,7 @@ jobs:
           cache: maven
       - run: python scripts/ops/assert_migration_versions.py
       - run: ./mvnw -B verify -Pcoverage
-      - run: MIN_LINE_COVERAGE=68 MIN_BRANCH_COVERAGE=64 bash scripts/ops/assert-coverage.sh
+      - run: MIN_LINE_COVERAGE=75 MIN_BRANCH_COVERAGE=70 bash scripts/ops/assert-coverage.sh
       - run: python scripts/ops/assert-critical-state-coverage.py
       - run: bash scripts/ops/assert-no-skipped-tests.sh
       - uses: actions/upload-artifact@v5
