@@ -11,7 +11,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.text.Normalizer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
+import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -19,6 +23,7 @@ import java.util.Set;
 
 @Service
 public class DeductionService {
+    private static final String LEGACY_REQUEST_FINGERPRINT = "0".repeat(64);
     private final JdbcClient jdbcClient;
 
     public DeductionService(JdbcClient jdbcClient) {
@@ -30,7 +35,8 @@ public class DeductionService {
         requireRequest(userId, postId, idempotencyKey);
         requireAnswer(answer);
         requirePublishedCase(postId);
-        if (!claim(userId, postId, "ANSWER", idempotencyKey)) {
+        String requestFingerprint = requestFingerprint("deduction-answer-v1", normalize(answer));
+        if (!claim(userId, postId, "ANSWER", idempotencyKey, requestFingerprint)) {
             return existingAttempt(userId, postId, true);
         }
         boolean correct = isCorrect(postId, answer);
@@ -64,7 +70,8 @@ public class DeductionService {
     public DeductionAnswerResult reveal(Long userId, Long postId, String idempotencyKey) {
         requireRequest(userId, postId, idempotencyKey);
         requirePublishedCase(postId);
-        if (!claim(userId, postId, "REVEAL", idempotencyKey)) {
+        if (!claim(userId, postId, "REVEAL", idempotencyKey,
+                requestFingerprint("deduction-reveal-v1", postId))) {
             return existingAttempt(userId, postId, true);
         }
         int updated = jdbcClient.sql("""
@@ -155,25 +162,49 @@ public class DeductionService {
                 message, unlocked ? solution(postId) : null);
     }
 
-    private boolean claim(Long userId, Long postId, String operation, String key) {
+    private boolean claim(Long userId, Long postId, String operation, String key, String requestFingerprint) {
         int inserted = jdbcClient.sql("""
-                        INSERT IGNORE INTO deduction_idempotency(idempotency_key, user_id, post_id, operation)
-                        VALUES (:key, :userId, :postId, :operation)
+                        INSERT IGNORE INTO deduction_idempotency(
+                            idempotency_key, user_id, post_id, operation, request_fingerprint)
+                        VALUES (:key, :userId, :postId, :operation, :requestFingerprint)
                         """)
                 .param("key", key).param("userId", userId).param("postId", postId)
-                .param("operation", operation).update();
+                .param("operation", operation).param("requestFingerprint", requestFingerprint).update();
         if (inserted == 1) return true;
         Idempotency existing = jdbcClient.sql("""
-                        SELECT user_id, post_id, operation FROM deduction_idempotency WHERE idempotency_key = :key
+                        SELECT user_id, post_id, operation, request_fingerprint
+                        FROM deduction_idempotency WHERE idempotency_key = :key
                         """)
                 .param("key", key)
                 .query((rs, rowNum) -> new Idempotency(rs.getLong("user_id"), rs.getLong("post_id"),
-                        rs.getString("operation"))).single();
+                        rs.getString("operation"), rs.getString("request_fingerprint"))).single();
+        boolean legacyRecord = LEGACY_REQUEST_FINGERPRINT.equals(existing.requestFingerprint());
         if (!existing.userId().equals(userId) || !existing.postId().equals(postId)
-                || !existing.operation().equals(operation)) {
-            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已用于其他解谜请求");
+                || !existing.operation().equals(operation)
+                || (!legacyRecord && !existing.requestFingerprint().equals(requestFingerprint))) {
+            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION,
+                    "Idempotency-Key 已用于其他解谜请求或答案载荷");
         }
         return false;
+    }
+
+    private String requestFingerprint(Object... values) {
+        StringBuilder canonical = new StringBuilder();
+        for (Object value : values) {
+            if (value == null) {
+                canonical.append("-1:|");
+            } else {
+                String text = String.valueOf(value);
+                canonical.append(text.length()).append(':').append(text).append('|');
+            }
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is unavailable", ex);
+        }
     }
 
     private void requireRequest(Long userId, Long postId, String key) {
@@ -290,6 +321,6 @@ public class DeductionService {
                 .param("postId", postId).query(String.class).optional().orElse("");
     }
 
-    private record Idempotency(Long userId, Long postId, String operation) {
+    private record Idempotency(Long userId, Long postId, String operation, String requestFingerprint) {
     }
 }

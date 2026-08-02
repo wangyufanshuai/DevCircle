@@ -60,7 +60,8 @@ class DeductionServiceStateTest {
                     idempotency_key VARCHAR(128) NOT NULL UNIQUE,
                     user_id BIGINT NOT NULL,
                     post_id BIGINT NOT NULL,
-                    operation VARCHAR(32) NOT NULL)
+                    operation VARCHAR(32) NOT NULL,
+                    request_fingerprint CHAR(64) NOT NULL)
                 """).update();
         seedPost(1001L, "[\"clock\",\"hidden layer\"]", "The clock was hidden in a false layer.");
         seedPost(1002L, "[\"mirror\",\"reflection\"]", "The mirror revealed the route.");
@@ -86,7 +87,7 @@ class DeductionServiceStateTest {
         assertThat(first.solution()).isEqualTo("The clock was hidden in a false layer.");
 
         var sameRequest = service.submitAnswer(7L, 1001L,
-                "ignored replay", "answer-correct-1");
+                "CLOCK — hidden layer", "answer-correct-1");
         var newKeyForSameAttempt = service.submitAnswer(7L, 1001L,
                 "clock hidden layer", "answer-correct-2");
 
@@ -99,6 +100,9 @@ class DeductionServiceStateTest {
         assertThat(value("SELECT total_points FROM deduction_score WHERE user_id = 7")).isEqualTo(20L);
         assertThat(value("SELECT COUNT(*) FROM deduction_attempt WHERE user_id = 7 AND post_id = 1001"))
                 .isEqualTo(1L);
+
+        assertConflict(() -> service.submitAnswer(7L, 1001L,
+                "a different conclusion", "answer-correct-1"));
     }
 
     @Test
@@ -159,6 +163,25 @@ class DeductionServiceStateTest {
         assertConflict(() -> service.reveal(11L, 1003L, "bound-key"));
         assertConflict(() -> service.submitAnswer(12L, 1003L, "anything", "bound-key"));
         assertConflict(() -> service.submitAnswer(11L, 1002L, "anything", "bound-key"));
+    }
+
+    @Test
+    void legacyAnswerFingerprintRemainsReplayCompatibleForOneVersion() {
+        service.submitAnswer(25L, 1001L, "clock hidden layer", "legacy-answer-key");
+        jdbcClient.sql("""
+                        UPDATE deduction_idempotency
+                        SET request_fingerprint = :legacy
+                        WHERE idempotency_key = 'legacy-answer-key'
+                        """)
+                .param("legacy", "0".repeat(64)).update();
+
+        var replay = service.submitAnswer(25L, 1001L,
+                "different payload accepted only for migrated legacy row", "legacy-answer-key");
+
+        assertThat(replay.duplicated()).isTrue();
+        assertThat(replay.correct()).isTrue();
+        assertThat(value("SELECT COUNT(*) FROM deduction_attempt WHERE user_id = 25 AND post_id = 1001"))
+                .isEqualTo(1L);
     }
 
     @Test

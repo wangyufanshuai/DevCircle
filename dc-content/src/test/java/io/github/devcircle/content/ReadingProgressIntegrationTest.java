@@ -76,7 +76,11 @@ class ReadingProgressIntegrationTest {
         var first = repository.saveReadingProgress(USER_ID, 93001L,
                 new ReadingProgressRequest(18, "reading-section-1", false), "progress-first");
         var replay = repository.saveReadingProgress(USER_ID, 93001L,
-                new ReadingProgressRequest(81, "reading-section-9", false), "progress-first");
+                new ReadingProgressRequest(18, "reading-section-1", false), "progress-first");
+        assertThatThrownBy(() -> repository.saveReadingProgress(USER_ID, 93001L,
+                new ReadingProgressRequest(81, "reading-section-9", false), "progress-first"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.code()).isEqualTo(ErrorCode.DUPLICATE_OPERATION));
         var regressed = repository.saveReadingProgress(USER_ID, 93001L,
                 new ReadingProgressRequest(9, "reading-section-0", false), "progress-regression");
         var completed = repository.saveReadingProgress(USER_ID, 93001L,

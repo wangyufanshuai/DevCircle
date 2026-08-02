@@ -138,7 +138,8 @@ class PostRepositoryStateTest {
                 CREATE TABLE reading_progress_idempotency (
                     idempotency_key VARCHAR(128) PRIMARY KEY,
                     user_id BIGINT NOT NULL,
-                    post_id BIGINT NOT NULL)
+                    post_id BIGINT NOT NULL,
+                    request_fingerprint CHAR(64) NOT NULL)
                 """).update();
         jdbcClient.sql("""
                 CREATE TABLE deduction_attempt (
@@ -388,7 +389,10 @@ class PostRepositoryStateTest {
         var first = repository.saveReadingProgress(11L, postId,
                 new ReadingProgressRequest(25, "reading-section-1", false), "progress-key");
         var replay = repository.saveReadingProgress(11L, postId,
-                new ReadingProgressRequest(80, "reading-section-8", false), "progress-key");
+                new ReadingProgressRequest(25, "reading-section-1", false), "progress-key");
+        assertCode(() -> repository.saveReadingProgress(11L, postId,
+                new ReadingProgressRequest(80, "reading-section-8", false), "progress-key"),
+                ErrorCode.DUPLICATE_OPERATION);
         var regression = repository.saveReadingProgress(11L, postId,
                 new ReadingProgressRequest(10, "reading-section-0", false), "progress-regression");
 
@@ -396,6 +400,17 @@ class PostRepositoryStateTest {
         assertThat(replay.progressPercent()).isEqualTo(25);
         assertThat(regression.progressPercent()).isEqualTo(25);
         assertThat(regression.anchor()).isEqualTo("reading-section-1");
+
+        jdbcClient.sql("""
+                        UPDATE reading_progress_idempotency
+                        SET request_fingerprint = :legacy
+                        WHERE idempotency_key = 'progress-key'
+                        """)
+                .param("legacy", "0".repeat(64)).update();
+        var legacyReplay = repository.saveReadingProgress(11L, postId,
+                new ReadingProgressRequest(80, "reading-section-8", false), "progress-key");
+        assertThat(legacyReplay.progressPercent()).isEqualTo(25);
+        assertThat(legacyReplay.anchor()).isEqualTo("reading-section-1");
         assertCode(() -> repository.saveReadingProgress(12L, postId,
                 new ReadingProgressRequest(30, null, false), "progress-key"), ErrorCode.DUPLICATE_OPERATION);
 

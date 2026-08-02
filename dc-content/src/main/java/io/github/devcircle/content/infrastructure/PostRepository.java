@@ -244,30 +244,41 @@ public class PostRepository {
         if (published == null || published == 0) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "内容不存在或尚未发布");
         }
+        int progress = request.completed() ? 100 : Math.max(0, Math.min(request.progressPercent(), 99));
+        String normalizedAnchor = request.anchor() == null || request.anchor().isBlank()
+                ? null : request.anchor().trim();
+        String requestFingerprint = requestFingerprint(
+                "reading-progress-v1", progress, normalizedAnchor, request.completed());
         int claimed = jdbcClient.sql("""
-                        INSERT IGNORE INTO reading_progress_idempotency(idempotency_key, user_id, post_id)
-                        VALUES (:key, :userId, :postId)
+                        INSERT IGNORE INTO reading_progress_idempotency(
+                            idempotency_key, user_id, post_id, request_fingerprint)
+                        VALUES (:key, :userId, :postId, :requestFingerprint)
                         """)
-                .param("key", idempotencyKey).param("userId", userId).param("postId", postId).update();
+                .param("key", idempotencyKey).param("userId", userId).param("postId", postId)
+                .param("requestFingerprint", requestFingerprint).update();
         if (claimed == 0) {
             ProgressIdempotency existing = jdbcClient.sql("""
-                            SELECT user_id, post_id FROM reading_progress_idempotency WHERE idempotency_key = :key
+                            SELECT user_id, post_id, request_fingerprint
+                            FROM reading_progress_idempotency WHERE idempotency_key = :key
                             """)
                     .param("key", idempotencyKey)
-                    .query((rs, rowNum) -> new ProgressIdempotency(rs.getLong("user_id"), rs.getLong("post_id")))
+                    .query((rs, rowNum) -> new ProgressIdempotency(
+                            rs.getLong("user_id"), rs.getLong("post_id"), rs.getString("request_fingerprint")))
                     .single();
-            if (!existing.userId().equals(userId) || !existing.postId().equals(postId)) {
-                throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已用于其他阅读进度请求");
+            boolean legacyRecord = LEGACY_REQUEST_FINGERPRINT.equals(existing.requestFingerprint());
+            if (!existing.userId().equals(userId) || !existing.postId().equals(postId)
+                    || (!legacyRecord && !existing.requestFingerprint().equals(requestFingerprint))) {
+                throw new BusinessException(ErrorCode.DUPLICATE_OPERATION,
+                        "Idempotency-Key 已用于其他阅读进度请求或载荷");
             }
             return getReadingProgress(userId, postId);
         }
-        int progress = request.completed() ? 100 : Math.max(0, Math.min(request.progressPercent(), 99));
         jdbcClient.sql("""
                         INSERT IGNORE INTO reading_progress(user_id, post_id, progress_percent, anchor, completed)
                         VALUES (:userId, :postId, :progress, :anchor, :completed)
                         """)
                 .param("userId", userId).param("postId", postId).param("progress", progress)
-                .param("anchor", request.anchor()).param("completed", request.completed()).update();
+                .param("anchor", normalizedAnchor).param("completed", request.completed()).update();
         jdbcClient.sql("""
                         UPDATE reading_progress
                         SET anchor = CASE WHEN :progress >= progress_percent THEN :anchor ELSE anchor END,
@@ -277,7 +288,7 @@ public class PostRepository {
                         WHERE user_id = :userId AND post_id = :postId
                         """)
                 .param("userId", userId).param("postId", postId).param("progress", progress)
-                .param("anchor", request.anchor()).param("completed", request.completed()).update();
+                .param("anchor", normalizedAnchor).param("completed", request.completed()).update();
         return getReadingProgress(userId, postId);
     }
 
@@ -1208,7 +1219,7 @@ public class PostRepository {
         }
     }
 
-    private record ProgressIdempotency(Long userId, Long postId) {
+    private record ProgressIdempotency(Long userId, Long postId, String requestFingerprint) {
     }
 
     private String normalizeType(String type) {

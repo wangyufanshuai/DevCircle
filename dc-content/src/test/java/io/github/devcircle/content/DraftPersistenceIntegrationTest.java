@@ -110,6 +110,33 @@ class DraftPersistenceIntegrationTest {
     }
 
     @Test
+    void readerWriteKeysAreBoundToRequestFingerprints() {
+        String deductionFingerprint = "c".repeat(64);
+        String progressFingerprint = "d".repeat(64);
+        jdbcClient.sql("""
+                        INSERT INTO deduction_idempotency(
+                            idempotency_key, user_id, post_id, operation, request_fingerprint)
+                        VALUES ('deduction-migration-probe', 42, 1, 'ANSWER', :fingerprint)
+                        """)
+                .param("fingerprint", deductionFingerprint).update();
+        jdbcClient.sql("""
+                        INSERT INTO reading_progress_idempotency(
+                            idempotency_key, user_id, post_id, request_fingerprint)
+                        VALUES ('progress-migration-probe', 42, 1, :fingerprint)
+                        """)
+                .param("fingerprint", progressFingerprint).update();
+
+        assertThat(jdbcClient.sql("""
+                        SELECT request_fingerprint FROM deduction_idempotency
+                        WHERE idempotency_key = 'deduction-migration-probe'
+                        """).query(String.class).single()).isEqualTo(deductionFingerprint);
+        assertThat(jdbcClient.sql("""
+                        SELECT request_fingerprint FROM reading_progress_idempotency
+                        WHERE idempotency_key = 'progress-migration-probe'
+                        """).query(String.class).single()).isEqualTo(progressFingerprint);
+    }
+
+    @Test
     void submittedDraftBecomesPendingAndRemainsUnavailableToPublicReaders() {
         var created = postRepository.createDraft(43L, draft("未公开的钟楼答案", "只有审核通过后才能看到。", null),
                 "create-pending-draft");
