@@ -114,10 +114,18 @@ public class NotificationRepository {
             if (!existing.userId().equals(receiverId) || !"MARK_ALL_READ".equals(existing.operation())) {
                 throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已被其他操作使用");
             }
-            return 0;
+            return existing.resourceId();
         }
-        return jdbcClient.sql("UPDATE notification SET read_flag = TRUE WHERE receiver_id = :userId AND read_flag = FALSE")
+        long updated = jdbcClient.sql("UPDATE notification SET read_flag = TRUE WHERE receiver_id = :userId AND read_flag = FALSE")
                 .param("userId", receiverId).update();
+        jdbcClient.sql("""
+                        UPDATE notification_idempotency_record SET resource_id = :updated
+                        WHERE idempotency_key = :key
+                        """)
+                .param("updated", updated)
+                .param("key", idempotencyKey)
+                .update();
+        return updated;
     }
 
     @Transactional

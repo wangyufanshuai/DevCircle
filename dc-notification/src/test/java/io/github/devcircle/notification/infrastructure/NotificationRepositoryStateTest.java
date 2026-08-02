@@ -104,13 +104,16 @@ class NotificationRepositoryStateTest {
         long other = notification(8L, "FOLLOW", false);
 
         assertThat(repository.markAllRead(7L, "all-key")).isEqualTo(2);
-        assertThat(repository.markAllRead(7L, "all-key")).isZero();
+        long arrivedAfterFirstRequest = notification(7L, "SYSTEM", false);
+        assertThat(repository.markAllRead(7L, "all-key")).isEqualTo(2);
         assertCode(() -> repository.markAllRead(8L, "all-key"), ErrorCode.DUPLICATE_OPERATION);
         assertCode(() -> repository.markRead(7L, first, "all-key"), ErrorCode.DUPLICATE_OPERATION);
 
         assertThat(readFlag(first)).isTrue();
         assertThat(readFlag(second)).isTrue();
+        assertThat(readFlag(arrivedAfterFirstRequest)).isFalse();
         assertThat(readFlag(other)).isFalse();
+        assertThat(repository.markAllRead(7L, "new-all-key")).isEqualTo(1);
     }
 
     @Test
