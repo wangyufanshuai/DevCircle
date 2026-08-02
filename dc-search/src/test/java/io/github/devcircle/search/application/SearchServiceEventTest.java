@@ -5,11 +5,13 @@ import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.search.infrastructure.PostSearchDocument;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.IndexOperations;
 
 import java.time.Instant;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -47,6 +49,71 @@ class SearchServiceEventTest {
         verify(operations).delete("91", PostSearchDocument.class);
         verify(indexOperations).refresh();
         verify(coordinator).complete(eventId, 91L, occurredAt, "REMOVE");
+    }
+
+    @Test
+    void publishedAuditEventIndexesItsCanonicalPayloadAndRefreshesBeforeCompletion() throws Exception {
+        String eventId = "41414141-4141-4414-8414-414141414141";
+        Instant occurredAt = Instant.parse("2026-07-30T12:05:00Z");
+        when(coordinator.claim(any(ValidatedEvent.class), eq(912L))).thenReturn(true);
+        IndexOperations indexOperations = mock(IndexOperations.class);
+        when(operations.indexOps(PostSearchDocument.class)).thenReturn(indexOperations);
+
+        service.indexPostEvent("""
+                {"eventId":"41414141-4141-4414-8414-414141414141","type":"audit.completed","version":1,
+                 "occurredAt":"2026-07-30T12:05:00Z","producer":"dc-admin","aggregateId":"912",
+                 "payload":{"postId":912,"status":"PUBLISHED","type":"TEXT","theme":"COSMOS",
+                   "contentKind":"COSMIC_ARTICLE","difficulty":"HARD","solvable":true,
+                   "title":"引力井回声","excerpt":"观测阵列收到延迟信号","author":"轨道记录员",
+                   "authorId":27,"tags":["宇宙","观测"]}}
+                """);
+
+        ArgumentCaptor<PostSearchDocument> document = ArgumentCaptor.forClass(PostSearchDocument.class);
+        verify(operations).save(document.capture());
+        assertThat(document.getValue().getId()).isEqualTo(912L);
+        assertThat(document.getValue().getTitle()).isEqualTo("引力井回声");
+        assertThat(document.getValue().getAuthorId()).isEqualTo(27L);
+        assertThat(document.getValue().getTheme()).isEqualTo("COSMOS");
+        assertThat(document.getValue().getContentKind()).isEqualTo("COSMIC_ARTICLE");
+        assertThat(document.getValue().getDifficulty()).isEqualTo("HARD");
+        assertThat(document.getValue().getEventOccurredAt()).isEqualTo(occurredAt);
+        verify(indexOperations).refresh();
+        verify(coordinator).complete(eventId, 912L, occurredAt, "UPSERT");
+    }
+
+    @Test
+    void nonPublishedUpdateRemovesTheDocumentWithoutHydratingPublicDetail() throws Exception {
+        String eventId = "42424242-4242-4424-8424-424242424242";
+        Instant occurredAt = Instant.parse("2026-07-30T12:10:00Z");
+        when(coordinator.claim(any(ValidatedEvent.class), eq(913L))).thenReturn(true);
+        IndexOperations indexOperations = mock(IndexOperations.class);
+        when(operations.indexOps(PostSearchDocument.class)).thenReturn(indexOperations);
+
+        service.upsertPostFromEvent("""
+                {"eventId":"42424242-4242-4424-8424-424242424242","type":"post.updated","version":1,
+                 "occurredAt":"2026-07-30T12:10:00Z","producer":"dc-content","aggregateId":"913",
+                 "payload":{"postId":913,"status":"CHANGES_REQUIRED"}}
+                """);
+
+        verify(operations).delete("913", PostSearchDocument.class);
+        verify(indexOperations).refresh();
+        verify(operations, never()).save(any(PostSearchDocument.class));
+        verify(coordinator).complete(eventId, 913L, occurredAt, "REMOVE");
+    }
+
+    @Test
+    void duplicateUpsertEventDoesNotTouchElasticsearchOrHydrateContent() throws Exception {
+        when(coordinator.claim(any(ValidatedEvent.class), eq(914L))).thenReturn(false);
+
+        service.upsertPostFromEvent("""
+                {"eventId":"43434343-4343-4434-8434-434343434343","type":"post.updated","version":1,
+                 "occurredAt":"2026-07-30T12:12:00Z","producer":"dc-content","aggregateId":"914",
+                 "payload":{"postId":914}}
+                """);
+
+        verifyNoInteractions(operations);
+        verify(coordinator, never()).complete(any(), eq(914L), any(), any());
+        verify(coordinator, never()).fail(any(), eq(914L), any());
     }
 
     @Test
