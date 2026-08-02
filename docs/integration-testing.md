@@ -150,6 +150,8 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 2026-08-02 前端回归重新执行：`npm run build` 成功，四个 Playwright project（Chromium、laptop、tablet、mobile）共 112/112 通过，耗时约 30.5 秒。`scripts/e2e/test-docker-preflight.sh` 的离线 fixture 门禁通过；当前实际 Docker 内存为 2,068,439,040 bytes，`run-real-auth.sh` 按设计以退出码 2 阻断并提示至少需要 2,147,483,648 bytes，未将资源不足误记为认证业务通过。该结果仍不替代真实 Compose E2E。
 
+同批部署/恢复门禁复验通过：生产环境变量校验、备份/恢复/迁移校验、生产资源预算 6/6、k6 脚本契约 3/3 均成功；注入专用测试环境变量（不提交、不用于生产）后 `docker compose -f docker-compose.prod.yml config --quiet` 通过。k6 契约和 Compose 语法不等于目标主机性能、Kafka/ES/MinIO 真实恢复或 RTO 证据，后续仍需在 Linux 4 vCPU/16GB 主机和满足内存的 Docker 上执行。
+
 ## 排查建议
 
 - 拉取镜像慢：先手动执行 `docker pull`。
