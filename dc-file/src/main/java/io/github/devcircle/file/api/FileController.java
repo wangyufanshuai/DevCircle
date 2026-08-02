@@ -92,6 +92,9 @@ class FileController {
                                            @PathVariable Long id) {
         requireKey(idempotencyKey);
         MediaRepository.AssetIntent asset = mediaRepository.requireOwned(userId, id);
+        if ("COMPLETED".equals(asset.uploadStatus())) {
+            return ApiResponse.ok(mediaRepository.complete(userId, id, idempotencyKey, asset.expectedSize()));
+        }
         if (asset.expiresAt() != null && asset.expiresAt().isBefore(Instant.now()) && !"COMPLETED".equals(asset.uploadStatus())) {
             throw new BusinessException(ErrorCode.UPLOAD_REJECTED, "上传凭证已过期，请重新申请");
         }
