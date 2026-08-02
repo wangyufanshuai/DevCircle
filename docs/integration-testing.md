@@ -79,17 +79,21 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 完整 CI 不设置该例外；`dc-file`、其余生产模块或 Testcontainers 未执行都会阻断构建。不要使用 `C:\Windows\System32\bash.exe`，Windows 上请使用 Git Bash。
 
-2026-08-02 在 `fb2bdaa` 后的完整纯单元/H2 回归为 358 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 76.28%、分支覆盖率为 68.57%，覆盖报告完整性与禁止 skipped 门禁均通过。该批次包含搜索删除 refresh 失败重试契约和 `search_after` 游标改造；结果仍排除了 Testcontainers，不证明完整多服务链路、性能或恢复演练。
+2026-08-02 在 `b7ad448` 后的完整纯单元/H2 回归为 360 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 76.29%、分支覆盖率为 68.60%，覆盖报告完整性与禁止 skipped 门禁均通过。该批次包含搜索删除 refresh 失败重试契约、`search_after` 游标改造和 Outbox 租约所有权测试；结果仍排除了完整 Gateway/Compose E2E、性能或恢复演练。
 
 2026-08-02 在 `43e6f39` 后的完整纯单元/H2 回归为 357 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 76.42%、分支覆盖率为 68.89%，覆盖报告完整性与禁止 skipped 门禁均通过。`ContentCommentProjectionRepository` 为 100%/88.46%，`ContentInteractionProjectionRepository` 为 100%/85.00%。内容库 V19 为评论与互动计数投影去重表增加事件指纹，并验证迁移会回填旧记录且旧应用省略新列的写入仍可兼容一个版本。两个消费者现在把完整 `ValidatedEvent` 传入投影事务：同 ID 同载荷保持幂等，同 ID 更换 topic、文章、动作、发生时间或 payload 会明确冲突；旧全零记录在首次重放时升级绑定但不会重复修改计数。状态测试通过真实 Spring 事务代理确认计数写入失败会回滚消费者声明，依赖恢复后原事件可用同一 ID 重试。当前结果排除了 Testcontainers，因此 V19 的真实 MySQL 迁移、Kafka 重投以及投影恢复尚未验证。
 
 2026-08-02 在 `43e6f39` 后补充真实 MySQL 投影回归：`ContentCommentProjectionIntegrationTest`、`ContentInteractionProjectionIntegrationTest` 和 `ContentProjectionMigrationIntegrationTest` 共 5 项测试在 MySQL 8.4 Testcontainer 中通过。前两类验证 V19 全量迁移后的评论/互动重复投影、缺失文章回滚和计数一致性；迁移测试先在真实 MySQL 执行到 V18，写入旧去重记录，再执行 V19，确认旧记录回填全零指纹且旧应用省略 `event_fingerprint` 的写入仍兼容。该批次未启动 Kafka、Redis、Elasticsearch 或 MinIO，因此不能替代完整多服务集成验收。
 
+同日 `OutboxFailureIntegrationTest` 以 MySQL 8.4 真实容器通过 1 项测试，验证 Kafka 不可用时内容写入仍保留 `FAILED` Outbox 事件并可继续补偿；该批次仍未执行完整 Gateway/多服务链路。
+
 2026-08-02 补充单基础设施可靠性回归，共 9 项真实测试通过：`FeedServiceRedisIntegrationTest` 使用 Redis 8.2 验证兴趣、热度、关注信号和曝光降权；`InteractionPipelineIntegrationTest` 使用 MySQL 8.4 与 Redis 8.2 验证点赞/收藏幂等、持久化计数、Outbox 写入和 Redis 热度只变化一次；`KafkaContainerSmokeTest` 使用 Kafka 4.1.1 验证真实 topic、producer 和 consumer group；`NotificationKafkaReliabilityIntegrationTest` 使用 MySQL 8.4 与 Kafka 4.1.1 验证 poison event 重试、DLT 投递、有效事件消费和重复通知去重。该批次覆盖了真实 MySQL、Redis、Kafka 的关键切片，但仍未覆盖 Elasticsearch、MinIO 或完整 Gateway/多服务 E2E。
 
 同日 `FileUploadIntegrationTest` 以 MySQL 8.4 + MinIO 真实容器通过 1 项媒体测试：预签名 PUT 上传真实 PNG 魔数，完成校验后媒体保持 `PENDING_REVIEW`、公开 URL 为空，并确认申请/完成幂等记录写入载荷指纹。至此本轮单基础设施真实回归累计 10 项；Elasticsearch、完整 Gateway/多服务 E2E 和目标主机性能仍未验收。
 
-随后 `SearchIndexIntegrationTest` 以 Elasticsearch 9.2.2 真实容器（256MB 堆、单节点、禁用 ML）通过 4 项测试：发布事件写入真实索引后，文档详情和关键词搜索均可读；乱序旧事件不能覆盖新版本，内容驳回后会 refresh 索引并从关键词搜索中立即消失；最新排序使用 `search_after` 游标，第一页之后插入更晚内容不会造成重复，游标复用到不同筛选条件会被拒绝；相关性排序保留 `_score`、时间和 ID 的稳定 tie-breaker。连同 V19 投影迁移测试，本轮真实基础设施回归累计 19 项，五类基础设施均已有切片证据；完整 Gateway/Compose E2E、跨服务事件追平、性能和恢复演练仍未验收。
+随后 `SearchIndexIntegrationTest` 以 Elasticsearch 9.2.2 真实容器（256MB 堆、单节点、禁用 ML）通过 4 项测试：发布事件写入真实索引后，文档详情和关键词搜索均可读；乱序旧事件不能覆盖新版本，内容驳回后会 refresh 索引并从关键词搜索中立即消失；最新排序使用 `search_after` 游标，第一页之后插入更晚内容不会造成重复，游标复用到不同筛选条件会被拒绝；相关性排序保留 `_score`、时间和 ID 的稳定 tie-breaker。连同 V19 投影迁移测试，本轮真实基础设施回归累计 20 项，五类基础设施均已有切片证据；完整 Gateway/Compose E2E、跨服务事件追平、性能和恢复演练仍未验收。
+
+最后 `ContentOutboxIntegrationTest` 以 MySQL 8.4 + Kafka 4.1.1 真实容器通过 3 项测试：内容、标签、Outbox 在同一事务写入后可正常发布到 Kafka，重复评论/互动投影保持一次性计数。至此本轮单基础设施真实回归累计 23 项；完整 Gateway/Compose E2E、跨服务事件追平、性能和恢复演练仍未验收。
 
 2026-08-02 在 `cd75565` 后的完整纯单元/H2 回归为 351 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 76.05%、分支覆盖率为 68.26%，覆盖报告完整性与禁止 skipped 门禁均通过。`dc-user` 为 82.23%/91.84%，本批核心 `UserGraphRepository` 为 99.20%/97.62%。用户 V6 为 `consumer_dedup` 增加事件指纹，并验证迁移会回填旧记录且旧应用省略新列的写入仍可兼容一个版本。注册消费者现在把完整 `ValidatedEvent` 传入资料投影事务：同 ID 同载荷保持幂等，同 ID 更换 topic、发生时间、生产者、聚合标识或 payload 会明确冲突；旧全零记录在首次重放时升级绑定但不会再次修改资料。状态测试通过真实 Spring 事务代理确认资料写入失败会回滚消费者声明，依赖恢复后原事件可用同一 ID 重试。当前本机 Docker 资源不足以执行完整多服务链路，因此 V6 的真实 MySQL 迁移和 Kafka 注册事件重投尚未验证。
 
