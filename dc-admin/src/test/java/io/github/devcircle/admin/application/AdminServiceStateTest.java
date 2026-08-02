@@ -439,6 +439,35 @@ class AdminServiceStateTest {
     }
 
     @Test
+    void appealAuditFailureRollsBackAllStateAndAllowsSameKeyRetry() {
+        long postId = post(33L, "申诉事务档案", "REJECTED");
+        long appealId = appeal(postId, 33L, "新增来源可以核验");
+
+        assertThatThrownBy(() -> failingService.resolveAppeal(appealId, 9L, "trace-appeal-failure",
+                "审计不可用时必须整体回滚", true, "appeal-failure-key"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("serialize audit metadata");
+
+        assertThat(postStatus(postId)).isEqualTo("REJECTED");
+        assertThat(appealStatus(appealId)).isEqualTo("PENDING");
+        assertThat(activeTaskCount(postId)).isZero();
+        assertThat(count("moderation_decision")).isZero();
+        assertThat(count("post_audit_record")).isZero();
+        assertThat(count("audit_log")).isZero();
+        assertThat(count("outbox_event")).isZero();
+        assertThat(idempotencyCount("appeal-failure-key")).isZero();
+
+        service.resolveAppeal(appealId, 9L, "trace-appeal-retry",
+                "依赖恢复后允许使用原键重试", true, "appeal-failure-key");
+        assertThat(postStatus(postId)).isEqualTo("PENDING");
+        assertThat(appealStatus(appealId)).isEqualTo("APPROVED");
+        assertThat(activeTaskCount(postId)).isEqualTo(1);
+        assertThat(count("post_audit_record")).isEqualTo(1);
+        assertThat(count("audit_log")).isEqualTo(1);
+        assertThat(count("outbox_event")).isEqualTo(1);
+    }
+
+    @Test
     void restrictionDefaultsSafelyAndReplaysWithoutDuplicateMutation() {
         var result = service.restrictUser(41L, 9L, "trace-restrict", null,
                 "连续发布无法核验来源的内容", "restrict-user-41");

@@ -134,7 +134,7 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 随后新增 `SearchServiceCursorContractTest`，用模拟 Elasticsearch 命中验证稳定 `search_after` 游标、第二页无重复、旧索引主题/内容类型推断，以及第一页成功后 Elasticsearch 故障时不得切换到 Seed 数据；事件契约还补充审核通过完整载荷索引并刷新、普通更新变为非公开时删除索引、重复上行事件不触碰 Elasticsearch，以及索引/状态库双重失败时保留原始异常并附加状态异常。重建契约通过两页 20+1 条内容验证全量读取、批量保存和最终 refresh。搜索模块非容器定向回归为 35/35 通过；`SearchService` 行覆盖率 92.37%、分支覆盖率 76.47%，`SearchEventCoordinator` 为 100%/92.31%。该结果不包含真实 Elasticsearch 容器；完整纯单元/H2 聚合基线仍以 365 项、76.47%/68.83% 为准。
 
-2026-08-02 在申诉一致性补强后，`dc-admin` 定向回归为 21 个测试、0 failures/errors/skipped；其中 `AdminServiceStateTest` 19 个测试通过。新增用例验证申诉处理的同一 `Idempotency-Key` 不能更换审核理由、审核结论或审核员，且重放不会重复写入投稿状态、申诉状态、审核记录、审计日志或 Outbox。带 JaCoCo 的管理模块定向报告为 64.84% 行覆盖率、64.84% 分支覆盖率；该结果只证明管理模块状态测试通过，不替代完整 CI 和真实数据库/多服务验收。
+2026-08-02 在申诉一致性补强后，`dc-admin` 定向回归为 22 个测试、0 failures/errors/skipped；其中 `AdminServiceStateTest` 20 个测试通过。新增用例验证申诉处理的同一 `Idempotency-Key` 不能更换审核理由、审核结论或审核员，且重放不会重复写入投稿状态、申诉状态、审核记录、审计日志或 Outbox；审计序列化故障还会整体回滚申诉、投稿、复审任务、审核记录、审计日志、Outbox 和幂等记录，依赖恢复后可使用原键重试。带 JaCoCo 的管理模块定向报告为 64.84% 行覆盖率、64.84% 分支覆盖率；该结果只证明管理模块状态测试通过，不替代完整 CI 和真实数据库/多服务验收。
 
 ## 排查建议
 
