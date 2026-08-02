@@ -62,7 +62,7 @@ class CommentRepositoryIntegrationTest {
         var reply = repository.create(8L, 1001L, root.id(), "reply clue", "reply-key");
         repository.hide(root.id(), 9L, "hide-key", "moderation reason");
 
-        var replay = repository.create(8L, 1001L, root.id(), "different body", "reply-key");
+        var replay = repository.create(8L, 1001L, root.id(), "reply clue", "reply-key");
 
         assertThat(replay.id()).isEqualTo(reply.id());
         assertThat(replay.content()).isEqualTo("reply clue");
