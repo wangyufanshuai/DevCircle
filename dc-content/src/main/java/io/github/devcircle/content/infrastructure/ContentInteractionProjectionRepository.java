@@ -1,11 +1,15 @@
 package io.github.devcircle.content.infrastructure;
 
+import io.github.devcircle.common.event.EventFingerprint;
+import io.github.devcircle.common.event.ValidatedEvent;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public class ContentInteractionProjectionRepository {
+    private static final String LEGACY_FINGERPRINT = "0".repeat(64);
+
     private final JdbcClient jdbcClient;
 
     public ContentInteractionProjectionRepository(JdbcClient jdbcClient) {
@@ -13,23 +17,22 @@ public class ContentInteractionProjectionRepository {
     }
 
     @Transactional
-    public boolean apply(String eventId, String topic, Long postId, String interactionType) {
+    public boolean apply(ValidatedEvent event, Long postId, String interactionType) {
+        String eventId = event.eventId().toString();
+        String topic = event.type();
+        String eventFingerprint = EventFingerprint.sha256(event);
         int claimed = jdbcClient.sql("""
-                        INSERT IGNORE INTO interaction_projection_dedup(event_id, topic)
-                        VALUES (:eventId, :topic)
+                        INSERT IGNORE INTO interaction_projection_dedup(event_id, topic, event_fingerprint)
+                        VALUES (:eventId, :topic, :eventFingerprint)
                         """)
                 .param("eventId", eventId)
                 .param("topic", topic)
+                .param("eventFingerprint", eventFingerprint)
                 .update();
         if (claimed == 0) {
-            String existingTopic = jdbcClient.sql(
-                            "SELECT topic FROM interaction_projection_dedup WHERE event_id = :eventId")
-                    .param("eventId", eventId)
-                    .query(String.class)
-                    .single();
-            if (!topic.equals(existingTopic)) {
-                throw new IllegalArgumentException("Event ID is already bound to topic " + existingTopic);
-            }
+            ProjectionEventIdentity existing = loadEvent(eventId);
+            validateEvent(existing, topic, eventFingerprint);
+            upgradeLegacyFingerprint(eventId, topic, eventFingerprint, existing);
             return false;
         }
 
@@ -54,5 +57,45 @@ public class ContentInteractionProjectionRepository {
             throw new IllegalStateException("Interaction event references missing post " + postId);
         }
         return true;
+    }
+
+    private ProjectionEventIdentity loadEvent(String eventId) {
+        return jdbcClient.sql("""
+                        SELECT topic, event_fingerprint
+                        FROM interaction_projection_dedup
+                        WHERE event_id = :eventId
+                        """)
+                .param("eventId", eventId)
+                .query((rs, rowNum) -> new ProjectionEventIdentity(
+                        rs.getString("topic"), rs.getString("event_fingerprint")))
+                .single();
+    }
+
+    private void upgradeLegacyFingerprint(String eventId, String topic, String eventFingerprint,
+                                          ProjectionEventIdentity existing) {
+        if (!LEGACY_FINGERPRINT.equals(existing.eventFingerprint())) return;
+        int upgraded = jdbcClient.sql("""
+                        UPDATE interaction_projection_dedup
+                        SET event_fingerprint = :eventFingerprint
+                        WHERE event_id = :eventId AND event_fingerprint = :legacyFingerprint
+                        """)
+                .param("eventId", eventId)
+                .param("eventFingerprint", eventFingerprint)
+                .param("legacyFingerprint", LEGACY_FINGERPRINT)
+                .update();
+        if (upgraded == 0) validateEvent(loadEvent(eventId), topic, eventFingerprint);
+    }
+
+    private void validateEvent(ProjectionEventIdentity existing, String topic, String eventFingerprint) {
+        if (!topic.equals(existing.topic())) {
+            throw new IllegalArgumentException("Event ID is already bound to topic " + existing.topic());
+        }
+        if (!LEGACY_FINGERPRINT.equals(existing.eventFingerprint())
+                && !eventFingerprint.equals(existing.eventFingerprint())) {
+            throw new IllegalArgumentException("Event ID is already bound to a different payload");
+        }
+    }
+
+    private record ProjectionEventIdentity(String topic, String eventFingerprint) {
     }
 }

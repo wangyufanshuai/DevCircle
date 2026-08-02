@@ -40,7 +40,7 @@ class InteractionChangedConsumer {
         if (!event.aggregateId().equals(Long.toString(postId))) {
             throw new IllegalArgumentException("Interaction aggregateId does not match postId");
         }
-        projectionRepository.apply(event.eventId().toString(), event.type(), postId, interactionType);
+        projectionRepository.apply(event, postId, interactionType);
     }
 
     private long requiredPositiveLong(JsonNode payload, String field) {

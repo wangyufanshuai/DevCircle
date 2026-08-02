@@ -44,7 +44,7 @@ class CommentChangedConsumer {
         if (!event.aggregateId().equals(Long.toString(commentId))) {
             throw new IllegalArgumentException("Comment aggregateId does not match commentId");
         }
-        projectionRepository.apply(event.eventId().toString(), event.type(), postId, changeType);
+        projectionRepository.apply(event, postId, changeType);
     }
 
     private long requiredPositiveLong(JsonNode payload, String field) {

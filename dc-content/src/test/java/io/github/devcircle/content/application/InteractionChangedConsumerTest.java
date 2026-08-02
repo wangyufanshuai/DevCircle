@@ -2,10 +2,14 @@ package io.github.devcircle.content.application;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.content.infrastructure.ContentInteractionProjectionRepository;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -20,8 +24,11 @@ class InteractionChangedConsumerTest {
                 {"postId":1001,"actorId":7,"interactionType":"LIKE"}
                 """));
 
-        verify(repository).apply("e7106d33-45e2-4e26-9a25-757488b57f98",
-                EventTopics.INTERACTION_CHANGED, 1001L, "LIKE");
+        ArgumentCaptor<ValidatedEvent> eventCaptor = ArgumentCaptor.forClass(ValidatedEvent.class);
+        verify(repository).apply(eventCaptor.capture(), eq(1001L), eq("LIKE"));
+        assertThat(eventCaptor.getValue().eventId().toString())
+                .isEqualTo("e7106d33-45e2-4e26-9a25-757488b57f98");
+        assertThat(eventCaptor.getValue().type()).isEqualTo(EventTopics.INTERACTION_CHANGED);
     }
 
     @Test

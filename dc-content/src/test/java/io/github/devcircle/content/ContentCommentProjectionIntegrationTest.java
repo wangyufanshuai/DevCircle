@@ -1,6 +1,8 @@
 package io.github.devcircle.content;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.content.infrastructure.ContentCommentProjectionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,6 +16,9 @@ import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.Instant;
+import java.util.UUID;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -26,6 +31,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 })
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class ContentCommentProjectionIntegrationTest {
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     @Container
     static final MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.4")
             .withDatabaseName("dc_content")
@@ -54,11 +61,12 @@ class ContentCommentProjectionIntegrationTest {
 
     @Test
     void createDeleteAndDuplicateEventsKeepCountConsistent() {
-        assertThat(repository.apply("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", EventTopics.COMMENT_CHANGED,
-                92001L, "CREATED")).isTrue();
-        assertThat(repository.apply("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", EventTopics.COMMENT_CHANGED,
-                92001L, "CREATED")).isFalse();
-        assertThat(repository.apply("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", EventTopics.COMMENT_CHANGED,
+        ValidatedEvent created = commentEvent(
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", 9L, 92001L, "CREATED");
+        assertThat(repository.apply(created, 92001L, "CREATED")).isTrue();
+        assertThat(repository.apply(created, 92001L, "CREATED")).isFalse();
+        assertThat(repository.apply(commentEvent(
+                "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", 9L, 92001L, "DELETED"),
                 92001L, "DELETED")).isTrue();
 
         assertThat(commentCount(92001L)).isZero();
@@ -68,9 +76,19 @@ class ContentCommentProjectionIntegrationTest {
     @Test
     void missingPostRollsBackDedupClaimForRetry() {
         String eventId = "cccccccc-cccc-cccc-cccc-cccccccccccc";
-        assertThatThrownBy(() -> repository.apply(eventId, EventTopics.COMMENT_CREATED, 92002L, "CREATED"))
+        ValidatedEvent event = commentEvent(eventId, 10L, 92002L, "CREATED");
+        assertThatThrownBy(() -> repository.apply(event, 92002L, "CREATED"))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(dedupCount()).isZero();
+    }
+
+    private ValidatedEvent commentEvent(String eventId, long commentId, long postId, String changeType) {
+        return new ValidatedEvent(UUID.fromString(eventId), EventTopics.COMMENT_CHANGED, 1,
+                Instant.parse("2026-08-01T10:15:30Z"), "dc-comment", Long.toString(commentId),
+                OBJECT_MAPPER.createObjectNode()
+                        .put("commentId", commentId)
+                        .put("postId", postId)
+                        .put("changeType", changeType));
     }
 
     private long commentCount(Long postId) {
