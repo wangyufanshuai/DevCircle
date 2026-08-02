@@ -1,10 +1,12 @@
 package io.github.devcircle.recommend.application;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.devcircle.common.event.ValidatedEvent;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -21,7 +23,7 @@ class InteractionChangedConsumerTest {
 
     @Test
     void claimsEventBeforeApplyingSignalsAndMarksCompletion() throws Exception {
-        when(dedup.claim(EVENT_ID_1, "interaction.changed")).thenReturn(true);
+        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(true);
 
         consumer.consume(event(EVENT_ID_1, "9001", """
                 {"actorId":7,"postId":9001,"interactionType":"LIKE"}
@@ -33,7 +35,7 @@ class InteractionChangedConsumerTest {
 
     @Test
     void failedSignalApplicationIsMarkedAndPropagatedForKafkaRetry() throws Exception {
-        when(dedup.claim(EVENT_ID_2, "interaction.changed")).thenReturn(true);
+        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(true);
         RuntimeException failure = new IllegalStateException("redis down");
         org.mockito.Mockito.doThrow(failure).when(signals).apply(EVENT_ID_2, 7L, 9001L, "LIKE");
 
@@ -45,11 +47,24 @@ class InteractionChangedConsumerTest {
 
     @Test
     void duplicateCompletedEventDoesNotApplySignalsTwice() throws Exception {
-        when(dedup.claim(EVENT_ID_3, "interaction.changed")).thenReturn(false);
+        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(false);
 
         consumer.consume(event(EVENT_ID_3, "9001", """
                 {"actorId":7,"postId":9001,"interactionType":"LIKE"}
                 """));
+
+        verifyNoInteractions(signals);
+    }
+
+    @Test
+    void activeProcessingClaimIsPropagatedForKafkaRetry() {
+        JdbcInteractionConsumerDedup.EventProcessingInProgressException failure =
+                new JdbcInteractionConsumerDedup.EventProcessingInProgressException("event is still processing");
+        when(dedup.claim(any(ValidatedEvent.class))).thenThrow(failure);
+
+        assertThatThrownBy(() -> consumer.consume(event(EVENT_ID_3, "9001", """
+                {"actorId":7,"postId":9001,"interactionType":"LIKE"}
+                """))).isSameAs(failure);
 
         verifyNoInteractions(signals);
     }
@@ -68,7 +83,7 @@ class InteractionChangedConsumerTest {
 
     @Test
     void aggregateIdentityMismatchIsMarkedForRetryAndNeverProjected() throws Exception {
-        when(dedup.claim(EVENT_ID_1, "interaction.changed")).thenReturn(true);
+        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(true);
 
         assertThatThrownBy(() -> consumer.consume(event(EVENT_ID_1, "9002", """
                 {"actorId":7,"postId":9001,"interactionType":"LIKE"}
@@ -81,7 +96,7 @@ class InteractionChangedConsumerTest {
 
     @Test
     void invalidPayloadFieldsAndInteractionTypeAreMarkedForRetry() {
-        when(dedup.claim(EVENT_ID_1, "interaction.changed")).thenReturn(true);
+        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(true);
 
         assertRejected("{\"actorId\":\"7\",\"postId\":9001,\"interactionType\":\"LIKE\"}",
                 "Interaction payload actorId must be a positive integer");
@@ -105,7 +120,7 @@ class InteractionChangedConsumerTest {
 
     @Test
     void dedupFailureIsSuppressedWithoutHidingTheProjectionFailure() throws Exception {
-        when(dedup.claim(EVENT_ID_1, "interaction.changed")).thenReturn(true);
+        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(true);
         RuntimeException projectionFailure = new RuntimeException();
         RuntimeException stateFailure = new IllegalStateException("dedup unavailable");
         doThrow(projectionFailure).when(signals).apply(EVENT_ID_1, 7L, 9001L, "LIKE");

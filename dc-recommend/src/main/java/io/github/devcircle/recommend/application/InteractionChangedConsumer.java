@@ -33,8 +33,7 @@ class InteractionChangedConsumer {
     void consume(String message) throws Exception {
         ValidatedEvent event = envelopeValidator.parse(message, EVENT_CONTRACT);
         String eventId = event.eventId().toString();
-        String topic = event.type();
-        if (!dedup.claim(eventId, topic)) return;
+        if (!dedup.claim(event)) return;
         try {
             JsonNode payload = event.payload();
             long actorId = requiredPositiveLong(payload, "actorId");

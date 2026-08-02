@@ -1,10 +1,12 @@
 package io.github.devcircle.recommend.application;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.devcircle.common.event.ValidatedEvent;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -19,7 +21,7 @@ class FollowChangedConsumerTest {
         InteractionConsumerDedup dedup = mock(InteractionConsumerDedup.class);
         FollowSignalStore signals = mock(FollowSignalStore.class);
         FollowChangedConsumer consumer = new FollowChangedConsumer(new ObjectMapper(), dedup, signals);
-        when(dedup.claim(EVENT_ID, "follow.changed")).thenReturn(true);
+        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(true);
 
         consumer.consume(event("7", """
                 {"actorId":2,"receiverId":7,"receiverUsername":"林墨","status":"FOLLOWED"}
@@ -48,7 +50,7 @@ class FollowChangedConsumerTest {
         InteractionConsumerDedup dedup = mock(InteractionConsumerDedup.class);
         FollowSignalStore signals = mock(FollowSignalStore.class);
         FollowChangedConsumer consumer = new FollowChangedConsumer(new ObjectMapper(), dedup, signals);
-        when(dedup.claim(EVENT_ID, "follow.changed")).thenReturn(true);
+        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(true);
 
         assertThatThrownBy(() -> consumer.consume(event("99", """
                 {"actorId":2,"receiverId":7,"status":"FOLLOWED"}
@@ -64,7 +66,7 @@ class FollowChangedConsumerTest {
         InteractionConsumerDedup dedup = mock(InteractionConsumerDedup.class);
         FollowSignalStore signals = mock(FollowSignalStore.class);
         FollowChangedConsumer consumer = new FollowChangedConsumer(new ObjectMapper(), dedup, signals);
-        when(dedup.claim(EVENT_ID, "follow.changed")).thenReturn(false);
+        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(false);
 
         consumer.consume(event("7", """
                 {"actorId":2,"receiverId":7,"status":"FOLLOWED"}
@@ -78,7 +80,7 @@ class FollowChangedConsumerTest {
         InteractionConsumerDedup dedup = mock(InteractionConsumerDedup.class);
         FollowSignalStore signals = mock(FollowSignalStore.class);
         FollowChangedConsumer consumer = new FollowChangedConsumer(new ObjectMapper(), dedup, signals);
-        when(dedup.claim(EVENT_ID, "follow.changed")).thenReturn(true);
+        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(true);
 
         assertRejected(consumer, "{\"actorId\":\"2\",\"receiverId\":7,\"status\":\"FOLLOWED\"}",
                 "Follow payload actorId must be a positive integer");
@@ -107,7 +109,7 @@ class FollowChangedConsumerTest {
         InteractionConsumerDedup dedup = mock(InteractionConsumerDedup.class);
         FollowSignalStore signals = mock(FollowSignalStore.class);
         FollowChangedConsumer consumer = new FollowChangedConsumer(new ObjectMapper(), dedup, signals);
-        when(dedup.claim(EVENT_ID, "follow.changed")).thenReturn(true);
+        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(true);
         RuntimeException projectionFailure = new RuntimeException();
         RuntimeException stateFailure = new IllegalStateException("dedup unavailable");
         doThrow(projectionFailure).when(signals).apply(EVENT_ID, 2L, 7L, "FOLLOWED");
