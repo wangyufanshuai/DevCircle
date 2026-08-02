@@ -248,7 +248,8 @@ public class SearchService {
             throw new IllegalArgumentException("Search aggregateId does not match postId");
         }
         Instant occurredAt = event.occurredAt();
-        if (!eventCoordinator.claim(event, postId)) {
+        SearchEventCoordinator.ClaimResult claim = eventCoordinator.claim(event, postId);
+        if (!claim.claimed()) {
             return;
         }
         try {
@@ -257,7 +258,7 @@ public class SearchService {
                     || (!eventStatus.isBlank() && !"PUBLISHED".equals(eventStatus))) {
                 elasticsearchOperations.delete(String.valueOf(postId), PostSearchDocument.class);
                 elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
-                eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE");
+                eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE", claim.leaseToken());
                 return;
             }
             PostSummary post;
@@ -276,15 +277,15 @@ public class SearchService {
             if (!"PUBLISHED".equals(post.status())) {
                 elasticsearchOperations.delete(String.valueOf(postId), PostSearchDocument.class);
                 elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
-                eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE");
+                eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE", claim.leaseToken());
                 return;
             }
             elasticsearchOperations.save(document(post, occurredAt));
             elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
-            eventCoordinator.complete(eventId, postId, occurredAt, "UPSERT");
+            eventCoordinator.complete(eventId, postId, occurredAt, "UPSERT", claim.leaseToken());
         } catch (Exception ex) {
             try {
-                eventCoordinator.fail(eventId, postId, ex);
+                eventCoordinator.fail(eventId, postId, ex, claim.leaseToken());
             } catch (RuntimeException stateFailure) {
                 ex.addSuppressed(stateFailure);
             }
@@ -302,16 +303,17 @@ public class SearchService {
         if (!event.aggregateId().equals(Long.toString(postId))) {
             throw new IllegalArgumentException("Search aggregateId does not match postId");
         }
-        if (!eventCoordinator.claim(event, postId)) {
+        SearchEventCoordinator.ClaimResult claim = eventCoordinator.claim(event, postId);
+        if (!claim.claimed()) {
             return;
         }
         try {
             elasticsearchOperations.delete(String.valueOf(postId), PostSearchDocument.class);
             elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
-            eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE");
+            eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE", claim.leaseToken());
         } catch (RuntimeException ex) {
             try {
-                eventCoordinator.fail(eventId, postId, ex);
+                eventCoordinator.fail(eventId, postId, ex, claim.leaseToken());
             } catch (RuntimeException stateFailure) {
                 ex.addSuppressed(stateFailure);
             }

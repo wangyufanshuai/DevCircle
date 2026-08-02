@@ -45,6 +45,7 @@ class SearchEventCoordinatorTest {
                     event_fingerprint CHAR(64) NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
                     status VARCHAR(16) NOT NULL DEFAULT 'PROCESSING',
                     attempts INT NOT NULL DEFAULT 1,
+                    lease_token CHAR(36),
                     last_error VARCHAR(1000),
                     processed_at TIMESTAMP,
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -68,18 +69,17 @@ class SearchEventCoordinatorTest {
         Instant publishedAt = Instant.parse("2026-07-30T10:00:00Z");
         ValidatedEvent published = event(
                 "11111111-1111-1111-1111-111111111111", "audit.completed", 42L, publishedAt);
-        assertThat(coordinator.claim(published, 42L))
-                .isTrue();
-        coordinator.complete("11111111-1111-1111-1111-111111111111", 42L, publishedAt, "UPSERT");
+        SearchEventCoordinator.ClaimResult publishedClaim = acquire(published, 42L);
+        coordinator.complete("11111111-1111-1111-1111-111111111111", 42L, publishedAt,
+                "UPSERT", publishedClaim.leaseToken());
 
-        assertThat(coordinator.claim(published, 42L))
-                .isFalse();
+        assertDuplicate(published, 42L);
         assertPayloadConflict(event(
                 published.eventId().toString(), published.type(), 42L, publishedAt,
                 published.producer(), published.aggregateId(), payload(42L, "changed")), 42L);
-        assertThat(coordinator.claim(event(
+        assertDuplicate(event(
                 "22222222-2222-2222-2222-222222222222", "content.rejected", 42L,
-                publishedAt.minusSeconds(10)), 42L)).isFalse();
+                publishedAt.minusSeconds(10)), 42L);
 
         String status = jdbcClient.sql("SELECT status FROM search_consumer_dedup WHERE event_id = :eventId")
                 .param("eventId", "22222222-2222-2222-2222-222222222222")
@@ -98,16 +98,18 @@ class SearchEventCoordinatorTest {
         String eventId = "33333333-3333-3333-3333-333333333333";
         Instant occurredAt = Instant.parse("2026-07-30T11:00:00Z");
         ValidatedEvent event = event(eventId, "content.rejected", 73L, occurredAt);
-        assertThat(coordinator.claim(event, 73L)).isTrue();
+        SearchEventCoordinator.ClaimResult firstClaim = acquire(event, 73L);
 
-        coordinator.fail(eventId, 73L, new IllegalStateException("elasticsearch unavailable"));
+        coordinator.fail(eventId, 73L, new IllegalStateException("elasticsearch unavailable"),
+                firstClaim.leaseToken());
         String releasedLease = jdbcClient.sql(
                         "SELECT COALESCE(lease_owner, '') FROM search_event_watermark WHERE post_id = 73")
                 .query(String.class)
                 .single();
         assertThat(releasedLease).isEmpty();
 
-        assertThat(coordinator.claim(event, 73L)).isTrue();
+        SearchEventCoordinator.ClaimResult retryClaim = acquire(event, 73L);
+        assertThat(retryClaim.leaseToken()).isNotEqualTo(firstClaim.leaseToken());
         Integer attempts = jdbcClient.sql("SELECT attempts FROM search_consumer_dedup WHERE event_id = :eventId")
                 .param("eventId", eventId)
                 .query(Integer.class)
@@ -119,8 +121,10 @@ class SearchEventCoordinatorTest {
     void eventIdCannotBeRetriedAgainstAnotherTopicOrPost() {
         String eventId = "7be56fe6-d3b8-46ce-899a-e633150a5f45";
         Instant occurredAt = Instant.parse("2026-07-30T11:00:00Z");
-        assertThat(coordinator.claim(event(eventId, "post.updated", 73L, occurredAt), 73L)).isTrue();
-        coordinator.fail(eventId, 73L, new IllegalStateException("elasticsearch unavailable"));
+        SearchEventCoordinator.ClaimResult claim = acquire(
+                event(eventId, "post.updated", 73L, occurredAt), 73L);
+        coordinator.fail(eventId, 73L, new IllegalStateException("elasticsearch unavailable"),
+                claim.leaseToken());
 
         assertThatThrownBy(() -> coordinator.claim(
                 event(eventId, "content.rejected", 73L, occurredAt), 73L))
@@ -137,7 +141,8 @@ class SearchEventCoordinatorTest {
         String first = "1603b780-e1d5-4f3b-b8f6-5ea67626dac1";
         String second = "321d4a42-6a74-4f5f-996e-490d424455db";
         Instant occurredAt = Instant.parse("2026-07-30T12:00:00Z");
-        assertThat(coordinator.claim(event(first, "post.updated", 88L, occurredAt), 88L)).isTrue();
+        SearchEventCoordinator.ClaimResult firstClaim = acquire(
+                event(first, "post.updated", 88L, occurredAt), 88L);
 
         assertThatThrownBy(() -> coordinator.claim(
                 event(second, "post.updated", 88L, occurredAt.plusSeconds(1)), 88L))
@@ -151,15 +156,16 @@ class SearchEventCoordinatorTest {
                         "SELECT lease_owner FROM search_event_watermark WHERE post_id = 88")
                 .query(String.class)
                 .single();
-        assertThat(leaseOwner).isEqualTo(first);
+        assertThat(leaseOwner).isEqualTo(firstClaim.leaseToken());
     }
 
     @Test
     void completionWithoutAnOwnedLeaseIsRejected() {
         assertThatThrownBy(() -> coordinator.complete(
                 "8a650a91-f9d0-47d8-8828-9d21545e7a83", 89L,
-                Instant.parse("2026-07-30T12:00:00Z"), "UPSERT"))
-                .isInstanceOf(IllegalStateException.class)
+                Instant.parse("2026-07-30T12:00:00Z"), "UPSERT",
+                "99999999-9999-4999-8999-999999999999"))
+                .isInstanceOf(SearchEventCoordinator.SearchEventLeaseLostException.class)
                 .hasMessage("Search event lease was lost before completion");
     }
 
@@ -167,9 +173,10 @@ class SearchEventCoordinatorTest {
     void failureWithoutADiagnosticMessageStillPersistsASafeReason() {
         String eventId = "4194f31d-44ea-4dcb-a935-f4eeabcb2a17";
         Instant occurredAt = Instant.parse("2026-07-30T12:00:00Z");
-        assertThat(coordinator.claim(event(eventId, "post.updated", 90L, occurredAt), 90L)).isTrue();
+        SearchEventCoordinator.ClaimResult claim = acquire(
+                event(eventId, "post.updated", 90L, occurredAt), 90L);
 
-        coordinator.fail(eventId, 90L, null);
+        coordinator.fail(eventId, 90L, null, claim.leaseToken());
 
         String error = jdbcClient.sql("SELECT last_error FROM search_consumer_dedup WHERE event_id = :eventId")
                 .param("eventId", eventId).query(String.class).single();
@@ -181,8 +188,9 @@ class SearchEventCoordinatorTest {
         String eventId = "5a04f9e7-caf6-4e3b-a834-f5fca6f9b560";
         Instant occurredAt = Instant.parse("2026-07-30T13:00:00Z");
         ValidatedEvent original = event(eventId, "post.updated", 95L, occurredAt);
-        assertThat(coordinator.claim(original, 95L)).isTrue();
-        coordinator.fail(eventId, 95L, new IllegalStateException("elasticsearch unavailable"));
+        SearchEventCoordinator.ClaimResult claim = acquire(original, 95L);
+        coordinator.fail(eventId, 95L, new IllegalStateException("elasticsearch unavailable"),
+                claim.leaseToken());
 
         assertPayloadConflict(event(eventId, "post.updated", 95L, occurredAt.plusSeconds(1)), 95L);
         assertPayloadConflict(event(eventId, "post.updated", 95L, occurredAt,
@@ -205,7 +213,7 @@ class SearchEventCoordinatorTest {
         String eventId = "8ac7444c-e86c-4d49-9a96-51c870db8c3b";
         Instant occurredAt = Instant.parse("2026-07-30T14:00:00Z");
         ValidatedEvent original = event(eventId, "post.updated", 96L, occurredAt);
-        assertThat(coordinator.claim(original, 96L)).isTrue();
+        SearchEventCoordinator.ClaimResult originalClaim = acquire(original, 96L);
         jdbcClient.sql("""
                         UPDATE search_consumer_dedup
                         SET updated_at = TIMESTAMPADD(MINUTE, -10, CURRENT_TIMESTAMP)
@@ -213,10 +221,32 @@ class SearchEventCoordinatorTest {
                         """)
                 .param("eventId", eventId)
                 .update();
+        jdbcClient.sql("""
+                        UPDATE search_event_watermark
+                        SET lease_until = TIMESTAMPADD(MINUTE, -10, CURRENT_TIMESTAMP)
+                        WHERE post_id = 96
+                        """)
+                .update();
 
         assertPayloadConflict(event(eventId, "post.updated", 96L, occurredAt,
                 "dc-content", "96", payload(96L, "changed")), 96L);
-        assertThat(coordinator.claim(original, 96L)).isTrue();
+        SearchEventCoordinator.ClaimResult recoveredClaim = acquire(original, 96L);
+        assertThat(recoveredClaim.leaseToken()).isNotEqualTo(originalClaim.leaseToken());
+
+        assertThatThrownBy(() -> coordinator.complete(eventId, 96L, occurredAt, "UPSERT",
+                originalClaim.leaseToken()))
+                .isInstanceOf(SearchEventCoordinator.SearchEventLeaseLostException.class)
+                .hasMessage("Search event lease was lost before completion");
+        assertThatThrownBy(() -> coordinator.fail(eventId, 96L,
+                new IllegalStateException("stale worker"), originalClaim.leaseToken()))
+                .isInstanceOf(SearchEventCoordinator.SearchEventLeaseLostException.class)
+                .hasMessage("Search event lease was lost before recording failure");
+        String activeLease = jdbcClient.sql("""
+                        SELECT lease_owner FROM search_event_watermark WHERE post_id = 96
+                        """)
+                .query(String.class)
+                .single();
+        assertThat(activeLease).isEqualTo(recoveredClaim.leaseToken());
 
         Integer attempts = jdbcClient.sql(
                         "SELECT attempts FROM search_consumer_dedup WHERE event_id = :eventId")
@@ -231,8 +261,9 @@ class SearchEventCoordinatorTest {
         String eventId = "dfe34bbc-e18f-487c-ac9d-cf1cc8438975";
         Instant occurredAt = Instant.parse("2026-07-30T15:00:00Z");
         ValidatedEvent original = event(eventId, "post.updated", 97L, occurredAt);
-        assertThat(coordinator.claim(original, 97L)).isTrue();
-        coordinator.fail(eventId, 97L, new IllegalStateException("elasticsearch unavailable"));
+        SearchEventCoordinator.ClaimResult originalClaim = acquire(original, 97L);
+        coordinator.fail(eventId, 97L, new IllegalStateException("elasticsearch unavailable"),
+                originalClaim.leaseToken());
         jdbcClient.sql("""
                         UPDATE search_consumer_dedup
                         SET event_fingerprint = :legacy
@@ -244,7 +275,7 @@ class SearchEventCoordinatorTest {
 
         ValidatedEvent compatibleRetry = event(eventId, "post.updated", 97L, occurredAt,
                 "dc-content", "97", payload(97L, "legacy-retry"));
-        assertThat(coordinator.claim(compatibleRetry, 97L)).isTrue();
+        acquire(compatibleRetry, 97L);
 
         String fingerprint = jdbcClient.sql(
                         "SELECT event_fingerprint FROM search_consumer_dedup WHERE event_id = :eventId")
@@ -259,6 +290,19 @@ class SearchEventCoordinatorTest {
         assertThatThrownBy(() -> coordinator.claim(event, postId))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Search event ID is already bound to a different payload");
+    }
+
+    private SearchEventCoordinator.ClaimResult acquire(ValidatedEvent event, long postId) {
+        SearchEventCoordinator.ClaimResult claim = coordinator.claim(event, postId);
+        assertThat(claim.claimed()).isTrue();
+        assertThat(claim.leaseToken()).isNotBlank();
+        return claim;
+    }
+
+    private void assertDuplicate(ValidatedEvent event, long postId) {
+        SearchEventCoordinator.ClaimResult claim = coordinator.claim(event, postId);
+        assertThat(claim.claimed()).isFalse();
+        assertThat(claim.leaseToken()).isNull();
     }
 
     private ValidatedEvent event(String eventId, String topic, long postId, Instant occurredAt) {

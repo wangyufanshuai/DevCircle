@@ -22,6 +22,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class SearchServiceEventTest {
+    private static final String LEASE_TOKEN = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     private final ElasticsearchOperations operations = mock(ElasticsearchOperations.class);
     private final SearchEventCoordinator coordinator = mock(SearchEventCoordinator.class);
     private SearchService service;
@@ -36,7 +37,7 @@ class SearchServiceEventTest {
     void rejectedContentIsRemovedWithoutCallingThePublicDetailEndpoint() throws Exception {
         String eventId = "44444444-4444-4444-4444-444444444444";
         Instant occurredAt = Instant.parse("2026-07-30T12:00:00Z");
-        when(coordinator.claim(any(ValidatedEvent.class), eq(91L))).thenReturn(true);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(91L))).thenReturn(acquired());
         IndexOperations indexOperations = mock(IndexOperations.class);
         when(operations.indexOps(PostSearchDocument.class)).thenReturn(indexOperations);
 
@@ -48,14 +49,14 @@ class SearchServiceEventTest {
 
         verify(operations).delete("91", PostSearchDocument.class);
         verify(indexOperations).refresh();
-        verify(coordinator).complete(eventId, 91L, occurredAt, "REMOVE");
+        verify(coordinator).complete(eventId, 91L, occurredAt, "REMOVE", LEASE_TOKEN);
     }
 
     @Test
     void publishedAuditEventIndexesItsCanonicalPayloadAndRefreshesBeforeCompletion() throws Exception {
         String eventId = "41414141-4141-4414-8414-414141414141";
         Instant occurredAt = Instant.parse("2026-07-30T12:05:00Z");
-        when(coordinator.claim(any(ValidatedEvent.class), eq(912L))).thenReturn(true);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(912L))).thenReturn(acquired());
         IndexOperations indexOperations = mock(IndexOperations.class);
         when(operations.indexOps(PostSearchDocument.class)).thenReturn(indexOperations);
 
@@ -78,14 +79,14 @@ class SearchServiceEventTest {
         assertThat(document.getValue().getDifficulty()).isEqualTo("HARD");
         assertThat(document.getValue().getEventOccurredAt()).isEqualTo(occurredAt);
         verify(indexOperations).refresh();
-        verify(coordinator).complete(eventId, 912L, occurredAt, "UPSERT");
+        verify(coordinator).complete(eventId, 912L, occurredAt, "UPSERT", LEASE_TOKEN);
     }
 
     @Test
     void nonPublishedUpdateRemovesTheDocumentWithoutHydratingPublicDetail() throws Exception {
         String eventId = "42424242-4242-4424-8424-424242424242";
         Instant occurredAt = Instant.parse("2026-07-30T12:10:00Z");
-        when(coordinator.claim(any(ValidatedEvent.class), eq(913L))).thenReturn(true);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(913L))).thenReturn(acquired());
         IndexOperations indexOperations = mock(IndexOperations.class);
         when(operations.indexOps(PostSearchDocument.class)).thenReturn(indexOperations);
 
@@ -98,12 +99,13 @@ class SearchServiceEventTest {
         verify(operations).delete("913", PostSearchDocument.class);
         verify(indexOperations).refresh();
         verify(operations, never()).save(any(PostSearchDocument.class));
-        verify(coordinator).complete(eventId, 913L, occurredAt, "REMOVE");
+        verify(coordinator).complete(eventId, 913L, occurredAt, "REMOVE", LEASE_TOKEN);
     }
 
     @Test
     void duplicateUpsertEventDoesNotTouchElasticsearchOrHydrateContent() throws Exception {
-        when(coordinator.claim(any(ValidatedEvent.class), eq(914L))).thenReturn(false);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(914L)))
+                .thenReturn(SearchEventCoordinator.ClaimResult.duplicate());
 
         service.upsertPostFromEvent("""
                 {"eventId":"43434343-4343-4434-8434-434343434343","type":"post.updated","version":1,
@@ -112,8 +114,8 @@ class SearchServiceEventTest {
                 """);
 
         verifyNoInteractions(operations);
-        verify(coordinator, never()).complete(any(), eq(914L), any(), any());
-        verify(coordinator, never()).fail(any(), eq(914L), any());
+        verify(coordinator, never()).complete(any(), eq(914L), any(), any(), any());
+        verify(coordinator, never()).fail(any(), eq(914L), any(), any());
     }
 
     @Test
@@ -122,7 +124,7 @@ class SearchServiceEventTest {
         Instant occurredAt = Instant.parse("2026-07-30T12:15:00Z");
         IllegalStateException refreshFailure = new IllegalStateException("elasticsearch refresh unavailable");
         IndexOperations indexOperations = mock(IndexOperations.class);
-        when(coordinator.claim(any(ValidatedEvent.class), eq(911L))).thenReturn(true);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(911L))).thenReturn(acquired());
         when(operations.indexOps(PostSearchDocument.class)).thenReturn(indexOperations);
         org.mockito.Mockito.doThrow(refreshFailure).when(indexOperations).refresh();
 
@@ -133,15 +135,16 @@ class SearchServiceEventTest {
                 """))
                 .isSameAs(refreshFailure);
 
-        verify(coordinator).fail(eq(eventId), eq(911L), eq(refreshFailure));
-        verify(coordinator, never()).complete(any(), eq(911L), any(), any());
+        verify(coordinator).fail(eq(eventId), eq(911L), eq(refreshFailure), eq(LEASE_TOKEN));
+        verify(coordinator, never()).complete(any(), eq(911L), any(), any(), any());
     }
 
     @Test
     void duplicateOrStaleEventDoesNotTouchElasticsearch() throws Exception {
         String eventId = "55555555-5555-5555-5555-555555555555";
         Instant occurredAt = Instant.parse("2026-07-30T12:30:00Z");
-        when(coordinator.claim(any(ValidatedEvent.class), eq(92L))).thenReturn(false);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(92L)))
+                .thenReturn(SearchEventCoordinator.ClaimResult.duplicate());
 
         service.deletePostEvent("""
                 {"eventId":"55555555-5555-5555-5555-555555555555","type":"post.deleted","version":1,
@@ -150,14 +153,14 @@ class SearchServiceEventTest {
                 """);
 
         verifyNoInteractions(operations);
-        verify(coordinator, never()).complete(any(), eq(92L), any(), any());
+        verify(coordinator, never()).complete(any(), eq(92L), any(), any(), any());
     }
 
     @Test
     void indexingFailureIsRecordedAndRetriedByKafka() {
         String eventId = "66666666-6666-6666-6666-666666666666";
         Instant occurredAt = Instant.parse("2026-07-30T13:00:00Z");
-        when(coordinator.claim(any(ValidatedEvent.class), eq(93L))).thenReturn(true);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(93L))).thenReturn(acquired());
         when(operations.save(any(PostSearchDocument.class))).thenThrow(new IllegalStateException("elasticsearch unavailable"));
 
         assertThatThrownBy(() -> service.upsertPostFromEvent("""
@@ -168,7 +171,7 @@ class SearchServiceEventTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("elasticsearch unavailable");
 
-        verify(coordinator).fail(eq(eventId), eq(93L), any(IllegalStateException.class));
+        verify(coordinator).fail(eq(eventId), eq(93L), any(IllegalStateException.class), eq(LEASE_TOKEN));
     }
 
     @Test
@@ -176,9 +179,10 @@ class SearchServiceEventTest {
         String eventId = "67676767-6767-4676-8676-676767676767";
         IllegalStateException indexFailure = new IllegalStateException("elasticsearch write failed");
         IllegalStateException stateFailure = new IllegalStateException("search state database failed");
-        when(coordinator.claim(any(ValidatedEvent.class), eq(931L))).thenReturn(true);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(931L))).thenReturn(acquired());
         when(operations.save(any(PostSearchDocument.class))).thenThrow(indexFailure);
-        org.mockito.Mockito.doThrow(stateFailure).when(coordinator).fail(eventId, 931L, indexFailure);
+        org.mockito.Mockito.doThrow(stateFailure).when(coordinator)
+                .fail(eventId, 931L, indexFailure, LEASE_TOKEN);
 
         assertThatThrownBy(() -> service.upsertPostFromEvent("""
                 {"eventId":"67676767-6767-4676-8676-676767676767","type":"post.created","version":1,
@@ -188,7 +192,7 @@ class SearchServiceEventTest {
                 .isSameAs(indexFailure)
                 .satisfies(error -> assertThat(error.getSuppressed()).containsExactly(stateFailure));
 
-        verify(coordinator, never()).complete(any(), eq(931L), any(), any());
+        verify(coordinator, never()).complete(any(), eq(931L), any(), any(), any());
     }
 
     @Test
@@ -215,7 +219,7 @@ class SearchServiceEventTest {
     void nonTextualStatusIsRecordedAsAFailedIndexingAttempt() {
         String eventId = "9e45e6c2-3020-43bd-818d-f61b629d6ce1";
         Instant occurredAt = Instant.parse("2026-07-30T14:00:00Z");
-        when(coordinator.claim(any(ValidatedEvent.class), eq(97L))).thenReturn(true);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(97L))).thenReturn(acquired());
 
         assertThatThrownBy(() -> service.upsertPostFromEvent("""
                 {"eventId":"9e45e6c2-3020-43bd-818d-f61b629d6ce1","type":"post.updated","version":1,
@@ -225,7 +229,11 @@ class SearchServiceEventTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Search payload status must be a string");
 
-        verify(coordinator).fail(eq(eventId), eq(97L), any(IllegalArgumentException.class));
+        verify(coordinator).fail(eq(eventId), eq(97L), any(IllegalArgumentException.class), eq(LEASE_TOKEN));
         verifyNoInteractions(operations);
+    }
+
+    private SearchEventCoordinator.ClaimResult acquired() {
+        return SearchEventCoordinator.ClaimResult.acquired(LEASE_TOKEN);
     }
 }

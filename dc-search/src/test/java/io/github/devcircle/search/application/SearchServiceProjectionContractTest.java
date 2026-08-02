@@ -27,6 +27,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class SearchServiceProjectionContractTest {
+    private static final String LEASE_TOKEN = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     private final ElasticsearchOperations operations = mock(ElasticsearchOperations.class);
     private final SearchEventCoordinator coordinator = mock(SearchEventCoordinator.class);
     private final AtomicReference<String> detailResponse = new AtomicReference<>();
@@ -65,7 +66,7 @@ class SearchServiceProjectionContractTest {
                 """);
         String eventId = "11111111-2222-4333-8444-555555555555";
         Instant occurredAt = Instant.parse("2026-07-30T11:00:00Z");
-        when(coordinator.claim(any(ValidatedEvent.class), eq(101L))).thenReturn(true);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(101L))).thenReturn(acquired());
         when(operations.indexOps(PostSearchDocument.class)).thenReturn(mock(IndexOperations.class));
 
         service.upsertPostFromEvent("""
@@ -84,7 +85,7 @@ class SearchServiceProjectionContractTest {
         assertThat(document.getValue().getContentKind()).isEqualTo("COSMIC_ARTICLE");
         assertThat(document.getValue().getDifficulty()).isEqualTo("HARD");
         assertThat(document.getValue().getEventOccurredAt()).isEqualTo(occurredAt);
-        verify(coordinator).complete(eventId, 101L, occurredAt, "UPSERT");
+        verify(coordinator).complete(eventId, 101L, occurredAt, "UPSERT", LEASE_TOKEN);
     }
 
     @Test
@@ -96,7 +97,7 @@ class SearchServiceProjectionContractTest {
                 """);
         String eventId = "22222222-3333-4444-8555-666666666666";
         Instant occurredAt = Instant.parse("2026-07-30T12:00:00Z");
-        when(coordinator.claim(any(ValidatedEvent.class), eq(102L))).thenReturn(true);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(102L))).thenReturn(acquired());
         IndexOperations indexOperations = mock(IndexOperations.class);
         when(operations.indexOps(PostSearchDocument.class)).thenReturn(indexOperations);
 
@@ -109,7 +110,7 @@ class SearchServiceProjectionContractTest {
         verify(operations).delete("102", PostSearchDocument.class);
         verify(indexOperations).refresh();
         verify(operations, never()).save(any(PostSearchDocument.class));
-        verify(coordinator).complete(eventId, 102L, occurredAt, "REMOVE");
+        verify(coordinator).complete(eventId, 102L, occurredAt, "REMOVE", LEASE_TOKEN);
     }
 
     @Test
@@ -118,9 +119,10 @@ class SearchServiceProjectionContractTest {
         Instant occurredAt = Instant.parse("2026-07-30T13:00:00Z");
         IllegalStateException indexFailure = new IllegalStateException("elasticsearch unavailable");
         IllegalStateException stateFailure = new IllegalStateException("dedup storage unavailable");
-        when(coordinator.claim(any(ValidatedEvent.class), eq(103L))).thenReturn(true);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(103L))).thenReturn(acquired());
         when(operations.delete("103", PostSearchDocument.class)).thenThrow(indexFailure);
-        org.mockito.Mockito.doThrow(stateFailure).when(coordinator).fail(eq(eventId), eq(103L), eq(indexFailure));
+        org.mockito.Mockito.doThrow(stateFailure).when(coordinator)
+                .fail(eq(eventId), eq(103L), eq(indexFailure), eq(LEASE_TOKEN));
 
         assertThatThrownBy(() -> service.deletePostEvent("""
                 {"eventId":"33333333-4444-4555-8666-777777777777","type":"post.deleted","version":1,
@@ -129,5 +131,9 @@ class SearchServiceProjectionContractTest {
                 """))
                 .isSameAs(indexFailure)
                 .satisfies(error -> assertThat(error.getSuppressed()).containsExactly(stateFailure));
+    }
+
+    private SearchEventCoordinator.ClaimResult acquired() {
+        return SearchEventCoordinator.ClaimResult.acquired(LEASE_TOKEN);
     }
 }
