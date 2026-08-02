@@ -43,7 +43,6 @@ class NotificationEventConsumer {
             EventTopics.FOLLOW_CHANGED}, groupId = "dc-notification")
     void consume(String message) throws Exception {
         ValidatedEvent event = envelopeValidator.parse(message, EVENT_CONTRACTS);
-        String eventId = event.eventId().toString();
         String topic = event.type();
         JsonNode payload = event.payload();
         boolean interaction = EventTopics.INTERACTION_CHANGED.equals(topic);
@@ -65,7 +64,7 @@ class NotificationEventConsumer {
             }
             String interactionType = optionalText(payload, "interactionType", "");
             if ("UNLIKE".equals(interactionType) || "UNFAVORITE".equals(interactionType)) {
-                notificationRepository.acknowledgeOnce(eventId, topic);
+                notificationRepository.acknowledgeOnce(event);
                 return;
             }
             if (!"LIKE".equals(interactionType) && !"FAVORITE".equals(interactionType)) {
@@ -86,11 +85,11 @@ class NotificationEventConsumer {
             if (!"UNFOLLOWED".equals(status)) {
                 throw new IllegalArgumentException("Unsupported follow status: " + status);
             }
-            notificationRepository.acknowledgeOnce(eventId, topic);
+            notificationRepository.acknowledgeOnce(event);
             return;
         }
         if ((follow || interaction) && actorId == receiverId) {
-            notificationRepository.acknowledgeOnce(eventId, topic);
+            notificationRepository.acknowledgeOnce(event);
             return;
         }
         if (!interaction && !follow && ("UNKNOWN".equals(status) || status.isBlank())) {
@@ -106,7 +105,7 @@ class NotificationEventConsumer {
         Long targetId = targetIdValue > 0 ? targetIdValue : null;
         String targetType = optionalText(payload, "targetType", targetId == null ? "" : follow ? "USER" : "POST");
         String targetRoute = optionalText(payload, "targetRoute", targetId == null ? "" : follow ? "/me" : "/posts/" + targetId);
-        notificationRepository.createOnce(eventId, topic, receiverId, actorId > 0 ? actorId : null, type, title,
+        notificationRepository.createOnce(event, receiverId, actorId > 0 ? actorId : null, type, title,
                 content, targetType, targetId, targetRoute);
     }
 

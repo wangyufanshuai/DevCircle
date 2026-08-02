@@ -1,6 +1,8 @@
 package io.github.devcircle.notification.infrastructure;
 
 import io.github.devcircle.common.model.NotificationView;
+import io.github.devcircle.common.event.EventFingerprint;
+import io.github.devcircle.common.event.ValidatedEvent;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -11,6 +13,7 @@ import io.github.devcircle.common.error.ErrorCode;
 
 @Repository
 public class NotificationRepository {
+    private static final String LEGACY_EVENT_FINGERPRINT = "0".repeat(64);
     private final JdbcClient jdbcClient;
 
     public NotificationRepository(JdbcClient jdbcClient) {
@@ -57,9 +60,9 @@ public class NotificationRepository {
     }
 
     @Transactional
-    public boolean createOnce(String eventId, String topic, Long receiverId, Long actorId, String type,
+    public boolean createOnce(ValidatedEvent sourceEvent, Long receiverId, Long actorId, String type,
                               String title, String content, String targetType, Long targetId, String targetRoute) {
-        if (!claimConsumerEvent(eventId, topic)) return false;
+        if (!claimConsumerEvent(sourceEvent)) return false;
         jdbcClient.sql("""
                         INSERT INTO notification(receiver_id, actor_id, type, title, content, target_type, target_id, target_route, read_flag)
                         VALUES (:receiverId, :actorId, :type, :title, :content, :targetType, :targetId, :targetRoute, false)
@@ -76,22 +79,35 @@ public class NotificationRepository {
         return true;
     }
 
-    public boolean acknowledgeOnce(String eventId, String topic) {
-        return claimConsumerEvent(eventId, topic);
+    public boolean acknowledgeOnce(ValidatedEvent sourceEvent) {
+        return claimConsumerEvent(sourceEvent);
     }
 
-    private boolean claimConsumerEvent(String eventId, String topic) {
-        int claimed = jdbcClient.sql("INSERT IGNORE INTO consumer_dedup(event_id, topic) VALUES (:eventId, :topic)")
+    private boolean claimConsumerEvent(ValidatedEvent sourceEvent) {
+        String eventId = sourceEvent.eventId().toString();
+        String topic = sourceEvent.type();
+        String eventFingerprint = EventFingerprint.sha256(sourceEvent);
+        int claimed = jdbcClient.sql("""
+                        INSERT IGNORE INTO consumer_dedup(event_id, topic, event_fingerprint)
+                        VALUES (:eventId, :topic, :eventFingerprint)
+                        """)
                 .param("eventId", eventId)
                 .param("topic", topic)
+                .param("eventFingerprint", eventFingerprint)
                 .update();
         if (claimed == 1) return true;
-        String existingTopic = jdbcClient.sql("SELECT topic FROM consumer_dedup WHERE event_id = :eventId")
+        ConsumerDedup existing = jdbcClient.sql("""
+                        SELECT topic, event_fingerprint FROM consumer_dedup WHERE event_id = :eventId
+                        """)
                 .param("eventId", eventId)
-                .query(String.class)
+                .query((rs, rowNum) -> new ConsumerDedup(
+                        rs.getString("topic"), rs.getString("event_fingerprint")))
                 .single();
-        if (!topic.equals(existingTopic)) {
-            throw new IllegalArgumentException("Event ID is already bound to topic " + existingTopic);
+        boolean legacyEvent = LEGACY_EVENT_FINGERPRINT.equals(existing.eventFingerprint());
+        if (!topic.equals(existing.topic())
+                || (!legacyEvent && !eventFingerprint.equals(existing.eventFingerprint()))) {
+            throw new IllegalArgumentException(
+                    "Event ID is already bound to a different topic or payload");
         }
         return false;
     }
@@ -162,5 +178,8 @@ public class NotificationRepository {
     }
 
     private record Idempotency(Long userId, String operation, Long resourceId) {
+    }
+
+    private record ConsumerDedup(String topic, String eventFingerprint) {
     }
 }

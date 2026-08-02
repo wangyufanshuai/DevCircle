@@ -2,13 +2,18 @@ package io.github.devcircle.notification.application;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.event.EventEnvelope;
+import io.github.devcircle.common.event.EventFingerprint;
 import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.notification.infrastructure.NotificationRepository;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 
 import static org.mockito.Mockito.mock;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -24,8 +29,9 @@ class NotificationEventConsumerTest {
 
         consumer.consume(objectMapper.writeValueAsString(event));
 
-        verify(repository).createOnce(event.eventId().toString(), EventTopics.APPEAL_RESOLVED, 2L, null,
-                "AUDIT", "申诉处理结果", "你的申诉已受理，投稿已进入人工复审队列", "POST", 12L, "/posts/12");
+        verify(repository).createOnce(matching(event, objectMapper), eq(2L), isNull(),
+                eq("AUDIT"), eq("申诉处理结果"), eq("你的申诉已受理，投稿已进入人工复审队列"),
+                eq("POST"), eq(12L), eq("/posts/12"));
     }
 
     @Test
@@ -40,8 +46,9 @@ class NotificationEventConsumerTest {
 
         consumer.consume(objectMapper.writeValueAsString(event));
 
-        verify(repository).createOnce(event.eventId().toString(), EventTopics.INTERACTION_CHANGED, 7L, 2L,
-                "INTERACTION", "新的内容互动", "你的内容收到了一次新的互动", "POST", 9001L, "/posts/9001");
+        verify(repository).createOnce(matching(event, objectMapper), eq(7L), eq(2L),
+                eq("INTERACTION"), eq("新的内容互动"), eq("你的内容收到了一次新的互动"),
+                eq("POST"), eq(9001L), eq("/posts/9001"));
     }
 
     @Test
@@ -59,9 +66,9 @@ class NotificationEventConsumerTest {
         consumer.consume(objectMapper.writeValueAsString(followed));
         consumer.consume(objectMapper.writeValueAsString(unfollowed));
 
-        verify(repository).createOnce(followed.eventId().toString(), EventTopics.FOLLOW_CHANGED, 7L, 2L,
-                "FOLLOW", "新的关注者", "观测者 关注了你", "USER", 2L, "/me");
-        verify(repository).acknowledgeOnce(unfollowed.eventId().toString(), EventTopics.FOLLOW_CHANGED);
+        verify(repository).createOnce(matching(followed, objectMapper), eq(7L), eq(2L),
+                eq("FOLLOW"), eq("新的关注者"), eq("观测者 关注了你"), eq("USER"), eq(2L), eq("/me"));
+        verify(repository).acknowledgeOnce(matching(unfollowed, objectMapper));
         verifyNoMoreInteractions(repository);
     }
 
@@ -80,9 +87,21 @@ class NotificationEventConsumerTest {
         consumer.consume(objectMapper.writeValueAsString(unlike));
         consumer.consume(objectMapper.writeValueAsString(selfLike));
 
-        verify(repository).acknowledgeOnce(unlike.eventId().toString(), EventTopics.INTERACTION_CHANGED);
-        verify(repository).acknowledgeOnce(selfLike.eventId().toString(), EventTopics.INTERACTION_CHANGED);
+        verify(repository).acknowledgeOnce(matching(unlike, objectMapper));
+        verify(repository).acknowledgeOnce(matching(selfLike, objectMapper));
         verify(resolver).postAuthorId(9001L);
         verifyNoMoreInteractions(repository, resolver);
+    }
+
+    private ValidatedEvent validated(EventEnvelope event, ObjectMapper objectMapper) {
+        return new ValidatedEvent(event.eventId(), event.type(), event.version(), event.occurredAt(),
+                event.producer(), event.aggregateId(), objectMapper.valueToTree(event.payload()));
+    }
+
+    private ValidatedEvent matching(EventEnvelope event, ObjectMapper objectMapper) {
+        String expectedFingerprint = EventFingerprint.sha256(validated(event, objectMapper));
+        return argThat(actual -> actual != null
+                && actual.eventId().equals(event.eventId())
+                && EventFingerprint.sha256(actual).equals(expectedFingerprint));
     }
 }

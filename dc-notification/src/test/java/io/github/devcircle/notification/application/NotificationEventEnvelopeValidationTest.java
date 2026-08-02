@@ -2,7 +2,9 @@ package io.github.devcircle.notification.application;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.event.EventEnvelope;
+import io.github.devcircle.common.event.EventFingerprint;
 import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.notification.infrastructure.NotificationRepository;
 import org.junit.jupiter.api.Test;
 
@@ -10,6 +12,9 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -141,8 +146,8 @@ class NotificationEventEnvelopeValidationTest {
 
         consumer.consume(objectMapper.writeValueAsString(event));
 
-        verify(repository).createOnce(event.eventId().toString(), EventTopics.FOLLOW_CHANGED, 7L, 2L,
-                "FOLLOW", "新的关注者", "观测者 关注了你", "", null, "");
+        verify(repository).createOnce(matching(event), eq(7L), eq(2L),
+                eq("FOLLOW"), eq("新的关注者"), eq("观测者 关注了你"), eq(""), isNull(), eq(""));
         verifyNoInteractions(resolver);
     }
 
@@ -156,10 +161,12 @@ class NotificationEventEnvelopeValidationTest {
         consumer.consume(objectMapper.writeValueAsString(audit));
         consumer.consume(objectMapper.writeValueAsString(appeal));
 
-        verify(repository).createOnce(audit.eventId().toString(), EventTopics.AUDIT_COMPLETED, 2L, null,
-                "AUDIT", "投稿审核状态更新", "你的投稿状态已更新为 PUBLISHED", "POST", 12L, "/posts/12");
-        verify(repository).createOnce(appeal.eventId().toString(), EventTopics.APPEAL_RESOLVED, 2L, null,
-                "AUDIT", "申诉处理结果", "你的申诉已处理，请查看审核时间线", "POST", 13L, "/posts/13");
+        verify(repository).createOnce(matching(audit), eq(2L), isNull(),
+                eq("AUDIT"), eq("投稿审核状态更新"), eq("你的投稿状态已更新为 PUBLISHED"),
+                eq("POST"), eq(12L), eq("/posts/12"));
+        verify(repository).createOnce(matching(appeal), eq(2L), isNull(),
+                eq("AUDIT"), eq("申诉处理结果"), eq("你的申诉已处理，请查看审核时间线"),
+                eq("POST"), eq(13L), eq("/posts/13"));
         verifyNoInteractions(resolver);
     }
 
@@ -169,5 +176,17 @@ class NotificationEventEnvelopeValidationTest {
         assertThatThrownBy(() -> consumer.consume(objectMapper.writeValueAsString(event)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage(message);
+    }
+
+    private ValidatedEvent validated(EventEnvelope event) {
+        return new ValidatedEvent(event.eventId(), event.type(), event.version(), event.occurredAt(),
+                event.producer(), event.aggregateId(), objectMapper.valueToTree(event.payload()));
+    }
+
+    private ValidatedEvent matching(EventEnvelope event) {
+        String expectedFingerprint = EventFingerprint.sha256(validated(event));
+        return argThat(actual -> actual != null
+                && actual.eventId().equals(event.eventId())
+                && EventFingerprint.sha256(actual).equals(expectedFingerprint));
     }
 }

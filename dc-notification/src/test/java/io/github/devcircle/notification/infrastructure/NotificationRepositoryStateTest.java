@@ -1,7 +1,9 @@
 package io.github.devcircle.notification.infrastructure;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
+import io.github.devcircle.common.event.ValidatedEvent;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,12 +18,17 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 import javax.sql.DataSource;
+import java.time.Instant;
+import java.util.Map;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringJUnitConfig(NotificationRepositoryStateTest.TestConfig.class)
 class NotificationRepositoryStateTest {
+    private static final Instant OCCURRED_AT = Instant.parse("2026-08-02T00:00:00Z");
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     @Autowired
     private NotificationRepository repository;
     @Autowired
@@ -34,6 +41,7 @@ class NotificationRepositoryStateTest {
                 CREATE TABLE consumer_dedup (
                     event_id CHAR(36) PRIMARY KEY,
                     topic VARCHAR(128) NOT NULL,
+                    event_fingerprint CHAR(64) NOT NULL,
                     consumed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
                 """).update();
         jdbcClient.sql("""
@@ -63,15 +71,16 @@ class NotificationRepositoryStateTest {
     @Test
     void failedNotificationInsertRollsBackConsumerClaimAndCanBeRetried() {
         String eventId = "5c6f99f9-169d-44dc-a9ab-555cbe5f5a38";
+        ValidatedEvent sourceEvent = event(eventId, "follow.changed", Map.of("receiverId", 7L));
 
-        assertThatThrownBy(() -> repository.createOnce(eventId, "follow.changed", 7L, 2L,
+        assertThatThrownBy(() -> repository.createOnce(sourceEvent, 7L, 2L,
                 "FOLLOW", "新的关注者", "x".repeat(513), "USER", 2L, "/me"))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
         assertThat(count("consumer_dedup")).isZero();
         assertThat(count("notification")).isZero();
 
-        assertThat(repository.createOnce(eventId, "follow.changed", 7L, 2L,
+        assertThat(repository.createOnce(sourceEvent, 7L, 2L,
                 "FOLLOW", "新的关注者", "观测者关注了你", "USER", 2L, "/me")).isTrue();
         assertThat(count("consumer_dedup")).isEqualTo(1);
         assertThat(count("notification")).isEqualTo(1);
@@ -154,6 +163,11 @@ class NotificationRepositoryStateTest {
     private boolean readFlag(long notificationId) {
         return jdbcClient.sql("SELECT read_flag FROM notification WHERE id = :id")
                 .param("id", notificationId).query(Boolean.class).single();
+    }
+
+    private ValidatedEvent event(String eventId, String topic, Map<String, Object> payload) {
+        return new ValidatedEvent(UUID.fromString(eventId), topic, 1, OCCURRED_AT, "test-producer", "7",
+                OBJECT_MAPPER.valueToTree(payload));
     }
 
     private void assertCode(ThrowingAction action, ErrorCode expected) {
