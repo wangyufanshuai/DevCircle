@@ -53,6 +53,8 @@ Windows 请优先使用 Git Bash；`C:\Windows\System32\bash.exe` 可能实际�
 
 本地 `mvnw test` 在 Docker 不可用时会把 Testcontainers 项目标记为 skipped，输出只能作为“单元测试通过、容器链路未验证”。CI 在 Maven 后额外运行 `scripts/ops/assert-no-skipped-tests.sh`，任何 skipped 都会阻断构建，避免把“没有跑容器”误认为“容器链路通过”。
 
+2026-08-02 最新事件可靠性回归：`dc-common`、`dc-content`、`dc-recommend` 共 170 项纯单元/H2 测试通过，覆盖率聚合为行 `78.86%`、分支 `72.29%`；推荐消费者新增 `lease_token` 迁移和过期 worker 不能覆盖新 worker 的状态测试。该结果仍不替代真实 Kafka、Redis 和 Compose 故障恢复演练。
+
 Windows Docker Desktop 29 如遇 named pipe 探测失败，可启用本地只绑定回环地址的 Docker socket 代理：
 
 ```powershell

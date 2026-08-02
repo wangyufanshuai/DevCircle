@@ -27,7 +27,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 ## 迁移顺序
 
 1. 运行 `scripts/ops/backup.sh`，保留生成目录和 `SHA256SUMS`。
-2. 先发布兼容旧表结构的新镜像，让 Flyway 建立新表/字段。
+2. 对推荐消费者先执行优雅停机并确认无活跃消费，再发布兼容旧表结构的新镜像，让 Flyway 建立新表/字段；包含 `recommend_consumer_dedup.lease_token` 的迁移完成后，只启动支持 lease token 的新 `dc-recommend` 镜像，避免旧 worker 在过期租约后覆盖新 worker 状态。
 3. 迁移主题内容，运行 `EXPECTED_POST_COUNT=180 scripts/ops/verify-migration.sh` 校验数量和内容校验和。
 4. 触发 Elasticsearch 全量重建，再次运行校验脚本确认无非 `PUBLISHED` 文档。
 5. 将入口切为只读验证，抽查登录、详情、搜索、媒体和审核链路。
