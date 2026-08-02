@@ -73,6 +73,8 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 完整 CI 不设置该例外；`dc-file`、其余生产模块或 Testcontainers 未执行都会阻断构建。不要使用 `C:\Windows\System32\bash.exe`，Windows 上请使用 Git Bash。
 
+2026-08-02 在 `8437315` 后的完整纯单元/H2 回归为 333 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 75.60%、分支覆盖率为 67.84%，覆盖报告完整性与禁止 skipped 门禁均通过。`dc-comment` 为 80.08%/77.92%，`CommentRepository` 为 96.00%/87.84%；创建评论的幂等键现在绑定文章、父评论和规范化正文，隐藏评论绑定评论与规范化审核理由，删除绑定评论标识。状态测试确认同键异载荷冲突、旧全零指纹兼容、无效父评论不消耗请求键，并验证 Outbox 故障会同时回滚评论、隐藏状态、审核记录和幂等键，依赖恢复后可用原键重试。Docker Engine 仍不可用，因此 V5 的真实 MySQL 迁移与 Kafka 事件链路尚未验证。
+
 2026-08-02 在 `f0d3529` 后的完整纯单元/H2 回归为 331 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 75.52%、分支覆盖率为 67.75%，覆盖报告完整性与禁止 skipped 门禁均通过。`dc-file` 为 39.91%/21.74%，本批核心 `MediaRepository` 为 74.56%/54.35%；状态测试覆盖上传申请元数据指纹、生成存储坐标重试、上传完成实际大小指纹、跨媒体重放冲突、旧全零指纹兼容、数据库失败回滚以及修复后同键重试。V3 为既有文件幂等记录回填一个版本兼容的全零指纹，新的申请和完成请求均写入 SHA-256 载荷指纹。Docker Engine 仍不可用，因此 V3 的真实 MySQL 迁移、MinIO 上传与完整 Testcontainers 链路尚未验证。
 
 2026-08-02 在 `f99122b` 后的完整纯单元/H2 回归为 322 个测试、0 failures/errors/skipped；排除只含容器测试的 `dc-file` 后，13 份报告的行覆盖率为 77.00%、分支覆盖率为 69.75%。内容模块为 73.64%/69.95%，`PostRepository` 为 71.41%/55.16%，新增状态测试覆盖帖子创建和申诉的原子写入、Outbox 故障整体回滚、修复后同键重试及同键异载荷冲突。管理模块为 64.84%/64.84%；推荐实验创建/启停、Outbox 人工重放和真实标签创建现在要求管理员身份与 `Idempotency-Key`，绑定请求指纹并与审计日志同事务提交，遗留的固定“`MysticVerse精选`”标签写入和虚增使用次数逻辑已删除。随后 `2355532` 的 Gateway 定向覆盖回归为 30 个测试、0 failures/errors/skipped，普通用户无法再访问 `/api/search/admin/**` 或 `/api/content/admin/**`。本轮曾尝试启动和重启 Docker Desktop，但 Linux Engine API 持续超时且服务最终停止，因此当前结果仍不替代真实 MySQL、Kafka 及完整 Community E2E。
