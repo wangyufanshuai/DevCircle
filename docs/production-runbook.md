@@ -79,5 +79,6 @@ PREVIOUS_IMAGE_TAG=<previous-sha> scripts/ops/rollback.sh /srv/backups/devcircle
 - `docker compose ... ps`：所有健康检查通过且无重启循环。
 - `/actuator/health/readiness`：Gateway 与内部服务均为 UP。
 - Outbox 无持续增长的 `FAILED/DEAD`，DLT 有告警和人工重放记录。
+- DLT 发布等待时间由 `KAFKA_DLT_PUBLISH_TIMEOUT_MS` 控制（默认 5000ms）；DLT broker 未确认时源消息不得提交 offset。
 - 磁盘低于 80%，备份校验和每天成功，证书续期无错误。
 - 写接口失败时必须带公开错误码和 `traceId`，日志中按 `traceId` 关联，禁止向页面暴露内部服务名或堆栈。
