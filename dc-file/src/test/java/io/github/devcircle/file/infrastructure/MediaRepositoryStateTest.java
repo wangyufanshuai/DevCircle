@@ -19,6 +19,8 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 import javax.sql.DataSource;
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -121,6 +123,44 @@ class MediaRepositoryStateTest {
         assertThat(idempotencyCount("database-failure")).isZero();
     }
 
+    @Test
+    void publicMediaRequiresApprovedCompletedAssetAttachedToPublishedPost() {
+        createPublicationTables();
+        insertAssetWithState(21L, 7L, "approved.png", "APPROVED", "COMPLETED");
+        insertAssetWithState(22L, 7L, "pending.png", "PENDING_REVIEW", "COMPLETED");
+        insertAssetWithState(23L, 7L, "uploading.png", "APPROVED", "UPLOADING");
+        insertPost(1001L, "DRAFT");
+        insertPost(1002L, "PUBLISHED");
+        jdbcClient.sql("INSERT INTO post_media(post_id, media_id) VALUES (1001, 21), (1002, 22), (1002, 23)").update();
+
+        assertThatThrownBy(() -> repository.requirePublic(21L))
+                .isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> repository.requirePublic(22L))
+                .isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> repository.requirePublic(23L))
+                .isInstanceOf(BusinessException.class);
+
+        jdbcClient.sql("UPDATE post SET status = 'PUBLISHED' WHERE id = 1001").update();
+        var publicAsset = repository.requirePublic(21L);
+        assertThat(publicAsset.id()).isEqualTo(21L);
+        assertThat(publicAsset.status()).isEqualTo("APPROVED");
+        assertThat(publicAsset.uploadStatus()).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void publicBatchDropsInvalidIdsAndOnlyReturnsPublishedApprovedCompletedMedia() {
+        createPublicationTables();
+        insertAssetWithState(31L, 7L, "visible.png", "APPROVED", "COMPLETED");
+        insertAssetWithState(32L, 7L, "hidden.png", "PENDING_REVIEW", "COMPLETED");
+        insertPost(2001L, "PUBLISHED");
+        jdbcClient.sql("INSERT INTO post_media(post_id, media_id) VALUES (2001, 31), (2001, 32)").update();
+
+        assertThat(repository.requirePublicBatch(Arrays.asList(null, 0L, 31L, 31L, 32L, 999L)))
+                .extracting(MediaRepository.AssetIntent::id)
+                .containsExactly(31L);
+        assertThat(repository.requirePublicBatch(List.of())).isEmpty();
+    }
+
     private UploadIntentRequest image(String filename, long size, int width, int height) {
         return new UploadIntentRequest(filename, "image/png", size, width, height, null);
     }
@@ -143,6 +183,29 @@ class MediaRepositoryStateTest {
                     upload_expires_at TIMESTAMP NULL,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
                 """).update();
+    }
+
+    private void createPublicationTables() {
+        jdbcClient.sql("CREATE TABLE post (id BIGINT PRIMARY KEY, status VARCHAR(32) NOT NULL)").update();
+        jdbcClient.sql("CREATE TABLE post_media (post_id BIGINT NOT NULL, media_id BIGINT NOT NULL, PRIMARY KEY(post_id, media_id))").update();
+    }
+
+    private void insertPost(long postId, String status) {
+        jdbcClient.sql("INSERT INTO post(id, status) VALUES (:id, :status)")
+                .param("id", postId).param("status", status).update();
+    }
+
+    private void insertAssetWithState(long id, long uploaderId, String objectKey, String status, String uploadStatus) {
+        jdbcClient.sql("""
+                        INSERT INTO media_asset(
+                            id, uploader_id, object_key, url, content_type, size_bytes, expected_size,
+                            status, upload_status, upload_expires_at)
+                        VALUES (:id, :uploaderId, :objectKey, :url, 'image/png', 64, 64,
+                                :status, :uploadStatus, :expiresAt)
+                        """)
+                .param("id", id).param("uploaderId", uploaderId).param("objectKey", objectKey)
+                .param("url", "internal/" + objectKey).param("status", status)
+                .param("uploadStatus", uploadStatus).param("expiresAt", EXPIRES_AT).update();
     }
 
     private void insertAsset(long id, long uploaderId, String objectKey, long expectedSize) {
