@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -55,22 +56,13 @@ class CommentRepositoryStateTest {
                     reason VARCHAR(500),
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
                 """).update();
-        jdbcClient.sql("""
-                CREATE TABLE outbox_event (
-                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                    event_id CHAR(36) NOT NULL UNIQUE,
-                    topic VARCHAR(128) NOT NULL,
-                    aggregate_type VARCHAR(64) NOT NULL,
-                    aggregate_id VARCHAR(64) NOT NULL,
-                    payload JSON NOT NULL,
-                    status VARCHAR(32) NOT NULL DEFAULT 'NEW',
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
-                """).update();
+        createOutboxTable();
         jdbcClient.sql("""
                 CREATE TABLE idempotency_record (
                     idempotency_key VARCHAR(128) PRIMARY KEY,
                     user_id BIGINT NOT NULL,
                     operation VARCHAR(64) NOT NULL,
+                    request_fingerprint CHAR(64) NOT NULL,
                     resource_id BIGINT,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
                 """).update();
@@ -103,10 +95,16 @@ class CommentRepositoryStateTest {
     @Test
     void createAndDeleteKeysStayBoundAndDeletionEmitsOnce() {
         var root = repository.create(7L, 1001L, null, "original", "create-key");
-        var replay = repository.create(7L, 1001L, null, "ignored replay body", "create-key");
+        var replay = repository.create(7L, 1001L, null, "original", "create-key");
 
         assertThat(replay.id()).isEqualTo(root.id());
         assertThat(replay.content()).isEqualTo("original");
+        assertCode(() -> repository.create(7L, 1001L, null, "changed body", "create-key"),
+                ErrorCode.DUPLICATE_OPERATION);
+        assertCode(() -> repository.create(7L, 2002L, null, "original", "create-key"),
+                ErrorCode.DUPLICATE_OPERATION);
+        assertCode(() -> repository.create(7L, 1001L, root.id(), "original", "create-key"),
+                ErrorCode.DUPLICATE_OPERATION);
         assertCode(() -> repository.create(8L, 1001L, null, "other user", "create-key"),
                 ErrorCode.DUPLICATE_OPERATION);
         assertCode(() -> repository.deleteOwn(root.id(), 7L, "create-key"), ErrorCode.DUPLICATE_OPERATION);
@@ -129,6 +127,8 @@ class CommentRepositoryStateTest {
 
         repository.hide(reply.id(), 99L, "hide-key", "contains private information");
         repository.hide(reply.id(), 99L, "hide-key", "contains private information");
+        assertCode(() -> repository.hide(reply.id(), 99L, "hide-key", "different moderation reason"),
+                ErrorCode.DUPLICATE_OPERATION);
         repository.hide(reply.id(), 99L, "hide-again-key", "second moderation attempt");
 
         CommentThreadView readerThread = repository.listThreads(1001L, null, 20, false).getFirst();
@@ -201,18 +201,35 @@ class CommentRepositoryStateTest {
     @Test
     void inFlightAndMissingCreateReplaysFailExplicitly() {
         jdbcClient.sql("""
-                        INSERT INTO idempotency_record(idempotency_key, user_id, operation, resource_id)
-                        VALUES ('processing-key', 7, 'CREATE_COMMENT', NULL)
-                        """).update();
+                        INSERT INTO idempotency_record(
+                            idempotency_key, user_id, operation, request_fingerprint, resource_id)
+                        VALUES ('processing-key', 7, 'CREATE_COMMENT', :legacy, NULL)
+                        """).param("legacy", "0".repeat(64)).update();
         jdbcClient.sql("""
-                        INSERT INTO idempotency_record(idempotency_key, user_id, operation, resource_id)
-                        VALUES ('missing-resource-key', 7, 'CREATE_COMMENT', 999)
-                        """).update();
+                        INSERT INTO idempotency_record(
+                            idempotency_key, user_id, operation, request_fingerprint, resource_id)
+                        VALUES ('missing-resource-key', 7, 'CREATE_COMMENT', :legacy, 999)
+                        """).param("legacy", "0".repeat(64)).update();
 
         assertCode(() -> repository.create(7L, 1001L, null, "processing", "processing-key"),
                 ErrorCode.DUPLICATE_OPERATION);
         assertCode(() -> repository.create(7L, 1001L, null, "missing", "missing-resource-key"),
                 ErrorCode.RESOURCE_NOT_FOUND);
+    }
+
+    @Test
+    void legacyCreateFingerprintRemainsReplayCompatibleForOneVersion() {
+        var created = repository.create(7L, 1001L, null, "original", "legacy-create-key");
+        jdbcClient.sql("""
+                        UPDATE idempotency_record SET request_fingerprint = :legacy
+                        WHERE idempotency_key = 'legacy-create-key'
+                        """).param("legacy", "0".repeat(64)).update();
+
+        var replay = repository.create(7L, 2002L, null, "legacy changed body", "legacy-create-key");
+
+        assertThat(replay.id()).isEqualTo(created.id());
+        assertThat(replay.content()).isEqualTo("original");
+        assertThat(count("comment", "id = " + created.id())).isEqualTo(1);
     }
 
     @Test
@@ -227,6 +244,45 @@ class CommentRepositoryStateTest {
                 ErrorCode.DUPLICATE_OPERATION);
         assertCode(() -> repository.deleteOwn(first.id(), 99L, "binding-hide"),
                 ErrorCode.DUPLICATE_OPERATION);
+    }
+
+    @Test
+    void outboxFailureRollsBackCommentModerationAndRequestKeys() {
+        jdbcClient.sql("DROP TABLE outbox_event").update();
+        assertThatThrownBy(() -> repository.create(7L, 1001L, null, "recoverable", "outbox-create"))
+                .isInstanceOf(DataAccessException.class);
+        assertThat(count("comment", "content = 'recoverable'")).isZero();
+        assertThat(count("idempotency_record", "idempotency_key = 'outbox-create'")).isZero();
+
+        createOutboxTable();
+        var created = repository.create(7L, 1001L, null, "recoverable", "outbox-create");
+
+        jdbcClient.sql("DROP TABLE outbox_event").update();
+        assertThatThrownBy(() -> repository.hide(
+                created.id(), 99L, "outbox-hide", "contains private information"))
+                .isInstanceOf(DataAccessException.class);
+        assertThat(status(created.id())).isEqualTo("VISIBLE");
+        assertThat(count("comment_audit_record", "comment_id = " + created.id())).isZero();
+        assertThat(count("idempotency_record", "idempotency_key = 'outbox-hide'")).isZero();
+
+        createOutboxTable();
+        repository.hide(created.id(), 99L, "outbox-hide", "contains private information");
+        assertThat(status(created.id())).isEqualTo("HIDDEN");
+        assertThat(count("comment_audit_record", "comment_id = " + created.id())).isEqualTo(1);
+    }
+
+    private void createOutboxTable() {
+        jdbcClient.sql("""
+                CREATE TABLE outbox_event (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    event_id CHAR(36) NOT NULL UNIQUE,
+                    topic VARCHAR(128) NOT NULL,
+                    aggregate_type VARCHAR(64) NOT NULL,
+                    aggregate_id VARCHAR(64) NOT NULL,
+                    payload JSON NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'NEW',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
     }
 
     private String status(Long commentId) {

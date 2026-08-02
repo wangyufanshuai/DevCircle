@@ -17,12 +17,17 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.Map;
 
 @Repository
 public class CommentRepository {
+    private static final String LEGACY_REQUEST_FINGERPRINT = "0".repeat(64);
     private final NamedParameterJdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
 
@@ -75,7 +80,9 @@ public class CommentRepository {
 
     @Transactional
     public CommentView create(Long userId, Long postId, Long parentId, String content, String idempotencyKey) {
-        CommentView replay = replayOrClaimCreate(userId, idempotencyKey);
+        String normalizedContent = content.trim();
+        CommentView replay = replayOrClaimCreate(userId, idempotencyKey,
+                requestFingerprint("comment-create-v1", postId, parentId, normalizedContent));
         if (replay != null) {
             return replay;
         }
@@ -100,7 +107,7 @@ public class CommentRepository {
         MapSqlParameterSource insert = new MapSqlParameterSource()
                 .addValue("postId", postId).addValue("authorId", userId)
                 .addValue("parentId", parentId).addValue("rootId", rootId)
-                .addValue("content", content.trim());
+                .addValue("content", normalizedContent);
         jdbc.update("""
                         INSERT INTO comment(post_id, author_id, parent_id, root_id, content, status)
                         VALUES (:postId, :authorId, :parentId, :rootId, :content, 'VISIBLE')
@@ -118,7 +125,8 @@ public class CommentRepository {
 
     @Transactional
     public void deleteOwn(Long commentId, Long userId, String idempotencyKey) {
-        if (!claim(idempotencyKey, userId, "DELETE_COMMENT", commentId)) return;
+        if (!claim(idempotencyKey, userId, "DELETE_COMMENT", commentId,
+                requestFingerprint("comment-delete-v1", commentId))) return;
         CommentMeta meta = meta(commentId);
         if (!userId.equals(meta.authorId()) || !"VISIBLE".equals(meta.status())) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "只能删除自己的可见评论");
@@ -135,7 +143,9 @@ public class CommentRepository {
 
     @Transactional
     public void hide(Long commentId, Long moderatorId, String idempotencyKey, String reason) {
-        if (!claim(idempotencyKey, moderatorId, "HIDE_COMMENT", commentId)) return;
+        String normalizedReason = reason.trim();
+        if (!claim(idempotencyKey, moderatorId, "HIDE_COMMENT", commentId,
+                requestFingerprint("comment-hide-v1", commentId, normalizedReason))) return;
         CommentMeta meta = meta(commentId);
         if ("HIDDEN".equals(meta.status())) return;
         int changed = jdbc.update("UPDATE comment SET status = 'HIDDEN' WHERE id = :id AND status = 'VISIBLE'",
@@ -147,26 +157,32 @@ public class CommentRepository {
                         INSERT INTO comment_audit_record(comment_id, auditor_id, action, reason)
                         VALUES (:commentId, :moderatorId, 'HIDE', :reason)
                 """, Map.of("commentId", commentId, "moderatorId", moderatorId,
-                "reason", reason));
+                "reason", normalizedReason));
         writeEvent(EventTopics.COMMENT_CHANGED, commentId, meta.postId(), moderatorId, meta.parentId(), "HIDDEN");
     }
 
-    private CommentView replayOrClaimCreate(Long userId, String idempotencyKey) {
+    private CommentView replayOrClaimCreate(Long userId, String idempotencyKey, String requestFingerprint) {
         int inserted = jdbc.update("""
-                        INSERT IGNORE INTO idempotency_record(idempotency_key, user_id, operation)
-                        VALUES (:key, :userId, 'CREATE_COMMENT')
-                        """, Map.of("key", idempotencyKey, "userId", userId));
+                        INSERT IGNORE INTO idempotency_record(
+                            idempotency_key, user_id, operation, request_fingerprint)
+                        VALUES (:key, :userId, 'CREATE_COMMENT', :requestFingerprint)
+                        """, Map.of("key", idempotencyKey, "userId", userId,
+                        "requestFingerprint", requestFingerprint));
         if (inserted == 1) return null;
 
         IdempotencyRecord existing = jdbc.query("""
-                        SELECT user_id, operation, resource_id FROM idempotency_record
+                        SELECT user_id, operation, request_fingerprint, resource_id FROM idempotency_record
                         WHERE idempotency_key = :key
                         """, Map.of("key", idempotencyKey), (rs, rowNum) -> new IdempotencyRecord(
-                        rs.getLong("user_id"), rs.getString("operation"), (Long) rs.getObject("resource_id")))
+                        rs.getLong("user_id"), rs.getString("operation"), rs.getString("request_fingerprint"),
+                        (Long) rs.getObject("resource_id")))
                 .stream().findFirst()
                 .orElseThrow(() -> new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已用于其他操作"));
-        if (!userId.equals(existing.userId()) || !"CREATE_COMMENT".equals(existing.operation())) {
-            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已用于其他操作");
+        boolean legacyRecord = LEGACY_REQUEST_FINGERPRINT.equals(existing.requestFingerprint());
+        if (!userId.equals(existing.userId()) || !"CREATE_COMMENT".equals(existing.operation())
+                || (!legacyRecord && !requestFingerprint.equals(existing.requestFingerprint()))) {
+            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION,
+                    "Idempotency-Key 已用于其他评论操作或请求载荷");
         }
         if (existing.resourceId() == null) {
             throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "请求正在处理中");
@@ -219,24 +235,54 @@ public class CommentRepository {
         }
     }
 
-    private boolean claim(String key, Long userId, String operation, Long resourceId) {
+    private boolean claim(String key, Long userId, String operation, Long resourceId, String requestFingerprint) {
         int inserted = jdbc.update("""
-                INSERT IGNORE INTO idempotency_record(idempotency_key, user_id, operation, resource_id)
-                VALUES (:key, :userId, :operation, :resourceId)
-                """, Map.of("key", key, "userId", userId, "operation", operation, "resourceId", resourceId));
+                INSERT IGNORE INTO idempotency_record(
+                    idempotency_key, user_id, operation, request_fingerprint, resource_id)
+                VALUES (:key, :userId, :operation, :requestFingerprint, :resourceId)
+                """, Map.of("key", key, "userId", userId, "operation", operation,
+                "requestFingerprint", requestFingerprint, "resourceId", resourceId));
         if (inserted > 0) return true;
-        Map<String, Object> existing = jdbc.query("SELECT user_id, operation, resource_id FROM idempotency_record WHERE idempotency_key = :key",
-                Map.of("key", key), rs -> rs.next() ? Map.of("userId", rs.getLong("user_id"), "operation", rs.getString("operation"), "resourceId", rs.getLong("resource_id")) : Map.of());
-        if (existing.isEmpty() || !userId.equals(existing.get("userId")) || !operation.equals(existing.get("operation")) || !resourceId.equals(existing.get("resourceId"))) {
-            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已用于其他操作");
+        IdempotencyRecord existing = jdbc.query("""
+                        SELECT user_id, operation, request_fingerprint, resource_id
+                        FROM idempotency_record WHERE idempotency_key = :key
+                        """, Map.of("key", key), rs -> rs.next() ? new IdempotencyRecord(
+                        rs.getLong("user_id"), rs.getString("operation"), rs.getString("request_fingerprint"),
+                        (Long) rs.getObject("resource_id")) : null);
+        boolean legacyRecord = existing != null
+                && LEGACY_REQUEST_FINGERPRINT.equals(existing.requestFingerprint());
+        if (existing == null || !userId.equals(existing.userId()) || !operation.equals(existing.operation())
+                || !resourceId.equals(existing.resourceId())
+                || (!legacyRecord && !requestFingerprint.equals(existing.requestFingerprint()))) {
+            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION,
+                    "Idempotency-Key 已用于其他评论操作或请求载荷");
         }
         return false;
+    }
+
+    private String requestFingerprint(Object... values) {
+        StringBuilder canonical = new StringBuilder();
+        for (Object value : values) {
+            if (value == null) {
+                canonical.append("-1:|");
+            } else {
+                String text = String.valueOf(value);
+                canonical.append(text.length()).append(':').append(text).append('|');
+            }
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is unavailable", ex);
+        }
     }
 
     private record Parent(Long id, Long postId, Long parentId, Long rootId, String status) {
     }
 
-    private record IdempotencyRecord(Long userId, String operation, Long resourceId) {
+    private record IdempotencyRecord(Long userId, String operation, String requestFingerprint, Long resourceId) {
     }
 
     private record CommentMeta(Long id, Long postId, Long parentId, Long authorId, String status) {
