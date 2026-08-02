@@ -1,6 +1,8 @@
 package io.github.devcircle.user.application;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.user.infrastructure.UserGraphRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,7 +16,11 @@ import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.Instant;
+import java.util.UUID;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(properties = {
@@ -24,6 +30,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 })
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class UserGraphServiceIntegrationTest {
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     @Container
     static final MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.4")
             .withDatabaseName("dc_user")
@@ -94,15 +102,32 @@ class UserGraphServiceIntegrationTest {
 
     @Test
     void profileProjectionUpsertsOnMySqlWithoutDuplicatingTheUser() {
-        assertThat(repository.synchronizeProfile("evt-profile-1", EventTopics.USER_REGISTERED, 42L, "初始名称"))
+        ValidatedEvent initial = registrationEvent(
+                "5bb06ed9-693e-4a42-8219-52903156814e", 42L, "初始名称");
+        ValidatedEvent updated = registrationEvent(
+                "82982762-df78-41fb-ac48-a95826e5bc95", 42L, "更新名称");
+        assertThat(repository.synchronizeProfile(initial, 42L, "初始名称"))
                 .isTrue();
-        assertThat(repository.synchronizeProfile("evt-profile-2", EventTopics.USER_REGISTERED, 42L, "更新名称"))
+        assertThat(repository.synchronizeProfile(updated, 42L, "更新名称"))
                 .isTrue();
-        assertThat(repository.synchronizeProfile("evt-profile-2", EventTopics.USER_REGISTERED, 42L, "重复投递"))
+        assertThat(repository.synchronizeProfile(updated, 42L, "更新名称"))
                 .isFalse();
+        assertThatThrownBy(() -> repository.synchronizeProfile(
+                registrationEvent(updated.eventId().toString(), 42L, "变形重放"), 42L, "变形重放"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Event ID is already bound to a different payload");
 
         assertThat(repository.requireProfile(42L).username()).isEqualTo("更新名称");
         assertThat(jdbcClient.sql("SELECT COUNT(*) FROM user_profile WHERE user_id = 42")
                 .query(Long.class).single()).isEqualTo(1L);
+    }
+
+    private ValidatedEvent registrationEvent(String eventId, long userId, String displayName) {
+        return new ValidatedEvent(UUID.fromString(eventId), EventTopics.USER_REGISTERED, 1,
+                Instant.parse("2026-08-01T10:15:30Z"), "dc-auth", Long.toString(userId),
+                OBJECT_MAPPER.createObjectNode()
+                        .put("userId", userId)
+                        .put("displayName", displayName)
+                        .put("status", "ACTIVE"));
     }
 }

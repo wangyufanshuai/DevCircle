@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.event.EventEnvelope;
+import io.github.devcircle.common.event.EventFingerprint;
 import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.common.event.ValidatedEvent;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,6 +17,8 @@ import java.util.Optional;
 
 @Repository
 public class UserGraphRepository {
+    private static final String LEGACY_FINGERPRINT = "0".repeat(64);
+
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
 
@@ -112,8 +116,8 @@ public class UserGraphRepository {
     }
 
     @Transactional
-    public boolean synchronizeProfile(String eventId, String topic, Long userId, String displayName) {
-        if (!claimConsumerEvent(eventId, topic)) return false;
+    public boolean synchronizeProfile(ValidatedEvent event, Long userId, String displayName) {
+        if (!claimConsumerEvent(event)) return false;
         jdbcClient.sql("INSERT IGNORE INTO user_profile(user_id, username) VALUES (:userId, :username)")
                 .param("userId", userId).param("username", displayName).update();
         jdbcClient.sql("UPDATE user_profile SET username = :username WHERE user_id = :userId")
@@ -121,18 +125,59 @@ public class UserGraphRepository {
         return true;
     }
 
-    private boolean claimConsumerEvent(String eventId, String topic) {
-        int claimed = jdbcClient.sql("INSERT IGNORE INTO consumer_dedup(event_id, topic) VALUES (:eventId, :topic)")
-                .param("eventId", eventId).param("topic", topic).update();
-        if (claimed == 1) return true;
-        String existingTopic = jdbcClient.sql("SELECT topic FROM consumer_dedup WHERE event_id = :eventId")
+    private boolean claimConsumerEvent(ValidatedEvent event) {
+        String eventId = event.eventId().toString();
+        String topic = event.type();
+        String eventFingerprint = EventFingerprint.sha256(event);
+        int claimed = jdbcClient.sql("""
+                        INSERT IGNORE INTO consumer_dedup(event_id, topic, event_fingerprint)
+                        VALUES (:eventId, :topic, :eventFingerprint)
+                        """)
                 .param("eventId", eventId)
-                .query(String.class)
-                .single();
-        if (!topic.equals(existingTopic)) {
-            throw new IllegalArgumentException("Event ID is already bound to topic " + existingTopic);
+                .param("topic", topic)
+                .param("eventFingerprint", eventFingerprint)
+                .update();
+        if (claimed == 1) return true;
+
+        ConsumerEventIdentity existing = loadConsumerEvent(eventId);
+        validateConsumerEvent(existing, topic, eventFingerprint);
+        if (LEGACY_FINGERPRINT.equals(existing.eventFingerprint())) {
+            int upgraded = jdbcClient.sql("""
+                            UPDATE consumer_dedup
+                            SET event_fingerprint = :eventFingerprint
+                            WHERE event_id = :eventId AND event_fingerprint = :legacyFingerprint
+                            """)
+                    .param("eventId", eventId)
+                    .param("eventFingerprint", eventFingerprint)
+                    .param("legacyFingerprint", LEGACY_FINGERPRINT)
+                    .update();
+            if (upgraded == 0) {
+                validateConsumerEvent(loadConsumerEvent(eventId), topic, eventFingerprint);
+            }
         }
         return false;
+    }
+
+    private ConsumerEventIdentity loadConsumerEvent(String eventId) {
+        return jdbcClient.sql("""
+                        SELECT topic, event_fingerprint
+                        FROM consumer_dedup
+                        WHERE event_id = :eventId
+                        """)
+                .param("eventId", eventId)
+                .query((rs, rowNum) -> new ConsumerEventIdentity(
+                        rs.getString("topic"), rs.getString("event_fingerprint")))
+                .single();
+    }
+
+    private void validateConsumerEvent(ConsumerEventIdentity existing, String topic, String eventFingerprint) {
+        if (!topic.equals(existing.topic())) {
+            throw new IllegalArgumentException("Event ID is already bound to topic " + existing.topic());
+        }
+        if (!LEGACY_FINGERPRINT.equals(existing.eventFingerprint())
+                && !eventFingerprint.equals(existing.eventFingerprint())) {
+            throw new IllegalArgumentException("Event ID is already bound to a different payload");
+        }
     }
 
     public void writeFollowChanged(Long actorId, UserProfile actor, Long receiverId, UserProfile receiver,
@@ -191,6 +236,9 @@ public class UserGraphRepository {
     }
 
     private record IdempotencyRecord(String operation, Long targetUserId) {
+    }
+
+    private record ConsumerEventIdentity(String topic, String eventFingerprint) {
     }
 
     public record UserProfile(Long userId, String username, String avatarUrl, String bio,

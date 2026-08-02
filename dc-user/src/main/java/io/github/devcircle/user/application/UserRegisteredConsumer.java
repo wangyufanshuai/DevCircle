@@ -45,6 +45,6 @@ class UserRegisteredConsumer {
         if (!event.aggregateId().equals(Long.toString(userId))) {
             throw new IllegalArgumentException("User aggregateId does not match userId");
         }
-        repository.synchronizeProfile(event.eventId().toString(), event.type(), userId, displayName);
+        repository.synchronizeProfile(event, userId, displayName);
     }
 }

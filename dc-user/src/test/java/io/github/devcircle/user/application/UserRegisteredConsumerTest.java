@@ -3,12 +3,16 @@ package io.github.devcircle.user.application;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.event.EventEnvelope;
 import io.github.devcircle.common.event.EventTopics;
+import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.user.infrastructure.UserGraphRepository;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -25,8 +29,11 @@ class UserRegisteredConsumerTest {
 
         consumer.consume(mapper.writeValueAsString(event));
 
-        verify(repository).synchronizeProfile(
-                event.eventId().toString(), EventTopics.USER_REGISTERED, 42L, "观测者");
+        ArgumentCaptor<ValidatedEvent> eventCaptor = ArgumentCaptor.forClass(ValidatedEvent.class);
+        verify(repository).synchronizeProfile(eventCaptor.capture(), eq(42L), eq("观测者"));
+        assertThat(eventCaptor.getValue().eventId()).isEqualTo(event.eventId());
+        assertThat(eventCaptor.getValue().type()).isEqualTo(EventTopics.USER_REGISTERED);
+        assertThat(eventCaptor.getValue().payload().path("displayName").asText()).isEqualTo("观测者");
     }
 
     @Test
