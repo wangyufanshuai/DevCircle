@@ -37,6 +37,13 @@ function cookie(name: string): string {
   return entry ? decodeURIComponent(entry.slice(prefix.length)) : ''
 }
 
+function attachCsrf(headers: Headers, method?: string) {
+  const normalizedMethod = (method ?? 'GET').toUpperCase()
+  if (['GET', 'HEAD', 'OPTIONS'].includes(normalizedMethod)) return
+  const csrf = cookie('dc_csrf')
+  if (csrf) headers.set('X-CSRF-Token', csrf)
+}
+
 async function parse<T>(response: Response): Promise<T> {
   let body: ApiResponse<T> | null = null
   try { body = await response.json() as ApiResponse<T> } catch { /* sanitized below */ }
@@ -66,11 +73,13 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
   const headers = new Headers(init.headers)
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
   if (init.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  attachCsrf(headers, init.method)
   let response = await fetch(`${API_BASE}${path}`, { ...init, headers, credentials: 'include' })
   if (response.status === 401 && retry && !path.startsWith('/api/auth/')) {
     if (await refresh()) {
       const retryHeaders = new Headers(headers)
       retryHeaders.set('Authorization', `Bearer ${accessToken}`)
+      attachCsrf(retryHeaders, init.method)
       response = await fetch(`${API_BASE}${path}`, { ...init, headers: retryHeaders, credentials: 'include' })
     }
   }

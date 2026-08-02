@@ -79,6 +79,18 @@ test('formal post route opens case and submits deduction', async ({ page }) => {
   await expect(page.getByRole('status')).toContainText('推理成立')
 })
 
+test('authenticated mutating requests forward the readable csrf cookie', async ({ page }) => {
+  await authenticate(page)
+  let csrfHeader = ''
+  page.on('request', request => {
+    const pathname = new URL(request.url()).pathname
+    if (pathname === '/api/posts/1001/like') csrfHeader = request.headers()['x-csrf-token'] ?? ''
+  })
+  await page.goto('/posts/1001')
+  await page.locator('.detail-actions').getByRole('button', { name: /喜欢/ }).click()
+  expect(csrfHeader).toBe('test-csrf')
+})
+
 test('reader tracks separate active solved revealed completed and unavailable content', async ({ page }) => {
   await authenticate(page)
   const trackDashboard = {
