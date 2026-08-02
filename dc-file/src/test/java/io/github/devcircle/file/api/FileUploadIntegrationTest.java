@@ -4,6 +4,7 @@ import io.github.devcircle.file.infrastructure.MediaRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.annotation.DirtiesContext;
@@ -46,6 +47,7 @@ class FileUploadIntegrationTest {
 
     @Autowired FileController fileController;
     @Autowired MediaRepository mediaRepository;
+    @Autowired JdbcClient jdbcClient;
 
     @Test
     void presignedUploadIsValidatedBeforeCompletion() throws Exception {
@@ -64,5 +66,10 @@ class FileUploadIntegrationTest {
         assertThat(result.status()).isEqualTo("PENDING_REVIEW");
         assertThat(result.url()).isEmpty();
         assertThat(mediaRepository.count()).isEqualTo(1L);
+        assertThat(jdbcClient.sql("""
+                        SELECT COUNT(*) FROM file_idempotency_record
+                        WHERE idempotency_key IN ('intent-1', 'complete-1')
+                          AND request_fingerprint <> :legacy
+                        """).param("legacy", "0".repeat(64)).query(Long.class).single()).isEqualTo(2L);
     }
 }

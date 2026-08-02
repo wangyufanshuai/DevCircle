@@ -11,13 +11,17 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.PreparedStatement;
-import java.sql.Statement;
 import java.sql.Timestamp;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.List;
 
 @Repository
 public class MediaRepository {
+    private static final String LEGACY_REQUEST_FINGERPRINT = "0".repeat(64);
     private final JdbcTemplate jdbcTemplate;
     private final JdbcClient jdbcClient;
 
@@ -29,7 +33,9 @@ public class MediaRepository {
     @Transactional
     public AssetIntent createIntent(Long userId, String idempotencyKey, String objectKey, String internalUrl,
                                     UploadIntentRequest request, Instant expiresAt) {
-        Long existingId = claim(userId, "CREATE_UPLOAD", idempotencyKey);
+        Long existingId = claim(userId, "CREATE_UPLOAD", idempotencyKey,
+                requestFingerprint("file-intent-v1", request.filename(), request.contentType(), request.size(),
+                        request.width(), request.height(), request.durationSeconds()));
         if (existingId != null) {
             return requireOwned(userId, existingId);
         }
@@ -39,7 +45,7 @@ public class MediaRepository {
                     INSERT INTO media_asset(uploader_id, object_key, url, content_type, size_bytes, expected_size,
                                             width, height, duration_seconds, status, upload_status, upload_expires_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_REVIEW', 'UPLOADING', ?)
-                    """, Statement.RETURN_GENERATED_KEYS);
+                    """, new String[]{"id"});
             statement.setLong(1, userId);
             statement.setString(2, objectKey);
             statement.setString(3, internalUrl);
@@ -129,7 +135,8 @@ public class MediaRepository {
 
     @Transactional
     public FileUploadResult complete(Long userId, Long mediaId, String idempotencyKey, long actualSize) {
-        Long duplicate = claim(userId, "COMPLETE_UPLOAD:" + mediaId, idempotencyKey);
+        Long duplicate = claim(userId, "COMPLETE_UPLOAD:" + mediaId, idempotencyKey,
+                requestFingerprint("file-complete-v1", mediaId, actualSize));
         AssetIntent asset = requireOwned(userId, mediaId);
         if (duplicate != null || "COMPLETED".equals(asset.uploadStatus())) {
             return toResult(asset, actualSize);
@@ -159,26 +166,53 @@ public class MediaRepository {
                 asset.width(), asset.height(), asset.durationSeconds(), asset.status());
     }
 
-    private Long claim(Long userId, String operation, String key) {
+    private Long claim(Long userId, String operation, String key, String requestFingerprint) {
         int inserted = jdbcClient.sql("""
-                        INSERT IGNORE INTO file_idempotency_record(idempotency_key, user_id, operation)
-                        VALUES (:key, :userId, :operation)
+                        INSERT IGNORE INTO file_idempotency_record(
+                            idempotency_key, user_id, operation, request_fingerprint)
+                        VALUES (:key, :userId, :operation, :requestFingerprint)
                         """)
-                .param("key", key).param("userId", userId).param("operation", operation).update();
+                .param("key", key).param("userId", userId).param("operation", operation)
+                .param("requestFingerprint", requestFingerprint).update();
         if (inserted == 1) return null;
         Idempotency existing = jdbcClient.sql("""
-                        SELECT user_id, operation, resource_id FROM file_idempotency_record WHERE idempotency_key = :key
+                        SELECT user_id, operation, request_fingerprint, resource_id
+                        FROM file_idempotency_record WHERE idempotency_key = :key
                         """)
                 .param("key", key)
-                .query((rs, rowNum) -> new Idempotency(rs.getLong("user_id"), rs.getString("operation"), (Long) rs.getObject("resource_id")))
+                .query((rs, rowNum) -> new Idempotency(
+                        rs.getLong("user_id"), rs.getString("operation"), rs.getString("request_fingerprint"),
+                        (Long) rs.getObject("resource_id")))
                 .single();
-        if (!existing.userId().equals(userId) || !existing.operation().equals(operation)) {
-            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "Idempotency-Key 已被其他上传操作使用");
+        boolean legacyRecord = LEGACY_REQUEST_FINGERPRINT.equals(existing.requestFingerprint());
+        if (!existing.userId().equals(userId) || !existing.operation().equals(operation)
+                || (!legacyRecord && !existing.requestFingerprint().equals(requestFingerprint))) {
+            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION,
+                    "Idempotency-Key 已被其他上传操作或请求载荷使用");
         }
         if (existing.resourceId() == null) {
             throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "相同上传请求正在处理中");
         }
         return existing.resourceId();
+    }
+
+    private String requestFingerprint(Object... values) {
+        StringBuilder canonical = new StringBuilder();
+        for (Object value : values) {
+            if (value == null) {
+                canonical.append("-1:|");
+            } else {
+                String text = String.valueOf(value);
+                canonical.append(text.length()).append(':').append(text).append('|');
+            }
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is unavailable", ex);
+        }
     }
 
     private void attach(String key, Long mediaId) {
@@ -191,6 +225,6 @@ public class MediaRepository {
                               String status, String uploadStatus, Instant expiresAt) {
     }
 
-    private record Idempotency(Long userId, String operation, Long resourceId) {
+    private record Idempotency(Long userId, String operation, String requestFingerprint, Long resourceId) {
     }
 }
