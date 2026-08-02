@@ -10,6 +10,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.nio.charset.StandardCharsets;
@@ -19,7 +20,9 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 public class GitHubOAuthService {
@@ -72,11 +75,16 @@ public class GitHubOAuthService {
             return exchangeIdentity(code, state);
         } catch (BusinessException ex) {
             throw ex;
+        } catch (RestClientResponseException ex) {
+            if (ex.getStatusCode().is4xxClientError()) {
+                BusinessException failure = new BusinessException(
+                        ErrorCode.AUTHENTICATION_FAILED, "GitHub 登录授权失败");
+                failure.initCause(ex);
+                throw failure;
+            }
+            throw dependencyFailure(ex);
         } catch (RuntimeException ex) {
-            BusinessException failure = new BusinessException(
-                    ErrorCode.DEPENDENCY_UNAVAILABLE, "GitHub 登录暂时不可用，请稍后重试");
-            failure.initCause(ex);
-            throw failure;
+            throw dependencyFailure(ex);
         }
     }
 
@@ -104,7 +112,7 @@ public class GitHubOAuthService {
                 .header("Accept", "application/vnd.github+json")
                 .retrieve()
                 .body(GitHubUser.class);
-        if (profile == null || profile.id() == null) {
+        if (profile == null || profile.id() == null || profile.id() <= 0) {
             throw new BusinessException(ErrorCode.AUTHENTICATION_FAILED, "无法读取 GitHub 用户资料");
         }
         GitHubEmail[] emails = restClient.get()
@@ -113,31 +121,50 @@ public class GitHubOAuthService {
                 .header("Accept", "application/vnd.github+json")
                 .retrieve()
                 .body(GitHubEmail[].class);
-        String profileEmail = profile.email();
-        String email = emails == null ? null : List.of(emails).stream()
-                .filter(GitHubEmail::verified)
+        String profileEmail = profile.email() == null ? null : profile.email().trim();
+        List<GitHubEmail> verifiedEmails = emails == null ? List.of() : Arrays.stream(emails)
+                .filter(item -> item != null && item.verified())
+                .filter(item -> item.email() != null && !item.email().isBlank())
+                .map(item -> new GitHubEmail(item.email().trim(), item.primary(), true))
+                .toList();
+        String email = verifiedEmails.stream()
                 .filter(item -> item.primary()
                         || (profileEmail != null && item.email().equalsIgnoreCase(profileEmail)))
                 .sorted((left, right) -> Boolean.compare(right.primary(), left.primary()))
                 .map(GitHubEmail::email)
                 .findFirst()
-                .orElseGet(() -> List.of(emails).stream()
-                        .filter(GitHubEmail::verified)
+                .orElseGet(() -> verifiedEmails.stream()
                         .map(GitHubEmail::email)
                         .findFirst()
                         .orElse(null));
-        if (email == null || email.isBlank()) {
+        if (email == null) {
             throw new BusinessException(ErrorCode.AUTHENTICATION_FAILED, "GitHub 账号没有可用的已验证邮箱");
         }
-        String displayName = profile.name() == null || profile.name().isBlank() ? profile.login() : profile.name();
+        String displayName = profile.name() == null || profile.name().isBlank()
+                ? normalize(profile.login()) : profile.name().trim();
+        if (displayName == null || displayName.isBlank()) {
+            throw new BusinessException(ErrorCode.AUTHENTICATION_FAILED, "GitHub 用户资料缺少可用名称");
+        }
         String unusablePassword = passwordEncoder.encode(randomToken(48));
-        return repository.bindOrCreateOAuthAccount("github", String.valueOf(profile.id()), email.toLowerCase(), displayName, unusablePassword);
+        return repository.bindOrCreateOAuthAccount("github", String.valueOf(profile.id()),
+                email.trim().toLowerCase(Locale.ROOT), displayName, unusablePassword);
+    }
+
+    private BusinessException dependencyFailure(RuntimeException cause) {
+        BusinessException failure = new BusinessException(
+                ErrorCode.DEPENDENCY_UNAVAILABLE, "GitHub 登录暂时不可用，请稍后重试");
+        failure.initCause(cause);
+        return failure;
     }
 
     private void requireConfigured() {
-        if (clientId.isBlank() || clientSecret.isBlank()) {
+        if (clientId == null || clientId.isBlank() || clientSecret == null || clientSecret.isBlank()) {
             throw new BusinessException(ErrorCode.OAUTH_NOT_CONFIGURED, "GitHub 登录尚未配置");
         }
+    }
+
+    private String normalize(String value) {
+        return value == null ? null : value.trim();
     }
 
     private String randomToken(int bytesLength) {
