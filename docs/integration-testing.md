@@ -79,6 +79,8 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 完整 CI 不设置该例外；`dc-file`、其余生产模块或 Testcontainers 未执行都会阻断构建。不要使用 `C:\Windows\System32\bash.exe`，Windows 上请使用 Git Bash。
 
+2026-08-02 在 `fb2bdaa` 后的完整纯单元/H2 回归为 358 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 76.28%、分支覆盖率为 68.57%，覆盖报告完整性与禁止 skipped 门禁均通过。该批次包含搜索删除 refresh 失败重试契约和 `search_after` 游标改造；结果仍排除了 Testcontainers，不证明完整多服务链路、性能或恢复演练。
+
 2026-08-02 在 `43e6f39` 后的完整纯单元/H2 回归为 357 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 76.42%、分支覆盖率为 68.89%，覆盖报告完整性与禁止 skipped 门禁均通过。`ContentCommentProjectionRepository` 为 100%/88.46%，`ContentInteractionProjectionRepository` 为 100%/85.00%。内容库 V19 为评论与互动计数投影去重表增加事件指纹，并验证迁移会回填旧记录且旧应用省略新列的写入仍可兼容一个版本。两个消费者现在把完整 `ValidatedEvent` 传入投影事务：同 ID 同载荷保持幂等，同 ID 更换 topic、文章、动作、发生时间或 payload 会明确冲突；旧全零记录在首次重放时升级绑定但不会重复修改计数。状态测试通过真实 Spring 事务代理确认计数写入失败会回滚消费者声明，依赖恢复后原事件可用同一 ID 重试。当前结果排除了 Testcontainers，因此 V19 的真实 MySQL 迁移、Kafka 重投以及投影恢复尚未验证。
 
 2026-08-02 在 `43e6f39` 后补充真实 MySQL 投影回归：`ContentCommentProjectionIntegrationTest`、`ContentInteractionProjectionIntegrationTest` 和 `ContentProjectionMigrationIntegrationTest` 共 5 项测试在 MySQL 8.4 Testcontainer 中通过。前两类验证 V19 全量迁移后的评论/互动重复投影、缺失文章回滚和计数一致性；迁移测试先在真实 MySQL 执行到 V18，写入旧去重记录，再执行 V19，确认旧记录回填全零指纹且旧应用省略 `event_fingerprint` 的写入仍兼容。该批次未启动 Kafka、Redis、Elasticsearch 或 MinIO，因此不能替代完整多服务集成验收。
