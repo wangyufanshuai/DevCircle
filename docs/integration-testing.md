@@ -73,6 +73,8 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 完整 CI 不设置该例外；`dc-file`、其余生产模块或 Testcontainers 未执行都会阻断构建。不要使用 `C:\Windows\System32\bash.exe`，Windows 上请使用 Git Bash。
 
+2026-08-02 在 `45aa3e9` 后的完整纯单元/H2 回归为 341 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 75.88%、分支覆盖率为 68.07%，覆盖报告完整性与禁止 skipped 门禁均通过。`dc-search` 为 80.37%/58.89%，本批核心 `SearchEventCoordinator` 为 100%/92.31%。搜索 V2 为 `search_consumer_dedup` 增加事件指纹；消费者现在用共享 `EventFingerprint` 绑定类型、版本、发生时间、生产者、聚合标识和规范化 payload。已完成事件同载荷保持幂等，失败或过期处理中事件只有同载荷可以重领，同 ID 更换 topic、文章、发生时间、生产者、聚合标识或 payload 会明确冲突。旧全零记录兼容一个版本，并在首次有效重试时升级绑定。搜索聚合繁忙异常还通过真实 Spring 事务代理验证为保留第二事件的 `FAILED` 状态，同时不释放当前事件持有的水位线租约。当前本机 Docker 资源不足以执行完整多服务链路，因此 V2 的真实 MySQL 迁移、Kafka 重投和 Elasticsearch 投影恢复尚未验证。
+
 2026-08-02 在 `6d86949` 后的完整纯单元/H2 回归为 338 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 75.80%、分支覆盖率为 68.02%，覆盖报告完整性与禁止 skipped 门禁均通过。`dc-notification` 为 84.58%/88.20%，`NotificationRepository` 为 97.87%/90.62%，共享 `EventFingerprint` 为 94.87%/100%。通知消费者现在以事件类型、版本、发生时间、生产者、聚合标识和规范化 payload 计算 SHA-256 指纹：同事件 ID 同载荷保持幂等，同 ID 换 topic 或 payload 会抛出并进入现有重试/DLT策略，旧全零去重记录兼容一个版本。通知“全部已读”同键重放也会返回首次更新数量，且不会处理首次请求后新到达的通知。Docker Engine 仍不可用，因此 V4 的真实 MySQL 迁移、Kafka 重投和 DLT 链路尚未验证。
 
 2026-08-02 在 `8437315` 后的完整纯单元/H2 回归为 333 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 75.60%、分支覆盖率为 67.84%，覆盖报告完整性与禁止 skipped 门禁均通过。`dc-comment` 为 80.08%/77.92%，`CommentRepository` 为 96.00%/87.84%；创建评论的幂等键现在绑定文章、父评论和规范化正文，隐藏评论绑定评论与规范化审核理由，删除绑定评论标识。状态测试确认同键异载荷冲突、旧全零指纹兼容、无效父评论不消耗请求键，并验证 Outbox 故障会同时回滚评论、隐藏状态、审核记录和幂等键，依赖恢复后可用原键重试。Docker Engine 仍不可用，因此 V5 的真实 MySQL 迁移与 Kafka 事件链路尚未验证。
