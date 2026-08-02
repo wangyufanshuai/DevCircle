@@ -39,6 +39,7 @@ class JdbcInteractionConsumerDedupTest {
                             event_fingerprint CHAR(64) NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
                             status VARCHAR(16) NOT NULL,
                             attempts INT NOT NULL DEFAULT 1,
+                            lease_token CHAR(36),
                             last_error VARCHAR(1000),
                             processed_at TIMESTAMP,
                             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -50,19 +51,21 @@ class JdbcInteractionConsumerDedupTest {
     @Test
     void failedEventCanBeReclaimedAndCompletedEventCannot() {
         ValidatedEvent event = interactionEvent(EVENT_ID_1, "LIKE");
-        assertThat(dedup.claim(event)).isTrue();
-        dedup.markFailed(EVENT_ID_1, "redis unavailable");
-        assertThat(dedup.claim(event)).isTrue();
-        dedup.markCompleted(EVENT_ID_1);
+        var firstClaim = dedup.claim(event);
+        assertThat(firstClaim.claimed()).isTrue();
+        dedup.markFailed(EVENT_ID_1, firstClaim.leaseToken(), "redis unavailable");
+        var retryClaim = dedup.claim(event);
+        assertThat(retryClaim.claimed()).isTrue();
+        dedup.markCompleted(EVENT_ID_1, retryClaim.leaseToken());
 
-        assertThat(dedup.claim(event)).isFalse();
+        assertThat(dedup.claim(event).claimed()).isFalse();
         assertPayloadConflict(interactionEvent(EVENT_ID_1, "FAVORITE"));
         assertThat(attempts(EVENT_ID_1)).isEqualTo(2);
     }
 
     @Test
     void eventIdCannotBeReusedForAnotherTopic() {
-        assertThat(dedup.claim(interactionEvent(EVENT_ID_2, "LIKE"))).isTrue();
+        assertThat(dedup.claim(interactionEvent(EVENT_ID_2, "LIKE")).claimed()).isTrue();
 
         assertThatThrownBy(() -> dedup.claim(followEvent(EVENT_ID_2, "FOLLOWED")))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -73,7 +76,7 @@ class JdbcInteractionConsumerDedupTest {
     @Test
     void activeProcessingEventIsRetriedInsteadOfSilentlyAcknowledged() {
         ValidatedEvent event = interactionEvent(EVENT_ID_2, "LIKE");
-        assertThat(dedup.claim(event)).isTrue();
+        assertThat(dedup.claim(event).claimed()).isTrue();
 
         assertThatThrownBy(() -> dedup.claim(event))
                 .isInstanceOf(JdbcInteractionConsumerDedup.EventProcessingInProgressException.class)
@@ -87,8 +90,9 @@ class JdbcInteractionConsumerDedupTest {
         Instant occurredAt = Instant.parse("2026-08-01T10:15:30Z");
         ValidatedEvent original = event(EVENT_ID_3, "interaction.changed", occurredAt,
                 "dc-interaction", "9001", interactionPayload("LIKE"));
-        assertThat(dedup.claim(original)).isTrue();
-        dedup.markFailed(EVENT_ID_3, "redis unavailable");
+        var claim = dedup.claim(original);
+        assertThat(claim.claimed()).isTrue();
+        dedup.markFailed(EVENT_ID_3, claim.leaseToken(), "redis unavailable");
 
         assertPayloadConflict(event(EVENT_ID_3, "interaction.changed", occurredAt.plusSeconds(1),
                 "dc-interaction", "9001", interactionPayload("LIKE")));
@@ -105,7 +109,7 @@ class JdbcInteractionConsumerDedupTest {
     @Test
     void expiredProcessingEventCanOnlyBeRecoveredWithItsOriginalPayload() {
         ValidatedEvent original = interactionEvent(EVENT_ID_4, "LIKE");
-        assertThat(dedup.claim(original)).isTrue();
+        assertThat(dedup.claim(original).claimed()).isTrue();
         jdbcClient.sql("""
                         UPDATE recommend_consumer_dedup
                         SET updated_at = TIMESTAMPADD(MINUTE, -10, CURRENT_TIMESTAMP)
@@ -115,15 +119,16 @@ class JdbcInteractionConsumerDedupTest {
                 .update();
 
         assertPayloadConflict(interactionEvent(EVENT_ID_4, "FAVORITE"));
-        assertThat(dedup.claim(original)).isTrue();
+        assertThat(dedup.claim(original).claimed()).isTrue();
         assertThat(attempts(EVENT_ID_4)).isEqualTo(2);
     }
 
     @Test
     void legacyFailedRecordIsBoundOnItsFirstRetry() {
         ValidatedEvent original = interactionEvent(EVENT_ID_4, "LIKE");
-        assertThat(dedup.claim(original)).isTrue();
-        dedup.markFailed(EVENT_ID_4, "redis unavailable");
+        var claim = dedup.claim(original);
+        assertThat(claim.claimed()).isTrue();
+        dedup.markFailed(EVENT_ID_4, claim.leaseToken(), "redis unavailable");
         jdbcClient.sql("""
                         UPDATE recommend_consumer_dedup
                         SET event_fingerprint = :legacy
@@ -134,9 +139,34 @@ class JdbcInteractionConsumerDedupTest {
                 .update();
 
         ValidatedEvent compatibleRetry = interactionEvent(EVENT_ID_4, "FAVORITE");
-        assertThat(dedup.claim(compatibleRetry)).isTrue();
+        assertThat(dedup.claim(compatibleRetry).claimed()).isTrue();
         assertThat(fingerprint(EVENT_ID_4)).isEqualTo(EventFingerprint.sha256(compatibleRetry));
         assertPayloadConflict(original);
+    }
+
+    @Test
+    void staleWorkerCannotCompleteOrFailAReclaimedEvent() {
+        ValidatedEvent event = interactionEvent(EVENT_ID_4, "LIKE");
+        var staleClaim = dedup.claim(event);
+        jdbcClient.sql("""
+                        UPDATE recommend_consumer_dedup
+                        SET updated_at = TIMESTAMPADD(MINUTE, -10, CURRENT_TIMESTAMP)
+                        WHERE event_id = :eventId
+                        """)
+                .param("eventId", EVENT_ID_4)
+                .update();
+        var activeClaim = dedup.claim(event);
+
+        assertThatThrownBy(() -> dedup.markCompleted(EVENT_ID_4, staleClaim.leaseToken()))
+                .isInstanceOf(JdbcInteractionConsumerDedup.EventLeaseLostException.class)
+                .hasMessage("Event " + EVENT_ID_4 + " lease was lost before completion");
+        assertThatThrownBy(() -> dedup.markFailed(EVENT_ID_4, staleClaim.leaseToken(), "late failure"))
+                .isInstanceOf(JdbcInteractionConsumerDedup.EventLeaseLostException.class)
+                .hasMessage("Event " + EVENT_ID_4 + " lease was lost before failure recording");
+        assertThat(status(EVENT_ID_4)).isEqualTo("PROCESSING");
+
+        dedup.markCompleted(EVENT_ID_4, activeClaim.leaseToken());
+        assertThat(status(EVENT_ID_4)).isEqualTo("COMPLETED");
     }
 
     private int attempts(String eventId) {

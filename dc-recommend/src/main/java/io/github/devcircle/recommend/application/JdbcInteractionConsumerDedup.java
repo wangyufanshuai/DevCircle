@@ -6,6 +6,8 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.UUID;
+
 @Repository
 class JdbcInteractionConsumerDedup implements InteractionConsumerDedup {
     private static final String LEGACY_FINGERPRINT = "0".repeat(64);
@@ -18,27 +20,29 @@ class JdbcInteractionConsumerDedup implements InteractionConsumerDedup {
 
     @Override
     @Transactional
-    public boolean claim(ValidatedEvent event) {
+    public ClaimResult claim(ValidatedEvent event) {
         String eventId = event.eventId().toString();
         String topic = event.type();
         String eventFingerprint = EventFingerprint.sha256(event);
+        String leaseToken = UUID.randomUUID().toString();
         int inserted = jdbcClient.sql("""
                         INSERT IGNORE INTO recommend_consumer_dedup(
-                            event_id, topic, event_fingerprint, status, attempts)
-                        VALUES (:eventId, :topic, :eventFingerprint, 'PROCESSING', 1)
+                            event_id, topic, event_fingerprint, status, attempts, lease_token)
+                        VALUES (:eventId, :topic, :eventFingerprint, 'PROCESSING', 1, :leaseToken)
                         """)
                 .param("eventId", eventId)
                 .param("topic", topic)
                 .param("eventFingerprint", eventFingerprint)
+                .param("leaseToken", leaseToken)
                 .update();
-        if (inserted == 1) return true;
+        if (inserted == 1) return ClaimResult.acquired(leaseToken);
 
         validateIdentity(loadRecord(eventId), topic, eventFingerprint);
 
         int reclaimed = jdbcClient.sql("""
                         UPDATE recommend_consumer_dedup
                         SET status = 'PROCESSING', attempts = attempts + 1, last_error = NULL,
-                            event_fingerprint = :eventFingerprint
+                            event_fingerprint = :eventFingerprint, lease_token = :leaseToken
                         WHERE event_id = :eventId
                           AND topic = :topic
                           AND event_fingerprint IN (:eventFingerprint, :legacyFingerprint)
@@ -50,11 +54,12 @@ class JdbcInteractionConsumerDedup implements InteractionConsumerDedup {
                 .param("topic", topic)
                 .param("eventFingerprint", eventFingerprint)
                 .param("legacyFingerprint", LEGACY_FINGERPRINT)
+                .param("leaseToken", leaseToken)
                 .update();
-        if (reclaimed == 1) return true;
+        if (reclaimed == 1) return ClaimResult.acquired(leaseToken);
         DedupRecord current = loadRecord(eventId);
         validateIdentity(current, topic, eventFingerprint);
-        if ("COMPLETED".equals(current.status())) return false;
+        if ("COMPLETED".equals(current.status())) return ClaimResult.duplicate();
         if ("PROCESSING".equals(current.status())) {
             throw new EventProcessingInProgressException(
                     "Event " + eventId + " is already being processed");
@@ -87,26 +92,34 @@ class JdbcInteractionConsumerDedup implements InteractionConsumerDedup {
     }
 
     @Override
-    public void markCompleted(String eventId) {
-        jdbcClient.sql("""
+    public void markCompleted(String eventId, String leaseToken) {
+        int updated = jdbcClient.sql("""
                         UPDATE recommend_consumer_dedup
-                        SET status = 'COMPLETED', processed_at = CURRENT_TIMESTAMP, last_error = NULL
-                        WHERE event_id = :eventId
+                        SET status = 'COMPLETED', processed_at = CURRENT_TIMESTAMP, last_error = NULL,
+                            lease_token = NULL
+                        WHERE event_id = :eventId AND status = 'PROCESSING' AND lease_token = :leaseToken
                         """)
-                .param("eventId", eventId).update();
+                .param("eventId", eventId).param("leaseToken", leaseToken).update();
+        if (updated != 1) {
+            throw new EventLeaseLostException("Event " + eventId + " lease was lost before completion");
+        }
     }
 
     @Override
-    public void markFailed(String eventId, String message) {
+    public void markFailed(String eventId, String leaseToken, String message) {
         String safeMessage = message == null ? "unknown failure" : message;
-        jdbcClient.sql("""
+        int updated = jdbcClient.sql("""
                         UPDATE recommend_consumer_dedup
-                        SET status = 'FAILED', last_error = :lastError
-                        WHERE event_id = :eventId
+                        SET status = 'FAILED', last_error = :lastError, lease_token = NULL
+                        WHERE event_id = :eventId AND status = 'PROCESSING' AND lease_token = :leaseToken
                         """)
                 .param("eventId", eventId)
+                .param("leaseToken", leaseToken)
                 .param("lastError", safeMessage.substring(0, Math.min(1000, safeMessage.length())))
                 .update();
+        if (updated != 1) {
+            throw new EventLeaseLostException("Event " + eventId + " lease was lost before failure recording");
+        }
     }
 
     private record DedupRecord(String topic, String eventFingerprint, String status) {
@@ -114,6 +127,12 @@ class JdbcInteractionConsumerDedup implements InteractionConsumerDedup {
 
     static final class EventProcessingInProgressException extends IllegalStateException {
         EventProcessingInProgressException(String message) {
+            super(message);
+        }
+    }
+
+    static final class EventLeaseLostException extends IllegalStateException {
+        EventLeaseLostException(String message) {
             super(message);
         }
     }

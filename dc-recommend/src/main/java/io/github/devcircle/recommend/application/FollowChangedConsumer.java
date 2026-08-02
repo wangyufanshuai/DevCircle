@@ -31,7 +31,8 @@ class FollowChangedConsumer {
     void consume(String message) throws Exception {
         ValidatedEvent event = envelopeValidator.parse(message, EVENT_CONTRACT);
         String eventId = event.eventId().toString();
-        if (!dedup.claim(event)) return;
+        InteractionConsumerDedup.ClaimResult claim = dedup.claim(event);
+        if (!claim.claimed()) return;
         try {
             JsonNode payload = event.payload();
             long actorId = requiredPositiveLong(payload, "actorId");
@@ -47,9 +48,9 @@ class FollowChangedConsumer {
                 throw new IllegalArgumentException("Follow aggregateId does not match receiverId");
             }
             signalStore.apply(eventId, actorId, receiverId, status);
-            dedup.markCompleted(eventId);
+            dedup.markCompleted(eventId, claim.leaseToken());
         } catch (Exception ex) {
-            try { dedup.markFailed(eventId, ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage()); }
+            try { dedup.markFailed(eventId, claim.leaseToken(), ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage()); }
             catch (RuntimeException ignored) { ex.addSuppressed(ignored); }
             throw ex;
         }

@@ -38,6 +38,8 @@ class RecommendConsumerMigrationTest {
         try (Connection connection = dataSource.getConnection()) {
             ScriptUtils.executeSqlScript(connection,
                     new ClassPathResource("db/migration/V18__bind_recommend_consumer_payloads.sql"));
+            ScriptUtils.executeSqlScript(connection,
+                    new ClassPathResource("db/migration/V19__bind_recommend_consumer_leases.sql"));
         }
 
         jdbcClient.sql("""
@@ -53,5 +55,11 @@ class RecommendConsumerMigrationTest {
                 .query(Integer.class)
                 .single();
         assertThat(legacyRows).isEqualTo(2);
+        Integer leaseColumns = jdbcClient.sql("""
+                        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                        WHERE TABLE_NAME = 'RECOMMEND_CONSUMER_DEDUP' AND COLUMN_NAME = 'LEASE_TOKEN'
+                        """)
+                .query(Integer.class).single();
+        assertThat(leaseColumns).isEqualTo(1);
     }
 }

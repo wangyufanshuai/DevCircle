@@ -21,14 +21,14 @@ class FollowChangedConsumerTest {
         InteractionConsumerDedup dedup = mock(InteractionConsumerDedup.class);
         FollowSignalStore signals = mock(FollowSignalStore.class);
         FollowChangedConsumer consumer = new FollowChangedConsumer(new ObjectMapper(), dedup, signals);
-        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(true);
+        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(InteractionConsumerDedup.ClaimResult.acquired("lease-follow"));
 
         consumer.consume(event("7", """
                 {"actorId":2,"receiverId":7,"receiverUsername":"林墨","status":"FOLLOWED"}
                 """));
 
         verify(signals).apply(EVENT_ID, 2L, 7L, "FOLLOWED");
-        verify(dedup).markCompleted(EVENT_ID);
+        verify(dedup).markCompleted(EVENT_ID, "lease-follow");
     }
 
     @Test
@@ -50,14 +50,14 @@ class FollowChangedConsumerTest {
         InteractionConsumerDedup dedup = mock(InteractionConsumerDedup.class);
         FollowSignalStore signals = mock(FollowSignalStore.class);
         FollowChangedConsumer consumer = new FollowChangedConsumer(new ObjectMapper(), dedup, signals);
-        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(true);
+        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(InteractionConsumerDedup.ClaimResult.acquired("lease-follow"));
 
         assertThatThrownBy(() -> consumer.consume(event("99", """
                 {"actorId":2,"receiverId":7,"status":"FOLLOWED"}
                 """))).isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Follow aggregateId does not match receiverId");
 
-        verify(dedup).markFailed(EVENT_ID, "Follow aggregateId does not match receiverId");
+        verify(dedup).markFailed(EVENT_ID, "lease-follow", "Follow aggregateId does not match receiverId");
         verifyNoInteractions(signals);
     }
 
@@ -66,7 +66,7 @@ class FollowChangedConsumerTest {
         InteractionConsumerDedup dedup = mock(InteractionConsumerDedup.class);
         FollowSignalStore signals = mock(FollowSignalStore.class);
         FollowChangedConsumer consumer = new FollowChangedConsumer(new ObjectMapper(), dedup, signals);
-        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(false);
+        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(InteractionConsumerDedup.ClaimResult.duplicate());
 
         consumer.consume(event("7", """
                 {"actorId":2,"receiverId":7,"status":"FOLLOWED"}
@@ -80,7 +80,7 @@ class FollowChangedConsumerTest {
         InteractionConsumerDedup dedup = mock(InteractionConsumerDedup.class);
         FollowSignalStore signals = mock(FollowSignalStore.class);
         FollowChangedConsumer consumer = new FollowChangedConsumer(new ObjectMapper(), dedup, signals);
-        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(true);
+        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(InteractionConsumerDedup.ClaimResult.acquired("lease-follow"));
 
         assertRejected(consumer, "{\"actorId\":\"2\",\"receiverId\":7,\"status\":\"FOLLOWED\"}",
                 "Follow payload actorId must be a positive integer");
@@ -109,11 +109,11 @@ class FollowChangedConsumerTest {
         InteractionConsumerDedup dedup = mock(InteractionConsumerDedup.class);
         FollowSignalStore signals = mock(FollowSignalStore.class);
         FollowChangedConsumer consumer = new FollowChangedConsumer(new ObjectMapper(), dedup, signals);
-        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(true);
+        when(dedup.claim(any(ValidatedEvent.class))).thenReturn(InteractionConsumerDedup.ClaimResult.acquired("lease-follow"));
         RuntimeException projectionFailure = new RuntimeException();
         RuntimeException stateFailure = new IllegalStateException("dedup unavailable");
         doThrow(projectionFailure).when(signals).apply(EVENT_ID, 2L, 7L, "FOLLOWED");
-        doThrow(stateFailure).when(dedup).markFailed(EVENT_ID, "RuntimeException");
+        doThrow(stateFailure).when(dedup).markFailed(EVENT_ID, "lease-follow", "RuntimeException");
 
         assertThatThrownBy(() -> consumer.consume(event("7", """
                 {"actorId":2,"receiverId":7,"status":"FOLLOWED"}
