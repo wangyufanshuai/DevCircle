@@ -148,6 +148,8 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 媒体权限状态矩阵随后补充单条和批量公开查询：只有 `APPROVED + COMPLETED + PUBLISHED` 关联才可返回，草稿、未审核、上传中和无效/重复 ID 均被过滤或拒绝。完整纯单元/H2 回归为 384 个测试、0 failures/errors/skipped，聚合行/分支覆盖率为 78.59%/72.24%；`dc-file` 保持 69.78%/53.85%。覆盖率和 skipped 门禁通过；真实 MinIO、预签名上传和审核后公开仍待容器 E2E。
 
+2026-08-02 前端回归重新执行：`npm run build` 成功，四个 Playwright project（Chromium、laptop、tablet、mobile）共 112/112 通过，耗时约 30.5 秒。`scripts/e2e/test-docker-preflight.sh` 的离线 fixture 门禁通过；当前实际 Docker 内存为 2,068,439,040 bytes，`run-real-auth.sh` 按设计以退出码 2 阻断并提示至少需要 2,147,483,648 bytes，未将资源不足误记为认证业务通过。该结果仍不替代真实 Compose E2E。
+
 ## 排查建议
 
 - 拉取镜像慢：先手动执行 `docker pull`。
