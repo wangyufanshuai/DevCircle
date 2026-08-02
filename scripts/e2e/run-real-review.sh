@@ -10,6 +10,8 @@ BUILD_MODE="${REAL_E2E_BUILD:-true}"
 ADMIN_EMAIL="real-review-admin@example.test"
 ADMIN_PASSWORD="OrbitAdmin2026!"
 COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" --profile review)
+# shellcheck source=docker-preflight.sh
+source "${ROOT_DIR}/scripts/e2e/docker-preflight.sh"
 
 cleanup() {
   status=$?
@@ -19,12 +21,11 @@ cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
   exit "${status}"
 }
-trap cleanup EXIT
 
 command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 2; }
-command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 2; }
 command -v npx >/dev/null 2>&1 || { echo "npx is required" >&2; exit 2; }
 test -d "${ROOT_DIR}/web/node_modules" || { echo "Run npm ci in web before the real E2E suite" >&2; exit 2; }
+require_real_e2e_docker "review E2E"
 
 if command -v java >/dev/null 2>&1; then
   "${ROOT_DIR}/mvnw" -q -pl dc-auth,dc-content,dc-admin,dc-gateway -am -DskipTests package
@@ -35,7 +36,6 @@ else
   exit 2
 fi
 
-"${COMPOSE[@]}" down -v --remove-orphans
 if [[ "${BUILD_MODE}" == "true" ]]; then
   BUILD_ARGS=(--build)
 elif [[ "${BUILD_MODE}" == "false" ]]; then
@@ -44,6 +44,8 @@ else
   echo "REAL_E2E_BUILD must be true or false" >&2
   exit 2
 fi
+trap cleanup EXIT
+"${COMPOSE[@]}" down -v --remove-orphans
 "${COMPOSE[@]}" up -d "${BUILD_ARGS[@]}" --pull "${PULL_POLICY}" --wait --wait-timeout "${WAIT_TIMEOUT}"
 
 curl --fail --silent --show-error --output /dev/null \

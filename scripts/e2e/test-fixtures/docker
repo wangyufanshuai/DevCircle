@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+case "${1:-}" in
+  info)
+    [[ "${FAKE_DOCKER_INFO_AVAILABLE:-true}" == "true" ]] || exit 1
+    printf '%s\n' "${FAKE_DOCKER_MEMORY_BYTES:-8589934592}"
+    ;;
+  ps)
+    [[ "${FAKE_DOCKER_PS_AVAILABLE:-true}" == "true" ]] || exit 1
+    for ((index = 0; index < ${FAKE_DOCKER_RUNNING_COUNT:-0}; index++)); do
+      printf 'container-%s\n' "${index}"
+    done
+    ;;
+  *)
+    echo "unexpected fake docker command: $*" >&2
+    exit 3
+    ;;
+esac
