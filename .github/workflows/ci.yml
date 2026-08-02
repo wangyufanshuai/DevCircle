@@ -22,6 +22,7 @@ jobs:
           cache: maven
       - run: ./mvnw -B verify -Pcoverage
       - run: MIN_LINE_COVERAGE=68 MIN_BRANCH_COVERAGE=64 bash scripts/ops/assert-coverage.sh
+      - run: python scripts/ops/assert-critical-state-coverage.py
       - run: bash scripts/ops/assert-no-skipped-tests.sh
       - uses: actions/upload-artifact@v5
         if: always()
@@ -180,6 +181,7 @@ jobs:
       - run: docker compose --profile demo config
       - run: docker compose --env-file .env.production.example -f docker-compose.prod.yml config --quiet
       - run: python -m unittest scripts/ops/test_assert_production_resource_budgets.py
+      - run: python -m unittest scripts/ops/test_assert_critical_state_coverage.py
       - run: python -m unittest scripts/ops/test_k6_contract.py
       - run: python scripts/ops/assert-production-resource-budgets.py
 
