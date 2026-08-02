@@ -24,6 +24,8 @@ DevCircle 使用按业务域拆分、兼容聚合的微服务结构。Gateway �
 
 Outbox 发送等待受 `DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS` 控制，默认 15 秒。Kafka Future 超时会释放租约、记录失败并按指数退避重试；不会让半挂的 broker 长期占用 `PROCESSING` 状态。
 
+生产 `aggregate` Gateway 将内容、评论、媒体和审核请求统一路由到 `dc-content-aggregate`；旧领域服务只作为聚合门面内部依赖，不允许被外部 Gateway 路由直接绕过。
+
 ## 关键索引
 
 - `post(status, created_at)`: 支撑审核列表和最新内容流。
