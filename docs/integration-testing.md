@@ -128,7 +128,7 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 当前工作批次补强了 `web/tests-real/review.spec.ts`：审核通过后的真实详情现在继续验证正确答题会解锁解析并获得 20 分，同时使用浏览器实际生成的 `Idempotency-Key` 重放答题请求，确认返回 `duplicated=true` 且积分不重复。该用例已通过 `npx playwright test -c playwright.real.config.ts tests-real/review.spec.ts --list` 编译/发现检查，但尚未在 Compose 中执行；本机执行 `REAL_E2E_PULL_POLICY=never bash scripts/e2e/run-real-review.sh` 仍因 Docker 配额 `2068439040` bytes 低于 `2147483648` bytes 门槛而在打包前阻断。同期 `npm run build` 和 112 项拦截式 Playwright 回归通过；这些结果不替代真实审核 E2E。
 
-同一工作批次的 `ReliableOutboxWorkerTest` 定向回归为 8/8 通过，新增覆盖无 `outbox_event` 表时定时 Worker 安全空转，以及 Kafka Future 抛出 `InterruptedException` 时保留 `FAILED` 可重试状态并恢复线程中断标志。该定向结果不替代最新完整纯单元/H2 聚合基线，后者仍为 360 项、行覆盖率 76.29%、分支覆盖率 68.60%。
+同一工作批次的 `ReliableOutboxWorkerTest` 定向回归为 11/11 通过，新增覆盖无 `outbox_event` 表时定时 Worker 安全空转、人工重放明确失败、并发定时/人工执行互斥、超长失败原因截断，以及 Kafka Future 抛出 `InterruptedException` 时保留 `FAILED` 可重试状态并恢复线程中断标志。定向 JaCoCo 显示 `ReliableOutboxWorker` 行覆盖率 100%、分支覆盖率 95.45%；该定向结果不替代最新完整纯单元/H2 聚合基线，后者仍为 360 项、行覆盖率 76.29%、分支覆盖率 68.60%。
 
 同一工作批次的离线交付门禁均通过：`test-docker-preflight.sh`、`test-assert-coverage.sh`、`test-validate-production-env.sh`、`test-backup-restore.sh`、`test_assert_production_resource_budgets.py`，以及生产/基础设施 Compose `config --quiet`。当前 Windows 环境未安装 Helm，故本轮没有把 Helm lint 记为通过；CI 仍需在带 Helm 的 Runner 上执行该门禁。
 
