@@ -1,6 +1,7 @@
 package io.github.devcircle.common.config;
 
 import io.github.devcircle.common.event.ReliableOutboxWorker;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -22,8 +23,9 @@ public class ReliableMessagingConfig {
     @Bean
     @ConditionalOnProperty(prefix = "devcircle.outbox", name = "enabled", havingValue = "true", matchIfMissing = true)
     ReliableOutboxWorker reliableOutboxWorker(JdbcClient jdbcClient,
-                                               KafkaTemplate<String, String> kafkaTemplate) {
-        return new ReliableOutboxWorker(jdbcClient, kafkaTemplate, 50, 8);
+                                               KafkaTemplate<String, String> kafkaTemplate,
+                                               @Value("${devcircle.outbox.send-timeout-ms:15000}") long sendTimeoutMs) {
+        return new ReliableOutboxWorker(jdbcClient, kafkaTemplate, 50, 8, sendTimeoutMs);
     }
 
 }

@@ -12,6 +12,8 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 public class ReliableOutboxWorker {
     private static final Logger log = LoggerFactory.getLogger(ReliableOutboxWorker.class);
@@ -21,15 +23,25 @@ public class ReliableOutboxWorker {
     private final AtomicBoolean running = new AtomicBoolean();
     private final int batchSize;
     private final int maxAttempts;
+    private final long sendTimeoutMs;
 
     public ReliableOutboxWorker(JdbcClient jdbcClient,
                                 KafkaTemplate<String, String> kafkaTemplate,
                                 @Value("${devcircle.outbox.batch-size:50}") int batchSize,
                                 @Value("${devcircle.outbox.max-attempts:8}") int maxAttempts) {
+        this(jdbcClient, kafkaTemplate, batchSize, maxAttempts, 15_000L);
+    }
+
+    public ReliableOutboxWorker(JdbcClient jdbcClient,
+                                KafkaTemplate<String, String> kafkaTemplate,
+                                int batchSize,
+                                int maxAttempts,
+                                long sendTimeoutMs) {
         this.jdbcClient = jdbcClient;
         this.kafkaTemplate = kafkaTemplate;
         this.batchSize = Math.max(1, Math.min(batchSize, 500));
         this.maxAttempts = Math.max(1, maxAttempts);
+        this.sendTimeoutMs = Math.max(1, sendTimeoutMs);
     }
 
     @Scheduled(
@@ -113,7 +125,8 @@ public class ReliableOutboxWorker {
 
     private boolean publish(EventRow event) {
         try {
-            kafkaTemplate.send(event.topic(), event.aggregateId(), event.payload()).get();
+            kafkaTemplate.send(event.topic(), event.aggregateId(), event.payload())
+                    .get(sendTimeoutMs, TimeUnit.MILLISECONDS);
             int updated = jdbcClient.sql("""
                             UPDATE outbox_event
                             SET status = 'PUBLISHED', published_at = CURRENT_TIMESTAMP,
@@ -130,7 +143,7 @@ public class ReliableOutboxWorker {
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             fail(event, ex);
-        } catch (ExecutionException | RuntimeException ex) {
+        } catch (ExecutionException | TimeoutException | RuntimeException ex) {
             fail(event, ex);
         }
         return false;

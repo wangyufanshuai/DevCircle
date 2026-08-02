@@ -14,6 +14,8 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -208,7 +210,7 @@ class ReliableOutboxWorkerTest {
         @SuppressWarnings("unchecked")
         CompletableFuture<SendResult<String, String>> future = mock(CompletableFuture.class);
         when(kafka.send(anyString(), anyString(), anyString())).thenReturn(future);
-        when(future.get()).thenThrow(new InterruptedException("worker interrupted"));
+        when(future.get(anyLong(), any(TimeUnit.class))).thenThrow(new InterruptedException("worker interrupted"));
         ReliableOutboxWorker worker = new ReliableOutboxWorker(jdbc, kafka, 10, 3);
 
         try {
@@ -221,6 +223,20 @@ class ReliableOutboxWorkerTest {
         } finally {
             Thread.interrupted();
         }
+    }
+
+    @Test
+    void hungKafkaSendTimesOutAndLeavesTheEventRetryable() {
+        insert("evt-timeout", "NEW", 0, null);
+        CompletableFuture<SendResult<String, String>> hungSend = new CompletableFuture<>();
+        when(kafka.send(anyString(), anyString(), anyString())).thenReturn(hungSend);
+        ReliableOutboxWorker worker = new ReliableOutboxWorker(jdbc, kafka, 10, 3, 20);
+
+        assertThatThrownBy(() -> worker.publishBatch(10))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("event remains available for retry");
+        assertThat(status()).isEqualTo("FAILED");
+        assertThat(attempts()).isEqualTo(1);
     }
 
     private void insert(String eventId, String status, int attempts, String lockedAtExpression) {
