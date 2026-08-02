@@ -33,9 +33,15 @@ bash scripts/e2e/run-real-community.sh
 
 该脚本启动 Kafka、Auth、User、Content、Notification、Recommend 和 Gateway，验证两名新用户的资料同步、关注幂等、通知去重、取消关注静默以及推荐投影回退为未关注状态。
 
-Community E2E 已限制 JVM、MySQL 和 Kafka 的测试内存。独占 Docker 时建议至少分配 2GB；如果同一 Docker Engine 还运行其他项目，建议分配 4GB 以上或先由操作者自行停止无关容器。Docker API 返回 500/502、容器退出码 137 或 `context deadline exceeded` 都属于环境失败，不能记为业务链路通过。
+四条真实 E2E 均限制 Docker 资源并在打包 JAR 前执行统一预检。独占 Docker 时至少分配 2 GiB；如果同一 Docker Engine 还运行其他项目，应分配 4 GiB 以上或先由操作者自行停止无关容器。Docker API 返回 500/502、容器退出码 137 或 `context deadline exceeded` 都属于环境失败，不能记为业务链路通过。
 
-脚本会在构建镜像前用 10 秒超时探测 Docker daemon 和内存：daemon 无响应或低于 2 GiB 时直接退出；Docker 中已有其他运行容器且内存低于 4 GiB 时也会退出。确需在共享 Docker 上承担资源风险时，必须显式设置 `REAL_E2E_ALLOW_SHARED_DOCKER=true`，该覆盖只允许执行测试，不会把资源失败改记为通过。
+共享预检会用 10 秒超时探测 Docker daemon、内存和现有容器：daemon 无响应或低于 2 GiB 时直接退出；Docker 中已有其他运行容器且内存低于 4 GiB 时也会退出。确需在共享 Docker 上承担资源风险时，必须显式设置 `REAL_E2E_ALLOW_SHARED_DOCKER=true`，该覆盖只允许执行测试，不会把资源失败改记为通过。预检自身的离线回归命令为：
+
+```bash
+bash scripts/e2e/test-docker-preflight.sh
+```
+
+2026-08-02 在 `e3f6bed` 后，预检离线回归通过；真实 content 脚本在约 1 秒内识别到本机 Docker 配额为 2068439040 字节，低于 2 GiB 门槛，并在 Maven 打包前以状态码 2 退出。该结果只证明资源失败能被快速、明确地报告，真实 E2E 仍未执行。
 
 镜像已在本机缓存且外网不可用时，可明确禁止拉取：
 
