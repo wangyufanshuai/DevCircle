@@ -130,6 +130,8 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 同一工作批次的 `ReliableOutboxWorkerTest` 定向回归为 8/8 通过，新增覆盖无 `outbox_event` 表时定时 Worker 安全空转，以及 Kafka Future 抛出 `InterruptedException` 时保留 `FAILED` 可重试状态并恢复线程中断标志。该定向结果不替代最新完整纯单元/H2 聚合基线，后者仍为 360 项、行覆盖率 76.29%、分支覆盖率 68.60%。
 
+同一工作批次的离线交付门禁均通过：`test-docker-preflight.sh`、`test-assert-coverage.sh`、`test-validate-production-env.sh`、`test-backup-restore.sh`、`test_assert_production_resource_budgets.py`，以及生产/基础设施 Compose `config --quiet`。当前 Windows 环境未安装 Helm，故本轮没有把 Helm lint 记为通过；CI 仍需在带 Helm 的 Runner 上执行该门禁。
+
 ## 排查建议
 
 - 拉取镜像慢：先手动执行 `docker pull`。
