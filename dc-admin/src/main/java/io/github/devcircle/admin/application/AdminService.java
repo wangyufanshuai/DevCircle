@@ -444,14 +444,33 @@ public class AdminService {
         return normalized;
     }
 
-    public AdminActionResult createTag() {
+    @Transactional
+    public AdminActionResult createTag(String name, Long actorId, String traceId, String idempotencyKey) {
         requireDatabase();
+        requireAuditor(actorId);
+        String normalizedName = name == null ? "" : name.trim();
+        if (normalizedName.isBlank() || normalizedName.length() > 64) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "标签名称必须为 1 至 64 个字符");
+        }
+        String fingerprint = requestFingerprint("admin-tag-create-v1", normalizedName);
         try {
-            jdbcClient.sql("INSERT INTO tag(name, use_count) VALUES ('MysticVerse精选', 1) ON DUPLICATE KEY UPDATE use_count = use_count + 1").update();
-            Long tagId = jdbcClient.sql("SELECT id FROM tag WHERE name = 'MysticVerse精选'").query(Long.class).single();
-            return new AdminActionResult("CREATE_TAG", Map.of("tagId", tagId, "name", "MysticVerse精选"));
+            Long duplicateId = claimIdempotency(actorId, "CREATE_TAG", idempotencyKey, fingerprint);
+            if (duplicateId != null) {
+                return new AdminActionResult("CREATE_TAG", Map.of(
+                        "tagId", duplicateId, "name", normalizedName, "duplicateRequest", true));
+            }
+            int inserted = jdbcClient.sql("INSERT IGNORE INTO tag(name, use_count) VALUES (:name, 0)")
+                    .param("name", normalizedName).update();
+            Long tagId = jdbcClient.sql("SELECT id FROM tag WHERE name = :name")
+                    .param("name", normalizedName).query(Long.class).single();
+            logAudit(actorId, "CREATE_TAG", "TAG", String.valueOf(tagId), null, traceId,
+                    Map.of("name", normalizedName, "created", inserted == 1));
+            jdbcClient.sql("UPDATE content_idempotency_record SET resource_id = :tagId WHERE idempotency_key = :key")
+                    .param("tagId", tagId).param("key", idempotencyKey).update();
+            return new AdminActionResult("CREATE_TAG", Map.of(
+                    "tagId", tagId, "name", normalizedName, "created", inserted == 1));
         } catch (DataAccessException ex) {
-            throw dependencyUnavailable();
+            throw dependencyUnavailable(ex);
         }
     }
 

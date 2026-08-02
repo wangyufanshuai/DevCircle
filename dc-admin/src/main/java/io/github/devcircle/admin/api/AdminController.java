@@ -158,8 +158,11 @@ class AdminController {
     }
 
     @PostMapping("/tags")
-    ApiResponse<AdminActionResult> createTag() {
-        return ApiResponse.ok(adminService.createTag());
+    ApiResponse<AdminActionResult> createTag(@RequestHeader("X-User-Id") Long userId,
+                                             @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                             @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
+                                             @Valid @RequestBody CreateTagRequest request) {
+        return ApiResponse.ok(adminService.createTag(request.name(), userId, traceId, idempotencyKey));
     }
 
     @GetMapping("/metrics/overview")

@@ -33,6 +33,9 @@ class AdminControllerTest {
                 .thenReturn(new AdminActionResult("UPDATE_RECOMMEND_EXPERIMENT", Map.of()));
         when(service.replayOutbox("post.submitted", 25, 9L, "trace-8", "outbox-replay"))
                 .thenReturn(new AdminActionResult("REPLAY_OUTBOX", Map.of()));
+        CreateTagRequest tag = new CreateTagRequest("轨道档案");
+        when(service.createTag(tag.name(), 9L, "trace-9", "tag-create"))
+                .thenReturn(new AdminActionResult("CREATE_TAG", Map.of()));
 
         controller.requireChanges(7L, 9L, "moderate-7", "trace-1", request);
         controller.approveAppeal(5L, 9L, "appeal-5", "trace-2", request);
@@ -42,6 +45,7 @@ class AdminControllerTest {
         controller.createExperiment(9L, "experiment-create", "trace-6", experiment);
         controller.activateExperiment("exp-home-a", 9L, "experiment-active", "trace-7");
         controller.replayOutbox("post.submitted", 25, 9L, "outbox-replay", "trace-8");
+        controller.createTag(9L, "tag-create", "trace-9", tag);
 
         verify(service).requireChanges(7L, 9L, "trace-1", request.reason(), "moderate-7");
         verify(service).resolveAppeal(5L, 9L, "trace-2", request.reason(), true, "appeal-5");
@@ -51,5 +55,6 @@ class AdminControllerTest {
         verify(service).createExperiment(experiment, 9L, "trace-6", "experiment-create");
         verify(service).updateExperimentStatus("exp-home-a", "ACTIVE", 9L, "trace-7", "experiment-active");
         verify(service).replayOutbox("post.submitted", 25, 9L, "trace-8", "outbox-replay");
+        verify(service).createTag(tag.name(), 9L, "trace-9", "tag-create");
     }
 }

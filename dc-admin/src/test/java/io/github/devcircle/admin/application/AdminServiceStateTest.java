@@ -163,6 +163,12 @@ class AdminServiceStateTest {
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
                 """).update();
+        jdbcClient.sql("""
+                CREATE TABLE tag (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    name VARCHAR(64) NOT NULL UNIQUE,
+                    use_count BIGINT NOT NULL DEFAULT 0)
+                """).update();
     }
 
     @Test
@@ -588,6 +594,39 @@ class AdminServiceStateTest {
         assertThat(idempotencyCount("replay-audit-failure")).isZero();
     }
 
+    @Test
+    void tagCreationUsesRealInputWithoutInflatingUsageAndRollsBackOnAuditFailure() {
+        var created = service.createTag("  轨道档案  ", 9L, "trace-tag", "tag-create");
+        var replay = service.createTag("轨道档案", 9L, "trace-tag", "tag-create");
+
+        assertThat(created.attributes()).containsEntry("name", "轨道档案").containsEntry("created", true);
+        assertThat(replay.attributes()).containsEntry("name", "轨道档案")
+                .containsEntry("duplicateRequest", true);
+        assertThat(count("tag")).isEqualTo(1);
+        assertThat(tagUseCount("轨道档案")).isZero();
+        assertThat(count("audit_log")).isEqualTo(1);
+        assertThat(auditUser("CREATE_TAG")).isEqualTo(9L);
+
+        assertCode(() -> service.createTag("另一个标签", 9L, "trace", "tag-create"),
+                ErrorCode.DUPLICATE_OPERATION);
+        var existing = service.createTag("轨道档案", 9L, "trace-existing", "tag-existing");
+        assertThat(existing.attributes()).containsEntry("created", false);
+        assertThat(count("tag")).isEqualTo(1);
+        assertThat(tagUseCount("轨道档案")).isZero();
+        assertThat(count("audit_log")).isEqualTo(2);
+
+        assertCode(() -> service.createTag(" ", 9L, "trace", "tag-empty"), ErrorCode.VALIDATION_FAILED);
+        assertThat(idempotencyCount("tag-empty")).isZero();
+
+        jdbcClient.sql("DROP TABLE audit_log").update();
+        assertThatThrownBy(() -> service.createTag("审计失败标签", 9L,
+                "trace-failure", "tag-audit-failure"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.code()).isEqualTo(ErrorCode.DEPENDENCY_UNAVAILABLE));
+        assertThat(count("tag")).isEqualTo(1);
+        assertThat(idempotencyCount("tag-audit-failure")).isZero();
+    }
+
     private long post(long authorId, String title, String status) {
         jdbcClient.sql("INSERT INTO post(author_id, title, status) VALUES (:authorId, :title, :status)")
                 .param("authorId", authorId).param("title", title).param("status", status).update();
@@ -662,6 +701,11 @@ class AdminServiceStateTest {
     private int experimentTraffic(String experimentId) {
         return jdbcClient.sql("SELECT traffic_percent FROM recommend_experiment WHERE experiment_id = :id")
                 .param("id", experimentId).query(Integer.class).single();
+    }
+
+    private long tagUseCount(String name) {
+        return jdbcClient.sql("SELECT use_count FROM tag WHERE name = :name")
+                .param("name", name).query(Long.class).single();
     }
 
     private String outboxStatus(long id) {
