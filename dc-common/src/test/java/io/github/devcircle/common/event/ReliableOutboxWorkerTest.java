@@ -9,11 +9,13 @@ import org.springframework.kafka.core.KafkaTemplate;
 import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class ReliableOutboxWorkerTest {
@@ -138,6 +140,35 @@ class ReliableOutboxWorkerTest {
         worker.publishAvailable();
         assertThat(status("evt-second")).isEqualTo("PUBLISHED");
         verify(kafka, times(3)).send(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void scheduledWorkerTreatsAServiceWithoutAnOutboxTableAsIdle() {
+        jdbc.sql("DROP TABLE outbox_event").update();
+        ReliableOutboxWorker worker = new ReliableOutboxWorker(jdbc, kafka, 10, 3);
+
+        assertThatCode(worker::publishAvailable).doesNotThrowAnyException();
+        verifyNoInteractions(kafka);
+    }
+
+    @Test
+    void interruptedKafkaSendKeepsTheEventRetryableAndRestoresInterruptFlag() throws Exception {
+        insert("evt-interrupted", "NEW", 0, null);
+        CompletableFuture future = mock(CompletableFuture.class);
+        when(kafka.send(anyString(), anyString(), anyString())).thenReturn(future);
+        when(future.get()).thenThrow(new InterruptedException("worker interrupted"));
+        ReliableOutboxWorker worker = new ReliableOutboxWorker(jdbc, kafka, 10, 3);
+
+        try {
+            assertThatThrownBy(() -> worker.publishBatch(10))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("event remains available for retry");
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            assertThat(status()).isEqualTo("FAILED");
+            assertThat(attempts()).isEqualTo(1);
+        } finally {
+            Thread.interrupted();
+        }
     }
 
     private void insert(String eventId, String status, int attempts, String lockedAtExpression) {
