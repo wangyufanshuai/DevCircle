@@ -79,6 +79,8 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 完整 CI 不设置该例外；`dc-file`、其余生产模块或 Testcontainers 未执行都会阻断构建。不要使用 `C:\Windows\System32\bash.exe`，Windows 上请使用 Git Bash。
 
+2026-08-02 前端回归基线：`cd web && npm run test:e2e` 在 Chromium、桌面、平板和移动四个 Playwright project 中共运行 112 项，112 项通过（34 秒）。该套件使用显式 API 拦截，验证路由、状态、错误处理、幂等键、响应式布局和键盘交互，不等同于真实服务 E2E。真实认证、内容、审核和社区脚本使用独立 Compose；当前 Docker 配额为 2068439040 bytes（约 1.93 GiB），低于 2147483648 bytes 的最小门槛，`run-real-auth.sh` 在打包前明确阻断，未记为业务通过。
+
 2026-08-02 在 `b7ad448` 后的完整纯单元/H2 回归为 360 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 76.29%、分支覆盖率为 68.60%，覆盖报告完整性与禁止 skipped 门禁均通过。该批次包含搜索删除 refresh 失败重试契约、`search_after` 游标改造和 Outbox 租约所有权测试；结果仍排除了完整 Gateway/Compose E2E、性能或恢复演练。
 
 2026-08-02 在 `43e6f39` 后的完整纯单元/H2 回归为 357 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 76.42%、分支覆盖率为 68.89%，覆盖报告完整性与禁止 skipped 门禁均通过。`ContentCommentProjectionRepository` 为 100%/88.46%，`ContentInteractionProjectionRepository` 为 100%/85.00%。内容库 V19 为评论与互动计数投影去重表增加事件指纹，并验证迁移会回填旧记录且旧应用省略新列的写入仍可兼容一个版本。两个消费者现在把完整 `ValidatedEvent` 传入投影事务：同 ID 同载荷保持幂等，同 ID 更换 topic、文章、动作、发生时间或 payload 会明确冲突；旧全零记录在首次重放时升级绑定但不会重复修改计数。状态测试通过真实 Spring 事务代理确认计数写入失败会回滚消费者声明，依赖恢复后原事件可用同一 ID 重试。当前结果排除了 Testcontainers，因此 V19 的真实 MySQL 迁移、Kafka 重投以及投影恢复尚未验证。
