@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 CRITICAL_CLASSES = (
+    ("dc-auth", "io/github/devcircle/auth/application/AuthService"),
     ("dc-common", "io/github/devcircle/common/event/ReliableOutboxWorker"),
     ("dc-content", "io/github/devcircle/content/application/DeductionService"),
     ("dc-content", "io/github/devcircle/content/application/PostService"),
