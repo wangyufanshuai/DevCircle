@@ -50,7 +50,7 @@ curl --fail --silent --show-error --output /dev/null \
   --request POST 'http://127.0.0.1:28080/api/auth/register' \
   --header 'Content-Type: application/json' \
   --header "Idempotency-Key: bootstrap-admin-${PROJECT_NAME}" \
-  --data "{\"email\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PASSWORD}\",\"displayName\":\"真实审核员\"}"
+  --data "{\"email\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PASSWORD}\",\"displayName\":\"\\u771f\\u5b9e\\u5ba1\\u6838\\u5458\"}"
 
 "${COMPOSE[@]}" exec -T mysql mysql -uroot -pe2e-root-password --database=dc_auth --execute="
   INSERT IGNORE INTO user_role(user_id, role_id)
