@@ -12,6 +12,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.annotation.DirtiesContext;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -26,10 +27,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         "spring.kafka.bootstrap-servers=127.0.0.1:1",
         "spring.kafka.listener.auto-startup=false",
         "devcircle.kafka.topics.enabled=false",
+        "devcircle.outbox.initial-delay-ms=3600000",
         "spring.kafka.producer.properties.max.block.ms=1000",
         "spring.kafka.producer.properties.request.timeout.ms=1000",
         "spring.kafka.producer.properties.delivery.timeout.ms=2000"
 })
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class OutboxFailureIntegrationTest {
     @Container
     static final MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.4")

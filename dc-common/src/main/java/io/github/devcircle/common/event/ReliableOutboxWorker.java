@@ -32,7 +32,9 @@ public class ReliableOutboxWorker {
         this.maxAttempts = Math.max(1, maxAttempts);
     }
 
-    @Scheduled(fixedDelayString = "${devcircle.outbox.poll-interval-ms:1000}")
+    @Scheduled(
+            fixedDelayString = "${devcircle.outbox.poll-interval-ms:1000}",
+            initialDelayString = "${devcircle.outbox.initial-delay-ms:0}")
     public void publishAvailable() {
         runBatch(batchSize, false);
     }

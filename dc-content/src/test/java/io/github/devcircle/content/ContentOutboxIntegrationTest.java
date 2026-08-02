@@ -19,6 +19,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.annotation.DirtiesContext;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -33,7 +34,8 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers(disabledWithoutDocker = true)
-@SpringBootTest
+@SpringBootTest(properties = "devcircle.outbox.initial-delay-ms=3600000")
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class ContentOutboxIntegrationTest {
     @Container
     static final MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.4")
@@ -125,7 +127,7 @@ class ContentOutboxIntegrationTest {
                         INSERT INTO post(id, author_id, title, status, comment_count)
                         VALUES (91002, 7, 'Comment projection case', 'PUBLISHED', 0)
                         """).update();
-        EventEnvelope created = EventEnvelope.now(EventTopics.COMMENT_CREATED, "dc-comment", "91002",
+        EventEnvelope created = EventEnvelope.now(EventTopics.COMMENT_CREATED, "dc-comment", "91",
                 Map.of("commentId", 91L, "postId", 91002L, "actorId", 42L,
                         "parentId", 0L, "changeType", "CREATED"));
         String createdPayload = objectMapper.writeValueAsString(created);
