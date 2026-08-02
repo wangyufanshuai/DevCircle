@@ -65,4 +65,32 @@ class SearchIndexIntegrationTest {
         assertThat(document.getTitle()).isEqualTo("Kafka Outbox integration");
         assertThat(searchService.search("Outbox", null, "latest").records()).extracting("id").contains(8801L);
     }
+
+    @Test
+    void staleEventsCannotOverwriteNewerIndexAndRejectionRemovesTheDocument() throws Exception {
+        searchService.upsertPostFromEvent("""
+                {"eventId":"bc093343-47bb-4b59-902c-260ece9e80ff","type":"post.updated","version":1,
+                 "occurredAt":"2026-07-29T12:00:00Z","producer":"dc-content","aggregateId":"8811",
+                 "payload":{"postId":8811,"title":"neweralpha","excerpt":"newversionalpha","tags":["宇宙"],"status":"PUBLISHED"}}
+                """);
+        searchService.upsertPostFromEvent("""
+                {"eventId":"cc093343-47bb-4b59-902c-260ece9e80ff","type":"post.updated","version":1,
+                 "occurredAt":"2026-07-29T11:00:00Z","producer":"dc-content","aggregateId":"8811",
+                 "payload":{"postId":8811,"title":"olderbeta","excerpt":"oldversionbeta","tags":["宇宙"],"status":"PUBLISHED"}}
+                """);
+
+        PostSearchDocument document = elasticsearchOperations.get("8811", PostSearchDocument.class);
+        assertThat(document).isNotNull();
+        assertThat(document.getTitle()).isEqualTo("neweralpha");
+        assertThat(searchService.search("olderbeta", null, "latest").records()).isEmpty();
+
+        searchService.upsertPostFromEvent("""
+                {"eventId":"dc093343-47bb-4b59-902c-260ece9e80ff","type":"content.rejected","version":1,
+                 "occurredAt":"2026-07-29T13:00:00Z","producer":"dc-admin","aggregateId":"8811",
+                 "payload":{"postId":8811,"status":"REJECTED"}}
+                """);
+
+        assertThat(elasticsearchOperations.get("8811", PostSearchDocument.class)).isNull();
+        assertThat(searchService.search("neweralpha", null, "latest").records()).isEmpty();
+    }
 }

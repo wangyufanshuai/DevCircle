@@ -163,6 +163,7 @@ public class SearchService {
             if (EventTopics.CONTENT_REJECTED.equals(topic)
                     || (!eventStatus.isBlank() && !"PUBLISHED".equals(eventStatus))) {
                 elasticsearchOperations.delete(String.valueOf(postId), PostSearchDocument.class);
+                elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
                 eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE");
                 return;
             }
@@ -181,6 +182,7 @@ public class SearchService {
             }
             if (!"PUBLISHED".equals(post.status())) {
                 elasticsearchOperations.delete(String.valueOf(postId), PostSearchDocument.class);
+                elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
                 eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE");
                 return;
             }
@@ -212,6 +214,7 @@ public class SearchService {
         }
         try {
             elasticsearchOperations.delete(String.valueOf(postId), PostSearchDocument.class);
+            elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
             eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE");
         } catch (RuntimeException ex) {
             try {

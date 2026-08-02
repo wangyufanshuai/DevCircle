@@ -35,6 +35,8 @@ class SearchServiceEventTest {
         String eventId = "44444444-4444-4444-4444-444444444444";
         Instant occurredAt = Instant.parse("2026-07-30T12:00:00Z");
         when(coordinator.claim(any(ValidatedEvent.class), eq(91L))).thenReturn(true);
+        IndexOperations indexOperations = mock(IndexOperations.class);
+        when(operations.indexOps(PostSearchDocument.class)).thenReturn(indexOperations);
 
         service.upsertPostFromEvent("""
                 {"eventId":"44444444-4444-4444-4444-444444444444","type":"content.rejected","version":1,
@@ -43,6 +45,7 @@ class SearchServiceEventTest {
                 """);
 
         verify(operations).delete("91", PostSearchDocument.class);
+        verify(indexOperations).refresh();
         verify(coordinator).complete(eventId, 91L, occurredAt, "REMOVE");
     }
 
