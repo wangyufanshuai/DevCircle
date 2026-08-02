@@ -410,6 +410,35 @@ class AdminServiceStateTest {
     }
 
     @Test
+    void appealIdempotencyKeyCannotChangeDecisionReasonOrActor() {
+        long postId = post(32L, "申诉幂等档案", "CHANGES_REQUIRED");
+        long appealId = appeal(postId, 32L, "补充证据已经提交");
+
+        var result = service.resolveAppeal(appealId, 9L, "trace-appeal-idempotency",
+                "证据有效，重新进入人工审核", true, "appeal-idempotency-key");
+        var replay = service.resolveAppeal(appealId, 9L, "trace-appeal-idempotency",
+                "证据有效，重新进入人工审核", true, "appeal-idempotency-key");
+
+        assertThat(result.action()).isEqualTo("APPEAL_APPROVED");
+        assertThat(replay.attributes()).containsEntry("duplicateRequest", true)
+                .containsEntry("resourceId", appealId);
+
+        assertCode(() -> service.resolveAppeal(appealId, 9L, "trace",
+                "替换理由不能复用请求键", true, "appeal-idempotency-key"), ErrorCode.DUPLICATE_OPERATION);
+        assertCode(() -> service.resolveAppeal(appealId, 9L, "trace",
+                "同一请求键不能改变审核结论", false, "appeal-idempotency-key"), ErrorCode.DUPLICATE_OPERATION);
+        assertCode(() -> service.resolveAppeal(appealId, 10L, "trace",
+                "其他审核员不能接管请求键", true, "appeal-idempotency-key"), ErrorCode.DUPLICATE_OPERATION);
+
+        assertThat(postStatus(postId)).isEqualTo("PENDING");
+        assertThat(appealStatus(appealId)).isEqualTo("APPROVED");
+        assertThat(count("post_audit_record")).isEqualTo(1);
+        assertThat(count("audit_log")).isEqualTo(1);
+        assertThat(count("outbox_event")).isEqualTo(1);
+        assertThat(idempotencyCount("appeal-idempotency-key")).isEqualTo(1);
+    }
+
+    @Test
     void restrictionDefaultsSafelyAndReplaysWithoutDuplicateMutation() {
         var result = service.restrictUser(41L, 9L, "trace-restrict", null,
                 "连续发布无法核验来源的内容", "restrict-user-41");
