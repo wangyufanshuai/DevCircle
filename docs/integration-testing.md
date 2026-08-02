@@ -77,6 +77,8 @@ ALLOW_MISSING_COVERAGE_MODULES=dc-file bash scripts/ops/assert-coverage.sh
 
 完整 CI 不设置该例外；`dc-file`、其余生产模块或 Testcontainers 未执行都会阻断构建。不要使用 `C:\Windows\System32\bash.exe`，Windows 上请使用 Git Bash。
 
+2026-08-02 在 `aa0cade` 后的纯单元/H2 基线为 313 个测试、0 failures/errors/skipped；排除只含容器测试的 `dc-file` 后，13 份报告的行覆盖率为 73.64%、分支覆盖率为 68.76%。其中内容模块为 65.15%/67.00%，`PostRepository` 为 57.30%/49.35%；管理模块为 54.38%/58.87%。本轮将内容创建、草稿保存与投稿、申诉、管理员审核和用户风险操作的 `Idempotency-Key` 绑定到 SHA-256 请求指纹；相同键用于不同用户、操作或载荷时返回冲突，旧全零指纹仅对同用户和同操作兼容一个版本。当前 Docker Desktop 服务未运行，因此 V16 的真实 MySQL 迁移探针、`dc-file` 及其余 Testcontainers 链路均未执行，不能据此记为完整集成验收通过。
+
 2026-08-02 在 `f46c51a` 后的纯单元/H2 基线为 311 个测试、0 failures/errors/skipped；排除只含容器测试的 `dc-file` 后，13 份报告的行覆盖率为 71.78%、分支覆盖率为 67.05%。其中搜索模块为 79.34%/57.95%，新增契约覆盖稀疏事件回源、非公开内容移除和双重故障保留；管理模块为 52.96%/57.76%，新增事务覆盖用户限制、解限、幂等重放、校验失败和审计存储故障回滚；内容模块为 58.25%/60.57%，`PostRepository` 为 45.48%/36.09%，结构化草稿和种子内容序列化失败会整体回滚，数据库故障也不再伪装为导入零条成功。该数值是本地快速反馈基线，不替代包含 `dc-file` 和所有 Testcontainers 的完整 CI 覆盖结果。
 
 2026-08-01 在 `6f1467d` 后的纯单元/H2 状态基线为 217 个测试、0 failures/errors/skipped，行覆盖率 60.34%、分支覆盖率 56.89%。其中 `DeductionService` 为 100% 行覆盖率、95.29% 分支覆盖率；`CommentService` 为 100%/95.83%，`CommentRepository` 为 96.77%/89.66%；`InteractionService` 为 92%/100%，`InteractionRepository` 为 98.11%/90.91%；`UserGraphService` 与 `UserGraphRepository` 均为 100%/100%；通知模块为 83.70%/87.93%，其消费器、仓储和控制器分支覆盖率均超过 88%；`PostRepository` 为 36.66%/28.04%，内容模块整体为 48.89%/49.58%；管理模块从 2.45%/0.91% 提升至 45.13%/48.33%，审核、申诉、审计和 Outbox 的核心事务路径已纳入 H2 回归。认证事务测试确认 Refresh/Logout 的令牌族撤销不会被幂等事务回滚，禁用账号也不能通过登录或刷新重放取得新会话。完整 CI 仍必须运行下列 Testcontainers 链路：
