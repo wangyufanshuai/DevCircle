@@ -77,7 +77,7 @@ ALLOW_MISSING_COVERAGE_MODULES=dc-file bash scripts/ops/assert-coverage.sh
 
 完整 CI 不设置该例外；`dc-file`、其余生产模块或 Testcontainers 未执行都会阻断构建。不要使用 `C:\Windows\System32\bash.exe`，Windows 上请使用 Git Bash。
 
-2026-08-02 在 `f9ec570` 后的纯单元/H2 基线为 321 个测试、0 failures/errors/skipped；排除只含容器测试的 `dc-file` 后，13 份报告的行覆盖率为 76.79%、分支覆盖率为 69.68%。内容模块为 73.64%/69.95%，`PostRepository` 为 71.41%/55.16%，新增状态测试覆盖帖子创建和申诉的原子写入、Outbox 故障整体回滚、修复后同键重试及同键异载荷冲突。管理模块为 62.92%/63.53%，`AdminService` 为 64.42%/63.53%；推荐实验创建/启停和 Outbox 人工重放现在要求真实管理员身份与 `Idempotency-Key`，绑定请求指纹并与审计日志同事务提交。当前结果仍是 Docker 不可用时的快速反馈基线，不替代真实 MySQL、Kafka 及完整 Community E2E。
+2026-08-02 在 `f99122b` 后的完整纯单元/H2 回归为 322 个测试、0 failures/errors/skipped；排除只含容器测试的 `dc-file` 后，13 份报告的行覆盖率为 77.00%、分支覆盖率为 69.75%。内容模块为 73.64%/69.95%，`PostRepository` 为 71.41%/55.16%，新增状态测试覆盖帖子创建和申诉的原子写入、Outbox 故障整体回滚、修复后同键重试及同键异载荷冲突。管理模块为 64.84%/64.84%；推荐实验创建/启停、Outbox 人工重放和真实标签创建现在要求管理员身份与 `Idempotency-Key`，绑定请求指纹并与审计日志同事务提交，遗留的固定“`MysticVerse精选`”标签写入和虚增使用次数逻辑已删除。随后 `2355532` 的 Gateway 定向覆盖回归为 30 个测试、0 failures/errors/skipped，普通用户无法再访问 `/api/search/admin/**` 或 `/api/content/admin/**`。本轮曾尝试启动和重启 Docker Desktop，但 Linux Engine API 持续超时且服务最终停止，因此当前结果仍不替代真实 MySQL、Kafka 及完整 Community E2E。
 
 2026-08-02 在 `aa0cade` 后的纯单元/H2 基线为 313 个测试、0 failures/errors/skipped；排除只含容器测试的 `dc-file` 后，13 份报告的行覆盖率为 73.64%、分支覆盖率为 68.76%。其中内容模块为 65.15%/67.00%，`PostRepository` 为 57.30%/49.35%；管理模块为 54.38%/58.87%。本轮将内容创建、草稿保存与投稿、申诉、管理员审核和用户风险操作的 `Idempotency-Key` 绑定到 SHA-256 请求指纹；相同键用于不同用户、操作或载荷时返回冲突，旧全零指纹仅对同用户和同操作兼容一个版本。当前 Docker Desktop 服务未运行，因此 V16 的真实 MySQL 迁移探针、`dc-file` 及其余 Testcontainers 链路均未执行，不能据此记为完整集成验收通过。
 
