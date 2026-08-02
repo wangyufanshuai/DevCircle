@@ -78,7 +78,7 @@ class NotificationRepositoryDedupTest {
     }
 
     @Test
-    void legacyFingerprintAllowsOneVersionOfSameTopicReplay() {
+    void legacyFingerprintIsBoundByTheFirstCompatibleReplay() {
         String eventId = "f3887f15-5f26-45e5-86ee-8657eea6ac70";
         ValidatedEvent original = event(eventId, EventTopics.INTERACTION_CHANGED, Map.of("status", "LIKE"));
         ValidatedEvent changedPayload = event(eventId, EventTopics.INTERACTION_CHANGED,
@@ -92,6 +92,17 @@ class NotificationRepositoryDedupTest {
 
         assertThat(repository.createOnce(changedPayload, 7L, 2L,
                 "INTERACTION", "changed", "changed", "POST", 9001L, "/posts/9001")).isFalse();
+        String upgradedFingerprint = jdbcClient.sql("""
+                        SELECT event_fingerprint FROM consumer_dedup WHERE event_id = :eventId
+                        """)
+                .param("eventId", eventId).query(String.class).single();
+        assertThat(upgradedFingerprint).isNotEqualTo("0".repeat(64));
+        assertThat(repository.createOnce(changedPayload, 7L, 2L,
+                "INTERACTION", "changed", "changed", "POST", 9001L, "/posts/9001")).isFalse();
+        assertThatThrownBy(() -> repository.createOnce(original, 7L, 2L,
+                "INTERACTION", "title", "content", "POST", 9001L, "/posts/9001"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Event ID is already bound to a different topic or payload");
         assertThat(jdbcClient.sql("SELECT COUNT(*) FROM notification").query(Long.class).single()).isEqualTo(1L);
     }
 

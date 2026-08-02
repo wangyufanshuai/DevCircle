@@ -96,20 +96,42 @@ public class NotificationRepository {
                 .param("eventFingerprint", eventFingerprint)
                 .update();
         if (claimed == 1) return true;
-        ConsumerDedup existing = jdbcClient.sql("""
+        ConsumerDedup existing = loadConsumerEvent(eventId);
+        validateConsumerEvent(existing, topic, eventFingerprint);
+        if (LEGACY_EVENT_FINGERPRINT.equals(existing.eventFingerprint())) {
+            int upgraded = jdbcClient.sql("""
+                            UPDATE consumer_dedup
+                            SET event_fingerprint = :eventFingerprint
+                            WHERE event_id = :eventId AND event_fingerprint = :legacyFingerprint
+                            """)
+                    .param("eventId", eventId)
+                    .param("eventFingerprint", eventFingerprint)
+                    .param("legacyFingerprint", LEGACY_EVENT_FINGERPRINT)
+                    .update();
+            if (upgraded == 0) {
+                validateConsumerEvent(loadConsumerEvent(eventId), topic, eventFingerprint);
+            }
+        }
+        return false;
+    }
+
+    private ConsumerDedup loadConsumerEvent(String eventId) {
+        return jdbcClient.sql("""
                         SELECT topic, event_fingerprint FROM consumer_dedup WHERE event_id = :eventId
                         """)
                 .param("eventId", eventId)
                 .query((rs, rowNum) -> new ConsumerDedup(
                         rs.getString("topic"), rs.getString("event_fingerprint")))
                 .single();
-        boolean legacyEvent = LEGACY_EVENT_FINGERPRINT.equals(existing.eventFingerprint());
+    }
+
+    private void validateConsumerEvent(ConsumerDedup existing, String topic, String eventFingerprint) {
         if (!topic.equals(existing.topic())
-                || (!legacyEvent && !eventFingerprint.equals(existing.eventFingerprint()))) {
+                || (!LEGACY_EVENT_FINGERPRINT.equals(existing.eventFingerprint())
+                && !eventFingerprint.equals(existing.eventFingerprint()))) {
             throw new IllegalArgumentException(
                     "Event ID is already bound to a different topic or payload");
         }
-        return false;
     }
 
     @Transactional
