@@ -39,7 +39,7 @@ class RecommendConsumerMigrationTest {
             ScriptUtils.executeSqlScript(connection,
                     new ClassPathResource("db/migration/V18__bind_recommend_consumer_payloads.sql"));
             ScriptUtils.executeSqlScript(connection,
-                    new ClassPathResource("db/migration/V19__bind_recommend_consumer_leases.sql"));
+                    new ClassPathResource("db/migration/V20__bind_recommend_consumer_leases.sql"));
         }
 
         jdbcClient.sql("""
