@@ -527,46 +527,85 @@ public class AdminService {
         }
     }
 
-    public AdminActionResult createExperiment(Map<String, Object> payload) {
-        String experimentId = String.valueOf(payload.getOrDefault("experimentId", "exp-manual-" + System.currentTimeMillis()));
-        String name = String.valueOf(payload.getOrDefault("name", "手动推荐实验"));
-        String scene = String.valueOf(payload.getOrDefault("scene", "home"));
+    @Transactional
+    public AdminActionResult createExperiment(Map<String, Object> payload, Long actorId, String traceId,
+                                              String idempotencyKey) {
         requireDatabase();
-        try {
-            jdbcClient.sql("""
-                                INSERT IGNORE INTO recommend_experiment(experiment_id, name, scene, status, traffic_percent, weights)
-                                VALUES (:experimentId, :name, :scene, 'DRAFT', 0, CAST(:weights AS JSON))
-                                """)
-                        .param("experimentId", experimentId)
-                        .param("name", name)
-                        .param("scene", scene)
-                        .param("weights", objectMapper.writeValueAsString(payload.getOrDefault("weights", Map.of("theme", 1.0))))
-                    .update();
-            jdbcClient.sql("""
-                                UPDATE recommend_experiment
-                                SET name = :name, scene = :scene
-                                WHERE experiment_id = :experimentId
-                                """)
-                    .param("experimentId", experimentId)
-                    .param("name", name)
-                    .param("scene", scene)
-                    .update();
-        } catch (DataAccessException | JsonProcessingException ex) {
-            throw dependencyUnavailable();
+        requireAuditor(actorId);
+        Map<String, Object> safePayload = payload == null ? Map.of() : payload;
+        String experimentId = experimentText(safePayload.get("experimentId"),
+                "exp-manual-" + requestFingerprint("experiment-id-v1", actorId, idempotencyKey).substring(0, 12),
+                "推荐实验 ID", 64);
+        if (!experimentId.matches("[A-Za-z0-9][A-Za-z0-9._-]{2,63}")) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "推荐实验 ID 格式无效");
         }
-        return new AdminActionResult("CREATE_RECOMMEND_EXPERIMENT", Map.of("experimentId", experimentId, "scene", scene, "status", "DRAFT"));
+        String name = experimentText(safePayload.get("name"), "手动推荐实验", "推荐实验名称", 120);
+        String scene = experimentText(safePayload.get("scene"), "home", "推荐场景", 32).toLowerCase(Locale.ROOT);
+        if (!scene.matches("[a-z0-9][a-z0-9_-]{1,31}")) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "推荐场景格式无效");
+        }
+        Object weights = safePayload.getOrDefault("weights", Map.of("theme", 1.0));
+        String weightsJson = experimentWeightsJson(weights);
+        String fingerprint = requestFingerprint("admin-experiment-create-v1", experimentId, name, scene, weightsJson);
+        return idempotent(actorId, "CREATE_EXPERIMENT", idempotencyKey, actorId,
+                "CREATE_RECOMMEND_EXPERIMENT", fingerprint,
+                Map.of("experimentId", experimentId, "scene", scene, "status", "DRAFT"), () -> {
+                    int inserted = jdbcClient.sql("""
+                                    INSERT IGNORE INTO recommend_experiment(
+                                        experiment_id, name, scene, status, traffic_percent, weights)
+                                    VALUES (:experimentId, :name, :scene, 'DRAFT', 0, CAST(:weights AS JSON))
+                                    """)
+                            .param("experimentId", experimentId)
+                            .param("name", name)
+                            .param("scene", scene)
+                            .param("weights", weightsJson)
+                            .update();
+                    if (inserted != 1) {
+                        throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "推荐实验 ID 已存在");
+                    }
+                    logAudit(actorId, "CREATE_RECOMMEND_EXPERIMENT", "RECOMMEND_EXPERIMENT", experimentId,
+                            null, traceId, Map.of("scene", scene, "status", "DRAFT"));
+                    return new AdminActionResult("CREATE_RECOMMEND_EXPERIMENT",
+                            Map.of("experimentId", experimentId, "scene", scene, "status", "DRAFT"));
+                });
     }
 
-    public AdminActionResult updateExperimentStatus(String experimentId, String status) {
+    @Transactional
+    public AdminActionResult updateExperimentStatus(String experimentId, String status, Long actorId,
+                                                     String traceId, String idempotencyKey) {
         requireDatabase();
-        int changed = jdbcClient.sql("UPDATE recommend_experiment SET status = :status, traffic_percent = CASE WHEN :status = 'ACTIVE' THEN 100 ELSE traffic_percent END WHERE experiment_id = :experimentId")
-                    .param("status", status)
-                    .param("experimentId", experimentId)
-                .update();
-        if (changed != 1) {
-            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "推荐实验不存在");
+        requireAuditor(actorId);
+        String normalizedId = experimentText(experimentId, null, "推荐实验 ID", 64);
+        String normalizedStatus = status == null ? "" : status.trim().toUpperCase(Locale.ROOT);
+        if (!Set.of("ACTIVE", "PAUSED").contains(normalizedStatus)) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "推荐实验状态无效");
         }
-        return new AdminActionResult("UPDATE_RECOMMEND_EXPERIMENT", Map.of("experimentId", experimentId, "status", status));
+        String fingerprint = requestFingerprint("admin-experiment-status-v1", normalizedId, normalizedStatus);
+        return idempotent(actorId, "EXPERIMENT_STATUS", idempotencyKey, actorId,
+                "UPDATE_RECOMMEND_EXPERIMENT", fingerprint,
+                Map.of("experimentId", normalizedId, "status", normalizedStatus), () -> {
+                    int changed = jdbcClient.sql("""
+                                    UPDATE recommend_experiment
+                                    SET status = :status,
+                                        traffic_percent = CASE WHEN :status = 'ACTIVE' THEN 100 ELSE 0 END
+                                    WHERE experiment_id = :experimentId AND status <> :status
+                                    """)
+                            .param("status", normalizedStatus)
+                            .param("experimentId", normalizedId)
+                            .update();
+                    if (changed != 1) {
+                        Long existing = jdbcClient.sql("SELECT COUNT(*) FROM recommend_experiment WHERE experiment_id = :experimentId")
+                                .param("experimentId", normalizedId).query(Long.class).single();
+                        if (existing == null || existing == 0) {
+                            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "推荐实验不存在");
+                        }
+                        throw new BusinessException(ErrorCode.VERSION_CONFLICT, "推荐实验状态已变化，请刷新后重试");
+                    }
+                    logAudit(actorId, "UPDATE_RECOMMEND_EXPERIMENT", "RECOMMEND_EXPERIMENT", normalizedId,
+                            null, traceId, Map.of("status", normalizedStatus));
+                    return new AdminActionResult("UPDATE_RECOMMEND_EXPERIMENT",
+                            Map.of("experimentId", normalizedId, "status", normalizedStatus));
+                });
     }
 
     public List<Map<String, Object>> auditLogs(int page, int size, String action) {
@@ -655,27 +694,35 @@ public class AdminService {
         }
     }
 
-    public AdminActionResult replayOutbox(String topic, int batchSize) {
+    @Transactional
+    public AdminActionResult replayOutbox(String topic, int batchSize, Long actorId, String traceId,
+                                          String idempotencyKey) {
         requireDatabase();
-        try {
-            int affected = jdbcClient.sql("""
-                            UPDATE outbox_event
-                            SET status = 'NEW', attempts = 0, next_attempt_at = NULL,
-                                locked_at = NULL, locked_by = NULL, last_error = NULL, published_at = NULL
-                            WHERE (status IN ('FAILED', 'DEAD')
-                               OR (status = 'PROCESSING' AND locked_at < TIMESTAMPADD(MINUTE, -5, CURRENT_TIMESTAMP)))
-                              AND (:topic IS NULL OR topic = :topic)
-                            ORDER BY created_at ASC
-                            LIMIT :batchSize
-                            """)
-                    .param("topic", blankToNull(topic))
-                    .param("batchSize", Math.max(1, Math.min(batchSize, 500)))
-                    .update();
-            logAudit(1L, "REPLAY_OUTBOX", "OUTBOX", topic == null ? "*" : topic, null, null, Map.of("affected", affected));
-            return new AdminActionResult("REPLAY_OUTBOX", Map.of("affected", affected, "topic", topic == null ? "*" : topic));
-        } catch (DataAccessException ex) {
-            throw dependencyUnavailable();
-        }
+        requireAuditor(actorId);
+        String normalizedTopic = blankToNull(topic);
+        int normalizedBatchSize = Math.max(1, Math.min(batchSize, 500));
+        String fingerprint = requestFingerprint("admin-outbox-replay-v1", normalizedTopic, normalizedBatchSize);
+        String auditTopic = normalizedTopic == null ? "*" : normalizedTopic;
+        return idempotent(actorId, "REPLAY_OUTBOX", idempotencyKey, actorId, "REPLAY_OUTBOX", fingerprint,
+                Map.of("topic", auditTopic), () -> {
+                    int affected = jdbcClient.sql("""
+                                    UPDATE outbox_event
+                                    SET status = 'NEW', attempts = 0, next_attempt_at = NULL,
+                                        locked_at = NULL, locked_by = NULL, last_error = NULL, published_at = NULL
+                                    WHERE (status IN ('FAILED', 'DEAD')
+                                       OR (status = 'PROCESSING' AND locked_at < TIMESTAMPADD(MINUTE, -5, CURRENT_TIMESTAMP)))
+                                      AND (:topic IS NULL OR topic = :topic)
+                                    ORDER BY created_at ASC
+                                    LIMIT :batchSize
+                                    """)
+                            .param("topic", normalizedTopic)
+                            .param("batchSize", normalizedBatchSize)
+                            .update();
+                    logAudit(actorId, "REPLAY_OUTBOX", "OUTBOX", auditTopic, null, traceId,
+                            Map.of("affected", affected, "batchSize", normalizedBatchSize));
+                    return new AdminActionResult("REPLAY_OUTBOX",
+                            Map.of("affected", affected, "topic", auditTopic));
+                });
     }
 
     public Map<String, Object> degradation() {
@@ -929,10 +976,21 @@ public class AdminService {
     private AdminActionResult idempotent(Long actorId, String operation, String key, Long resourceId,
                                          String action, String requestFingerprint,
                                          Supplier<AdminActionResult> mutation) {
+        return idempotent(actorId, operation, key, resourceId, action, requestFingerprint,
+                Map.of("resourceId", resourceId), mutation);
+    }
+
+    private AdminActionResult idempotent(Long actorId, String operation, String key, Long resourceId,
+                                         String action, String requestFingerprint,
+                                         Map<String, Object> replayAttributes,
+                                         Supplier<AdminActionResult> mutation) {
         try {
             Long duplicateId = claimIdempotency(actorId, operation, key, requestFingerprint);
             if (duplicateId != null) {
-                return new AdminActionResult(action, Map.of("resourceId", duplicateId, "duplicateRequest", true));
+                Map<String, Object> attributes = new LinkedHashMap<>(replayAttributes);
+                attributes.putIfAbsent("resourceId", duplicateId);
+                attributes.put("duplicateRequest", true);
+                return new AdminActionResult(action, Map.copyOf(attributes));
             }
             AdminActionResult result = mutation.get();
             jdbcClient.sql("UPDATE content_idempotency_record SET resource_id = :resourceId WHERE idempotency_key = :key")
@@ -999,6 +1057,46 @@ public class AdminService {
             return HexFormat.of().formatHex(digest);
         } catch (NoSuchAlgorithmException ex) {
             throw new IllegalStateException("SHA-256 is unavailable", ex);
+        }
+    }
+
+    private String experimentText(Object value, String fallback, String fieldName, int maxLength) {
+        String text = value == null ? fallback : String.valueOf(value).trim();
+        if (text == null || text.isBlank() || "null".equalsIgnoreCase(text)) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, fieldName + "不能为空");
+        }
+        if (text.length() > maxLength) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, fieldName + "过长");
+        }
+        return text;
+    }
+
+    private String experimentWeightsJson(Object weights) {
+        if (!(weights instanceof Map<?, ?> map) || map.isEmpty() || map.size() > 12) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "推荐权重必须是包含 1 至 12 项的对象");
+        }
+        Map<String, Double> normalized = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            String key = String.valueOf(entry.getKey()).trim();
+            if (!key.matches("[A-Za-z][A-Za-z0-9_-]{0,31}")) {
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "推荐权重名称格式无效");
+            }
+            if (!(entry.getValue() instanceof Number number)) {
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "推荐权重必须是数字");
+            }
+            double value = number.doubleValue();
+            if (!Double.isFinite(value) || value < 0 || value > 100) {
+                throw new BusinessException(ErrorCode.VALIDATION_FAILED, "推荐权重必须在 0 至 100 之间");
+            }
+            normalized.put(key, value);
+        }
+        if (normalized.values().stream().allMatch(value -> value == 0)) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "推荐权重不能全部为零");
+        }
+        try {
+            return objectMapper.writeValueAsString(normalized);
+        } catch (JsonProcessingException ex) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "推荐权重无法序列化");
         }
     }
 

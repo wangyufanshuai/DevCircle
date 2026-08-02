@@ -20,6 +20,8 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 import javax.sql.DataSource;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -117,7 +119,13 @@ class AdminServiceStateTest {
                     aggregate_id VARCHAR(64) NOT NULL,
                     payload JSON NOT NULL,
                     status VARCHAR(32) NOT NULL DEFAULT 'NEW',
-                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                    attempts INT NOT NULL DEFAULT 0,
+                    next_attempt_at TIMESTAMP NULL,
+                    locked_at TIMESTAMP NULL,
+                    locked_by VARCHAR(128) NULL,
+                    last_error VARCHAR(1024) NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    published_at TIMESTAMP NULL)
                 """).update();
         jdbcClient.sql("""
                 CREATE TABLE content_idempotency_record (
@@ -142,6 +150,17 @@ class AdminServiceStateTest {
                     risk_score DOUBLE NOT NULL DEFAULT 0,
                     reason VARCHAR(512) NOT NULL DEFAULT '',
                     restricted_until TIMESTAMP NULL,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
+        jdbcClient.sql("""
+                CREATE TABLE recommend_experiment (
+                    experiment_id VARCHAR(64) PRIMARY KEY,
+                    name VARCHAR(120) NOT NULL,
+                    scene VARCHAR(32) NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'DRAFT',
+                    traffic_percent INT NOT NULL DEFAULT 0,
+                    weights JSON NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
                 """).update();
     }
@@ -447,6 +466,128 @@ class AdminServiceStateTest {
         assertThat(idempotencyCount("unrestrict-user-43")).isZero();
     }
 
+    @Test
+    void experimentWritesAreValidatedAuditedAndBoundToTheirPayloads() {
+        Map<String, Object> payload = Map.of(
+                "experimentId", "exp-home-a",
+                "name", "首页主题均衡实验",
+                "scene", "home",
+                "weights", Map.of("theme", 35, "follow", 20, "quality", 20, "freshness", 15, "exploration", 10));
+
+        var created = service.createExperiment(payload, 9L, "trace-create-exp", "create-exp");
+        var replay = service.createExperiment(payload, 9L, "trace-create-exp", "create-exp");
+
+        assertThat(created.attributes()).containsEntry("experimentId", "exp-home-a")
+                .containsEntry("status", "DRAFT");
+        assertThat(replay.attributes()).containsEntry("experimentId", "exp-home-a")
+                .containsEntry("status", "DRAFT")
+                .containsEntry("duplicateRequest", true);
+        assertThat(count("recommend_experiment")).isEqualTo(1);
+        assertThat(count("audit_log")).isEqualTo(1);
+        assertThat(auditUser("CREATE_RECOMMEND_EXPERIMENT")).isEqualTo(9L);
+        assertThat(idempotencyCount("create-exp")).isEqualTo(1);
+
+        assertCode(() -> service.createExperiment(Map.of(
+                "experimentId", "exp-home-a", "name", "不能覆盖既有实验", "scene", "discover",
+                "weights", Map.of("theme", 1)), 9L, "trace", "create-exp"), ErrorCode.DUPLICATE_OPERATION);
+        assertCode(() -> service.createExperiment(payload, 9L, "trace", "duplicate-exp-id"),
+                ErrorCode.DUPLICATE_OPERATION);
+        assertThat(idempotencyCount("duplicate-exp-id")).isZero();
+
+        var active = service.updateExperimentStatus("exp-home-a", "ACTIVE", 9L,
+                "trace-active", "activate-exp");
+        var activeReplay = service.updateExperimentStatus("exp-home-a", "ACTIVE", 9L,
+                "trace-active", "activate-exp");
+        assertThat(active.attributes()).containsEntry("status", "ACTIVE");
+        assertThat(activeReplay.attributes()).containsEntry("experimentId", "exp-home-a")
+                .containsEntry("status", "ACTIVE")
+                .containsEntry("duplicateRequest", true);
+        assertThat(experimentStatus("exp-home-a")).isEqualTo("ACTIVE");
+        assertThat(experimentTraffic("exp-home-a")).isEqualTo(100);
+
+        assertCode(() -> service.updateExperimentStatus("exp-home-a", "PAUSED", 9L,
+                "trace", "activate-exp"), ErrorCode.DUPLICATE_OPERATION);
+        service.updateExperimentStatus("exp-home-a", "PAUSED", 9L,
+                "trace-pause", "pause-exp");
+        assertThat(experimentStatus("exp-home-a")).isEqualTo("PAUSED");
+        assertThat(experimentTraffic("exp-home-a")).isZero();
+        assertThat(count("audit_log")).isEqualTo(3);
+    }
+
+    @Test
+    void invalidOrFailedExperimentWritesNeverBurnTheirRequestKeys() {
+        assertCode(() -> service.createExperiment(Map.of(
+                "experimentId", "!", "weights", Map.of("theme", 1)), 9L, "trace", "bad-exp-id"),
+                ErrorCode.VALIDATION_FAILED);
+        assertCode(() -> service.createExperiment(Map.of(
+                "experimentId", "exp-bad-weight", "weights", Map.of("theme", "many")),
+                9L, "trace", "bad-exp-weight"), ErrorCode.VALIDATION_FAILED);
+        assertCode(() -> service.updateExperimentStatus("missing-exp", "ACTIVE", 9L,
+                "trace", "missing-exp-key"), ErrorCode.RESOURCE_NOT_FOUND);
+        assertCode(() -> service.updateExperimentStatus("missing-exp", "DELETED", 9L,
+                "trace", "bad-exp-status"), ErrorCode.VALIDATION_FAILED);
+        assertCode(() -> service.createExperiment(Map.of("experimentId", "exp-no-actor"),
+                null, "trace", "no-actor"), ErrorCode.UNAUTHORIZED);
+
+        assertThat(idempotencyCount("bad-exp-id")).isZero();
+        assertThat(idempotencyCount("bad-exp-weight")).isZero();
+        assertThat(idempotencyCount("missing-exp-key")).isZero();
+        assertThat(idempotencyCount("bad-exp-status")).isZero();
+        assertThat(idempotencyCount("no-actor")).isZero();
+
+        jdbcClient.sql("DROP TABLE audit_log").update();
+        assertThatThrownBy(() -> service.createExperiment(Map.of(
+                "experimentId", "exp-audit-failure", "weights", Map.of("theme", 1)),
+                9L, "trace", "audit-failure-exp"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.code()).isEqualTo(ErrorCode.DEPENDENCY_UNAVAILABLE));
+        assertThat(count("recommend_experiment")).isZero();
+        assertThat(idempotencyCount("audit-failure-exp")).isZero();
+    }
+
+    @Test
+    void outboxReplayOnlyRequeuesEligibleEventsAndIsIdempotent() {
+        long failed = outbox("post.submitted", "FAILED", null, 60);
+        long dead = outbox("post.submitted", "DEAD", null, 50);
+        long expired = outbox("post.submitted", "PROCESSING", -10, 40);
+        long fresh = outbox("post.submitted", "PROCESSING", -1, 30);
+        long otherTopic = outbox("appeal.created", "FAILED", null, 20);
+        long alreadyNew = outbox("post.submitted", "NEW", null, 10);
+
+        var result = service.replayOutbox("post.submitted", 2, 9L, "trace-replay", "replay-key");
+        var replay = service.replayOutbox("post.submitted", 2, 9L, "trace-replay", "replay-key");
+
+        assertThat(result.attributes()).containsEntry("affected", 2).containsEntry("topic", "post.submitted");
+        assertThat(replay.attributes()).containsEntry("topic", "post.submitted")
+                .containsEntry("duplicateRequest", true);
+        assertThat(outboxStatus(failed)).isEqualTo("NEW");
+        assertThat(outboxStatus(dead)).isEqualTo("NEW");
+        assertThat(outboxStatus(expired)).isEqualTo("PROCESSING");
+        assertThat(outboxStatus(fresh)).isEqualTo("PROCESSING");
+        assertThat(outboxStatus(otherTopic)).isEqualTo("FAILED");
+        assertThat(outboxStatus(alreadyNew)).isEqualTo("NEW");
+        assertThat(count("audit_log")).isEqualTo(1);
+        assertThat(auditUser("REPLAY_OUTBOX")).isEqualTo(9L);
+        assertThat(idempotencyCount("replay-key")).isEqualTo(1);
+
+        assertCode(() -> service.replayOutbox("post.submitted", 3, 9L,
+                "trace", "replay-key"), ErrorCode.DUPLICATE_OPERATION);
+    }
+
+    @Test
+    void outboxReplayAuditFailureRollsBackStatusAndRequestKey() {
+        long failed = outbox("post.submitted", "FAILED", null, 10);
+        jdbcClient.sql("DROP TABLE audit_log").update();
+
+        assertThatThrownBy(() -> service.replayOutbox("post.submitted", 10, 9L,
+                "trace", "replay-audit-failure"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.code()).isEqualTo(ErrorCode.DEPENDENCY_UNAVAILABLE));
+
+        assertThat(outboxStatus(failed)).isEqualTo("FAILED");
+        assertThat(idempotencyCount("replay-audit-failure")).isZero();
+    }
+
     private long post(long authorId, String title, String status) {
         jdbcClient.sql("INSERT INTO post(author_id, title, status) VALUES (:authorId, :title, :status)")
                 .param("authorId", authorId).param("title", title).param("status", status).update();
@@ -478,6 +619,21 @@ class AdminServiceStateTest {
         return mediaId;
     }
 
+    private long outbox(String topic, String status, Integer lockedMinutes, int ageSeconds) {
+        jdbcClient.sql("""
+                        INSERT INTO outbox_event(event_id, topic, aggregate_type, aggregate_id, payload,
+                                                 status, attempts, locked_at, locked_by, last_error, created_at)
+                        VALUES (:eventId, :topic, 'POST', '1', '{}', :status, 3,
+                                CASE WHEN :lockedMinutes IS NULL THEN NULL
+                                     ELSE TIMESTAMPADD(MINUTE, :lockedMinutes, CURRENT_TIMESTAMP) END,
+                                'worker-1', 'previous failure',
+                                TIMESTAMPADD(SECOND, :ageOffset, CURRENT_TIMESTAMP))
+                        """)
+                .param("eventId", UUID.randomUUID().toString()).param("topic", topic).param("status", status)
+                .param("lockedMinutes", lockedMinutes).param("ageOffset", -ageSeconds).update();
+        return jdbcClient.sql("SELECT MAX(id) FROM outbox_event").query(Long.class).single();
+    }
+
     private String postStatus(long postId) {
         return value("SELECT status FROM post WHERE id = :id", postId);
     }
@@ -496,6 +652,20 @@ class AdminServiceStateTest {
 
     private String mediaStatus(long mediaId) {
         return value("SELECT status FROM media_asset WHERE id = :id", mediaId);
+    }
+
+    private String experimentStatus(String experimentId) {
+        return jdbcClient.sql("SELECT status FROM recommend_experiment WHERE experiment_id = :id")
+                .param("id", experimentId).query(String.class).single();
+    }
+
+    private int experimentTraffic(String experimentId) {
+        return jdbcClient.sql("SELECT traffic_percent FROM recommend_experiment WHERE experiment_id = :id")
+                .param("id", experimentId).query(Integer.class).single();
+    }
+
+    private String outboxStatus(long id) {
+        return value("SELECT status FROM outbox_event WHERE id = :id", id);
     }
 
     private String value(String sql, long id) {

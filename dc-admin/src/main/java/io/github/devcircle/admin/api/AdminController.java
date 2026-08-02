@@ -178,18 +178,27 @@ class AdminController {
     }
 
     @PostMapping("/recommend/experiments")
-    ApiResponse<AdminActionResult> createExperiment(@org.springframework.web.bind.annotation.RequestBody Map<String, Object> payload) {
-        return ApiResponse.ok(adminService.createExperiment(payload));
+    ApiResponse<AdminActionResult> createExperiment(@RequestHeader("X-User-Id") Long userId,
+                                                     @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                                     @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
+                                                     @RequestBody Map<String, Object> payload) {
+        return ApiResponse.ok(adminService.createExperiment(payload, userId, traceId, idempotencyKey));
     }
 
     @PostMapping("/recommend/experiments/{id}/activate")
-    ApiResponse<AdminActionResult> activateExperiment(@PathVariable String id) {
-        return ApiResponse.ok(adminService.updateExperimentStatus(id, "ACTIVE"));
+    ApiResponse<AdminActionResult> activateExperiment(@PathVariable String id,
+                                                       @RequestHeader("X-User-Id") Long userId,
+                                                       @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                                       @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+        return ApiResponse.ok(adminService.updateExperimentStatus(id, "ACTIVE", userId, traceId, idempotencyKey));
     }
 
     @PostMapping("/recommend/experiments/{id}/pause")
-    ApiResponse<AdminActionResult> pauseExperiment(@PathVariable String id) {
-        return ApiResponse.ok(adminService.updateExperimentStatus(id, "PAUSED"));
+    ApiResponse<AdminActionResult> pauseExperiment(@PathVariable String id,
+                                                    @RequestHeader("X-User-Id") Long userId,
+                                                    @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                                    @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+        return ApiResponse.ok(adminService.updateExperimentStatus(id, "PAUSED", userId, traceId, idempotencyKey));
     }
 
     @GetMapping("/audit-logs")
@@ -214,8 +223,11 @@ class AdminController {
 
     @PostMapping("/ops/outbox/replay")
     ApiResponse<AdminActionResult> replayOutbox(@RequestParam(required = false) String topic,
-                                                @RequestParam(defaultValue = "100") int batchSize) {
-        return ApiResponse.ok(adminService.replayOutbox(topic, batchSize));
+                                                @RequestParam(defaultValue = "100") int batchSize,
+                                                @RequestHeader("X-User-Id") Long userId,
+                                                @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                                @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+        return ApiResponse.ok(adminService.replayOutbox(topic, batchSize, userId, traceId, idempotencyKey));
     }
 
     @GetMapping("/ops/degradation")
