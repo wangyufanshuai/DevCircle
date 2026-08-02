@@ -73,6 +73,8 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 完整 CI 不设置该例外；`dc-file`、其余生产模块或 Testcontainers 未执行都会阻断构建。不要使用 `C:\Windows\System32\bash.exe`，Windows 上请使用 Git Bash。
 
+2026-08-02 在 `43e6f39` 后的完整纯单元/H2 回归为 357 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 76.42%、分支覆盖率为 68.89%，覆盖报告完整性与禁止 skipped 门禁均通过。`ContentCommentProjectionRepository` 为 100%/88.46%，`ContentInteractionProjectionRepository` 为 100%/85.00%。内容库 V19 为评论与互动计数投影去重表增加事件指纹，并验证迁移会回填旧记录且旧应用省略新列的写入仍可兼容一个版本。两个消费者现在把完整 `ValidatedEvent` 传入投影事务：同 ID 同载荷保持幂等，同 ID 更换 topic、文章、动作、发生时间或 payload 会明确冲突；旧全零记录在首次重放时升级绑定但不会重复修改计数。状态测试通过真实 Spring 事务代理确认计数写入失败会回滚消费者声明，依赖恢复后原事件可用同一 ID 重试。当前结果排除了 Testcontainers，因此 V19 的真实 MySQL 迁移、Kafka 重投以及投影恢复尚未验证。
+
 2026-08-02 在 `cd75565` 后的完整纯单元/H2 回归为 351 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 76.05%、分支覆盖率为 68.26%，覆盖报告完整性与禁止 skipped 门禁均通过。`dc-user` 为 82.23%/91.84%，本批核心 `UserGraphRepository` 为 99.20%/97.62%。用户 V6 为 `consumer_dedup` 增加事件指纹，并验证迁移会回填旧记录且旧应用省略新列的写入仍可兼容一个版本。注册消费者现在把完整 `ValidatedEvent` 传入资料投影事务：同 ID 同载荷保持幂等，同 ID 更换 topic、发生时间、生产者、聚合标识或 payload 会明确冲突；旧全零记录在首次重放时升级绑定但不会再次修改资料。状态测试通过真实 Spring 事务代理确认资料写入失败会回滚消费者声明，依赖恢复后原事件可用同一 ID 重试。当前本机 Docker 资源不足以执行完整多服务链路，因此 V6 的真实 MySQL 迁移和 Kafka 注册事件重投尚未验证。
 
 2026-08-02 在 `0912120` 后的完整纯单元/H2 回归为 347 个测试、0 failures/errors/skipped；14 份报告的聚合行覆盖率为 75.96%、分支覆盖率为 68.20%，覆盖报告完整性与禁止 skipped 门禁均通过。`dc-recommend` 为 84.01%/72.79%，本批核心 `JdbcInteractionConsumerDedup` 为 97.96%/87.50%。内容库 V18 为推荐消费者去重表增加事件指纹，并验证迁移会回填旧记录且旧应用省略新列的写入仍可兼容一个版本。交互与关注消费者改为向去重仓储传入完整 `ValidatedEvent`：已完成事件同载荷保持幂等，失败或过期处理中事件只有同载荷可以重领，同 ID 更换 topic、发生时间、生产者、聚合标识或 payload 会明确冲突，旧全零记录在首次有效重试时升级绑定。未过期 `PROCESSING` 事件不再被当作已完成而静默确认，而是抛出可重试异常进入现有 Kafka 重试/DLT 流程，避免进程在 claim 后崩溃造成投影丢失。当前本机 Docker 资源不足以执行完整多服务链路，因此 V18 的真实 MySQL 迁移、Kafka 重投/DLT、Redis 信号和关注投影尚未验证。
