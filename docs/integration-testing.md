@@ -6,6 +6,8 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 提交 `ccfa310`（包含 `f2254fd`）后的完整 `./mvnw.cmd -B verify -Pcoverage` 已通过：16 个 Maven 模块、442 个测试，0 failures、0 errors、0 skipped；聚合 JaCoCo 行覆盖率 84.03%、分支覆盖率 75.40%，关键状态机分支门禁全部通过 85%。本轮还验证了 Flyway 迁移版本、生产 Compose 配置和生产环境变量门禁，并确认 aggregate Gateway 不再将评论请求旁路到旧评论服务。Outbox Kafka 发送现在受 `DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS`（默认 15 秒）约束，Future 超时会进入 FAILED 并按退避重试。
 
+真实 E2E profile 的 Outbox 依赖现在显式声明：auth/content/review 脚本关闭 Outbox，避免在无 Kafka 的隔离套件中产生无关 broker 重试；community 脚本开启 Outbox，并由 `test-docker-preflight.sh` 契约校验该差异。
+
 前端当前基线为 `npm run build` 成功、四个 Playwright project 共 116/116 通过。该套件使用显式 API 拦截，不等同于真实多服务 E2E。真实认证、内容、审核和社区 Compose E2E 仍需在至少 2 GiB Docker（建议 4 GiB 以上）环境执行；本机当前 Docker 配额约 1.93 GiB，按设计阻断真实业务验收。
 
 ## 前置条件

@@ -7,6 +7,7 @@ PROJECT_NAME="${REAL_E2E_PROJECT_NAME:-devcircle-real-review-e2e}"
 WAIT_TIMEOUT="${REAL_E2E_WAIT_TIMEOUT:-180}"
 PULL_POLICY="${REAL_E2E_PULL_POLICY:-missing}"
 BUILD_MODE="${REAL_E2E_BUILD:-true}"
+export REAL_E2E_ENABLE_OUTBOX=false
 ADMIN_EMAIL="real-review-admin@example.test"
 ADMIN_PASSWORD="OrbitAdmin2026!"
 COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" --profile review)

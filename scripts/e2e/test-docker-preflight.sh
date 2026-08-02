@@ -55,4 +55,21 @@ FAKE_DOCKER_MEMORY_BYTES=3221225472 FAKE_DOCKER_RUNNING_COUNT=1 \
   REAL_E2E_ALLOW_SHARED_DOCKER=true run_preflight
 FAKE_DOCKER_MEMORY_BYTES=8589934592 FAKE_DOCKER_RUNNING_COUNT=3 run_preflight
 
+assert_profile_outbox_mode() {
+  local profile="$1"
+  local expected="$2"
+  local output
+  output="$(REAL_E2E_ENABLE_OUTBOX="${expected}" docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
+    --profile "${profile}" config)"
+  local values
+  values="$(grep -E '^      DEVCIRCLE_OUTBOX_ENABLED:' <<<"${output}" | sort -u)"
+  [[ "${values}" == "      DEVCIRCLE_OUTBOX_ENABLED: \"${expected}\"" ]] || {
+    echo "Expected ${profile} E2E profile to set Outbox=${expected}, got: ${values}" >&2
+    exit 1
+  }
+}
+
+assert_profile_outbox_mode review false
+assert_profile_outbox_mode community true
+
 echo "Docker preflight tests passed"

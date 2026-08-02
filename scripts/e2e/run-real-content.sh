@@ -7,6 +7,7 @@ PROJECT_NAME="${REAL_E2E_PROJECT_NAME:-devcircle-real-content-e2e}"
 WAIT_TIMEOUT="${REAL_E2E_WAIT_TIMEOUT:-180}"
 PULL_POLICY="${REAL_E2E_PULL_POLICY:-missing}"
 BUILD_MODE="${REAL_E2E_BUILD:-true}"
+export REAL_E2E_ENABLE_OUTBOX=false
 COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" --profile content)
 # shellcheck source=docker-preflight.sh
 source "${ROOT_DIR}/scripts/e2e/docker-preflight.sh"

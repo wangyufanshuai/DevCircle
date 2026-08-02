@@ -92,6 +92,7 @@ services:
       MYSQL_PASSWORD: e2e-database-password
       AUTH_COOKIE_SECURE: "false"
       AUTH_FRONTEND_CALLBACK_URI: http://127.0.0.1:5511/auth/callback
+      DEVCIRCLE_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
     mem_limit: 256m
     depends_on:
       mysql: { condition: service_healthy }
@@ -116,6 +117,7 @@ services:
       MYSQL_PASSWORD: e2e-database-password
       DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
       DEVCIRCLE_KAFKA_TOPICS_ENABLED: "false"
+      DEVCIRCLE_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
       SPRING_KAFKA_LISTENER_AUTO_STARTUP: "false"
     mem_limit: 256m
     depends_on:
@@ -206,6 +208,7 @@ services:
       MYSQL_PORT: 3306
       MYSQL_USER: devcircle
       MYSQL_PASSWORD: e2e-database-password
+      DEVCIRCLE_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
     mem_limit: 256m
     depends_on:
       dc-content: { condition: service_healthy }
