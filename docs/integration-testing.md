@@ -140,6 +140,8 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 管理写入口收口后，`AdminService` 不再暴露无 `Idempotency-Key` 的审核方法，也删除了使用固定审核员 ID 和默认理由的遗留通过/驳回入口；公开的通过、驳回、升级复审和要求修改方法全部要求审核员身份、理由与幂等键。状态测试确认升级复审和要求修改的空理由会整体回滚幂等声明且不改变任务状态。完整纯单元/H2 回归仍为 374 个测试、0 failures/errors/skipped，聚合覆盖率提升为 77.32%/70.69%；`AdminService` 本身为 66.67% 行覆盖率、66.29% 分支覆盖率。该批次未执行容器测试。
 
+管理事件生产契约随后增加了直接回归：审核通过写入的 Outbox 行必须使用 `POST_AUDIT` 聚合类型，数据库列中的 `event_id/topic/aggregate_id` 必须与统一 `EventEnvelope` 一致；事件必须能被下游同款严格解析器按 `audit.completed + dc-admin` 契约解析，并携带版本 1、文章/接收者、审核动作和 `PUBLISHED` 状态。全仓纯单元/H2 基线上升为 375 个测试、0 failures/errors/skipped，聚合覆盖率保持 77.32%/70.69%，覆盖完整性和禁止 skipped 门禁通过。该测试验证序列化后的真实 Outbox 载荷，但仍不替代 Kafka 容器投递与消费者 E2E。
+
 ## 排查建议
 
 - 拉取镜像慢：先手动执行 `docker pull`。
