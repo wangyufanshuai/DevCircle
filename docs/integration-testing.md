@@ -138,6 +138,8 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 随后完整纯单元/H2 回归为 374 个测试、0 failures/errors/skipped；14 份 JaCoCo 报告的聚合行覆盖率为 77.26%、分支覆盖率为 70.58%，覆盖报告完整性与禁止 skipped 门禁均通过。该命令明确排除了 `*IntegrationTest`、`DockerPreflightTest` 和 `KafkaContainerSmokeTest`，因此仍不能替代 Testcontainers、真实 Compose E2E、性能或正式恢复演练。
 
+管理写入口收口后，`AdminService` 不再暴露无 `Idempotency-Key` 的审核方法，也删除了使用固定审核员 ID 和默认理由的遗留通过/驳回入口；公开的通过、驳回、升级复审和要求修改方法全部要求审核员身份、理由与幂等键。状态测试确认升级复审和要求修改的空理由会整体回滚幂等声明且不改变任务状态。完整纯单元/H2 回归仍为 374 个测试、0 failures/errors/skipped，聚合覆盖率提升为 77.32%/70.69%；`AdminService` 本身为 66.67% 行覆盖率、66.29% 分支覆盖率。该批次未执行容器测试。
+
 ## 排查建议
 
 - 拉取镜像慢：先手动执行 `docker pull`。
