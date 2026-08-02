@@ -639,15 +639,10 @@ public class PostRepository {
     public int importSeedsIfEmpty(List<ThemeSeedPost> seeds) {
         int imported = 0;
         for (ThemeSeedPost seed : seeds) {
-            Long existing;
-            try {
-                existing = jdbcClient.sql("SELECT COUNT(*) FROM post WHERE id = :id")
-                        .param("id", seed.id())
-                        .query(Long.class)
-                        .single();
-            } catch (DataAccessException ex) {
-                return 0;
-            }
+            Long existing = jdbcClient.sql("SELECT COUNT(*) FROM post WHERE id = :id")
+                    .param("id", seed.id())
+                    .query(Long.class)
+                    .single();
             if (existing != null && existing > 0) {
                 continue;
             }
@@ -1238,7 +1233,7 @@ public class PostRepository {
                     .toList();
             return objectMapper.writeValueAsString(values);
         } catch (JsonProcessingException ex) {
-            return "[]";
+            throw new IllegalStateException("Failed to serialize structured draft content", ex);
         }
     }
 
@@ -1328,7 +1323,7 @@ public class PostRepository {
         try {
             return objectMapper.writeValueAsString(value == null ? List.of() : value);
         } catch (JsonProcessingException ex) {
-            return "[]";
+            throw new IllegalStateException("Failed to serialize structured seed content", ex);
         }
     }
 

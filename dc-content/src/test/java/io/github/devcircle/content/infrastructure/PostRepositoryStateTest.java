@@ -1,8 +1,10 @@
 package io.github.devcircle.content.infrastructure;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
+import io.github.devcircle.common.seed.ThemeContentLibrary;
 import io.github.devcircle.content.api.DraftMediaInput;
 import io.github.devcircle.content.api.ReadingProgressRequest;
 import io.github.devcircle.content.api.SaveDraftRequest;
@@ -10,8 +12,10 @@ import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -31,7 +35,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @SpringJUnitConfig(PostRepositoryStateTest.TestConfig.class)
 class PostRepositoryStateTest {
     @Autowired
+    @Qualifier("normalRepository")
     private PostRepository repository;
+    @Autowired
+    @Qualifier("failingRepository")
+    private PostRepository failingRepository;
     @Autowired
     private JdbcClient jdbcClient;
 
@@ -258,6 +266,45 @@ class PostRepositoryStateTest {
                 ErrorCode.VALIDATION_FAILED);
     }
 
+    @Test
+    void structuredContentSerializationFailureRollsBackDraftAndRequestKey() {
+        assertThatThrownBy(() -> failingRepository.createDraft(7L, draft(List.of("推理"), null),
+                "serialization-retry"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Failed to serialize structured draft content")
+                .hasCauseInstanceOf(JsonProcessingException.class);
+
+        assertThat(count("post")).isZero();
+        assertThat(count("post_content")).isZero();
+        assertThat(idempotencyCount("serialization-retry")).isZero();
+
+        var retried = repository.createDraft(7L, draft(List.of("推理"), null), "serialization-retry");
+        assertThat(retried.id()).isPositive();
+        assertThat(count("post")).isEqualTo(1);
+        assertThat(idempotencyCount("serialization-retry")).isEqualTo(1);
+    }
+
+    @Test
+    void seedSerializationFailureRollsBackThePublishedRow() {
+        assertThatThrownBy(() -> failingRepository.importSeedsIfEmpty(
+                List.of(ThemeContentLibrary.posts().getFirst())))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Failed to serialize structured seed content")
+                .hasCauseInstanceOf(JsonProcessingException.class);
+
+        assertThat(count("post")).isZero();
+        assertThat(count("post_content")).isZero();
+    }
+
+    @Test
+    void seedImportDatabaseFailureIsNotReportedAsZeroSuccess() {
+        jdbcClient.sql("DROP TABLE post").update();
+
+        assertThatThrownBy(() -> repository.importSeedsIfEmpty(
+                List.of(ThemeContentLibrary.posts().getFirst())))
+                .isInstanceOf(DataAccessException.class);
+    }
+
     private SaveDraftRequest draft(List<String> tags, Long version) {
         return new SaveDraftRequest(
                 "钟楼草稿", "# 钟楼\n\n正文", tags, "TEXT", List.of(), List.of(),
@@ -309,6 +356,10 @@ class PostRepositoryStateTest {
                 .param("postId", postId).query(Long.class).single();
     }
 
+    private long count(String table) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM " + table).query(Long.class).single();
+    }
+
     private long idempotencyCount(String key) {
         return jdbcClient.sql("SELECT COUNT(*) FROM content_idempotency_record WHERE idempotency_key = :key")
                 .param("key", key).query(Long.class).single();
@@ -350,9 +401,20 @@ class PostRepositoryStateTest {
             return JdbcClient.create(jdbcTemplate);
         }
 
-        @Bean
+        @Bean("normalRepository")
         PostRepository postRepository(JdbcTemplate jdbcTemplate) {
             return new PostRepository(jdbcTemplate, new ObjectMapper().findAndRegisterModules());
+        }
+
+        @Bean("failingRepository")
+        PostRepository failingRepository(JdbcTemplate jdbcTemplate) {
+            ObjectMapper failingMapper = new ObjectMapper() {
+                @Override
+                public String writeValueAsString(Object value) throws JsonProcessingException {
+                    throw new JsonProcessingException("structured content serializer unavailable") { };
+                }
+            };
+            return new PostRepository(jdbcTemplate, failingMapper);
         }
 
         @Bean
