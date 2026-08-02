@@ -90,6 +90,32 @@ class ReliableOutboxWorkerTest {
     }
 
     @Test
+    void processingEventWithoutLeaseCanBeReclaimed() {
+        insert("evt-missing-lease", "PROCESSING", 0, null);
+        when(kafka.send(anyString(), anyString(), anyString())).thenReturn(CompletableFuture.completedFuture(null));
+        ReliableOutboxWorker worker = new ReliableOutboxWorker(jdbc, kafka, 10, 3);
+
+        assertThat(worker.publishBatch(10)).isEqualTo(1);
+        assertThat(status()).isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    void lostLeaseIsNotCountedAsPublished() {
+        insert("evt-lost-lease", "NEW", 0, null);
+        when(kafka.send(anyString(), anyString(), anyString())).thenAnswer(invocation -> {
+            jdbc.sql("UPDATE outbox_event SET locked_by = 'other-worker' WHERE event_id = 'evt-lost-lease'").update();
+            return CompletableFuture.completedFuture(null);
+        });
+        ReliableOutboxWorker worker = new ReliableOutboxWorker(jdbc, kafka, 10, 3);
+
+        assertThatThrownBy(() -> worker.publishBatch(10))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("event remains available for retry");
+        assertThat(status()).isEqualTo("PROCESSING");
+        verify(kafka).send(anyString(), anyString(), anyString());
+    }
+
+    @Test
     void laterAggregateEventWaitsUntilItsPredecessorIsPublished() {
         insert("evt-first", "NEW", 0, null, "post-1");
         insert("evt-second", "NEW", 0, null, "post-1");

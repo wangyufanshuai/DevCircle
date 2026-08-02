@@ -77,7 +77,8 @@ public class ReliableOutboxWorker {
                         WHERE ((current_event.status IN ('NEW', 'FAILED')
                                   AND (current_event.next_attempt_at IS NULL OR current_event.next_attempt_at <= CURRENT_TIMESTAMP))
                            OR (current_event.status = 'PROCESSING'
-                                  AND current_event.locked_at < TIMESTAMPADD(MINUTE, -5, CURRENT_TIMESTAMP)))
+                                  AND (current_event.locked_at IS NULL
+                                       OR current_event.locked_at < TIMESTAMPADD(MINUTE, -5, CURRENT_TIMESTAMP))))
                           AND NOT EXISTS (
                               SELECT 1
                               FROM outbox_event prior_event
@@ -102,7 +103,8 @@ public class ReliableOutboxWorker {
                         SET status = 'PROCESSING', locked_at = CURRENT_TIMESTAMP, locked_by = :workerId
                         WHERE id = :id
                           AND ((status IN ('NEW', 'FAILED') AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP))
-                            OR (status = 'PROCESSING' AND locked_at < TIMESTAMPADD(MINUTE, -5, CURRENT_TIMESTAMP)))
+                            OR (status = 'PROCESSING' AND (locked_at IS NULL
+                                OR locked_at < TIMESTAMPADD(MINUTE, -5, CURRENT_TIMESTAMP))))
                         """)
                 .param("workerId", workerId)
                 .param("id", id)
@@ -112,7 +114,7 @@ public class ReliableOutboxWorker {
     private boolean publish(EventRow event) {
         try {
             kafkaTemplate.send(event.topic(), event.aggregateId(), event.payload()).get();
-            jdbcClient.sql("""
+            int updated = jdbcClient.sql("""
                             UPDATE outbox_event
                             SET status = 'PUBLISHED', published_at = CURRENT_TIMESTAMP,
                                 locked_at = NULL, locked_by = NULL, last_error = NULL
@@ -121,6 +123,9 @@ public class ReliableOutboxWorker {
                     .param("id", event.id())
                     .param("workerId", workerId)
                     .update();
+            if (updated != 1) {
+                throw new IllegalStateException("Outbox lease lost before marking event PUBLISHED");
+            }
             return true;
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
