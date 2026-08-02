@@ -35,6 +35,8 @@ bash scripts/e2e/run-real-community.sh
 
 Community E2E 已限制 JVM、MySQL 和 Kafka 的测试内存。独占 Docker 时建议至少分配 2GB；如果同一 Docker Engine 还运行其他项目，建议分配 4GB 以上或先由操作者自行停止无关容器。Docker API 返回 500/502、容器退出码 137 或 `context deadline exceeded` 都属于环境失败，不能记为业务链路通过。
 
+脚本会在构建镜像前用 10 秒超时探测 Docker daemon 和内存：daemon 无响应或低于 2 GiB 时直接退出；Docker 中已有其他运行容器且内存低于 4 GiB 时也会退出。确需在共享 Docker 上承担资源风险时，必须显式设置 `REAL_E2E_ALLOW_SHARED_DOCKER=true`，该覆盖只允许执行测试，不会把资源失败改记为通过。
+
 镜像已在本机缓存且外网不可用时，可明确禁止拉取：
 
 ```bash
