@@ -50,6 +50,27 @@ class SearchServiceEventTest {
     }
 
     @Test
+    void removalRefreshFailureIsRecordedAndRetriedByKafka() {
+        String eventId = "4e444444-4444-4444-4444-444444444444";
+        Instant occurredAt = Instant.parse("2026-07-30T12:15:00Z");
+        IllegalStateException refreshFailure = new IllegalStateException("elasticsearch refresh unavailable");
+        IndexOperations indexOperations = mock(IndexOperations.class);
+        when(coordinator.claim(any(ValidatedEvent.class), eq(911L))).thenReturn(true);
+        when(operations.indexOps(PostSearchDocument.class)).thenReturn(indexOperations);
+        org.mockito.Mockito.doThrow(refreshFailure).when(indexOperations).refresh();
+
+        assertThatThrownBy(() -> service.upsertPostFromEvent("""
+                {"eventId":"4e444444-4444-4444-4444-444444444444","type":"content.rejected","version":1,
+                 "occurredAt":"2026-07-30T12:15:00Z","producer":"dc-admin","aggregateId":"911",
+                 "payload":{"postId":911,"status":"REJECTED"}}
+                """))
+                .isSameAs(refreshFailure);
+
+        verify(coordinator).fail(eq(eventId), eq(911L), eq(refreshFailure));
+        verify(coordinator, never()).complete(any(), eq(911L), any(), any());
+    }
+
+    @Test
     void duplicateOrStaleEventDoesNotTouchElasticsearch() throws Exception {
         String eventId = "55555555-5555-5555-5555-555555555555";
         Instant occurredAt = Instant.parse("2026-07-30T12:30:00Z");
