@@ -2,6 +2,8 @@ package io.github.devcircle.search.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import io.github.devcircle.common.api.ApiResponse;
 import io.github.devcircle.common.api.PageResponse;
 import io.github.devcircle.common.error.BusinessException;
@@ -15,18 +17,22 @@ import io.github.devcircle.search.infrastructure.PostSearchDocument;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 import org.springframework.data.elasticsearch.client.elc.NativeQuery;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.SearchHit;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import co.elastic.clients.elasticsearch._types.SortOptions;
+import co.elastic.clients.elasticsearch._types.SortOrder;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Instant;
+import java.time.temporal.TemporalAccessor;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -72,10 +78,12 @@ public class SearchService {
 
     public SearchSlice searchCursor(String keyword, String tag, String sort, String theme, String contentKind,
                                     String difficulty, String cursor, int requestedSize) {
-        int page = decodeCursor(cursor);
         int size = Math.max(1, Math.min(requestedSize, 50));
+        String normalizedSort = normalizeSort(sort);
+        String fingerprint = cursorFingerprint(keyword, tag, normalizedSort, theme, contentKind, difficulty);
+        SearchCursor position = decodeCursor(cursor, normalizedSort, fingerprint);
         try {
-            var query = NativeQuery.builder()
+            var queryBuilder = NativeQuery.builder()
                     .withQuery(q -> q.bool(b -> {
                         if (keyword != null && !keyword.isBlank()) {
                             b.must(m -> m.multiMatch(mm -> mm.fields("title", "excerpt").query(keyword)));
@@ -92,28 +100,113 @@ public class SearchService {
                         }
                         return b;
                     }))
-                    .withPageable("latest".equalsIgnoreCase(sort)
-                            ? PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt").and(Sort.by(Sort.Direction.DESC, "id")))
-                            : PageRequest.of(page, size))
-                    .build();
-            var hits = elasticsearchOperations.search(query, PostSearchDocument.class);
-            List<PostSummary> records = hits.stream()
+                    .withPageable(PageRequest.of(0, size + 1))
+                    .withSort(sortOptions(normalizedSort));
+            if (position.source() == CursorSource.ELASTICSEARCH && !position.values().isEmpty()) {
+                queryBuilder.withSearchAfter(position.values());
+            }
+            var hits = elasticsearchOperations.search(queryBuilder.build(), PostSearchDocument.class);
+            List<SearchHit<PostSearchDocument>> pageHits = hits.getSearchHits();
+            boolean hasMore = pageHits.size() > size;
+            List<SearchHit<PostSearchDocument>> visibleHits = hasMore ? pageHits.subList(0, size) : pageHits;
+            List<PostSummary> records = visibleHits.stream()
                     .map(SearchHit::getContent)
                     .map(this::toSummary)
                     .toList();
-            boolean hasMore = (long) (page + 1) * size < hits.getTotalHits();
-            return new SearchSlice(records, hasMore ? encodeCursor(page + 1) : "", hasMore);
+            String nextCursor = hasMore
+                    ? encodeElasticsearchCursor(normalizedSort, fingerprint, visibleHits.getLast().getSortValues())
+                    : "";
+            return new SearchSlice(records, nextCursor, hasMore);
         } catch (RuntimeException ex) {
             if (ex instanceof BusinessException) throw ex;
-            if (!readFallbackEnabled) {
+            if (!readFallbackEnabled || position.source() == CursorSource.ELASTICSEARCH) {
                 throw dependency("搜索服务暂时不可用", ex);
             }
             List<PostSummary> matches = ThemeContentLibrary.search(keyword, theme, contentKind, difficulty);
-            int from = Math.min(page * size, matches.size());
+            int from = Math.min(position.offset(), matches.size());
             int to = Math.min(from + size, matches.size());
             boolean hasMore = to < matches.size();
-            return new SearchSlice(List.copyOf(matches.subList(from, to)), hasMore ? encodeCursor(page + 1) : "", hasMore);
+            return new SearchSlice(List.copyOf(matches.subList(from, to)),
+                    hasMore ? encodeSeedCursor(to, normalizedSort, fingerprint) : "", hasMore);
         }
+    }
+
+    private String normalizeSort(String sort) {
+        return "latest".equalsIgnoreCase(sort) ? "latest" : "relevance";
+    }
+
+    private List<SortOptions> sortOptions(String sort) {
+        List<SortOptions> options = new ArrayList<>();
+        if ("relevance".equals(sort)) {
+            options.add(SortOptions.of(builder -> builder.score(score -> score.order(SortOrder.Desc))));
+        }
+        options.add(SortOptions.of(builder -> builder.field(field -> field.field("createdAt").order(SortOrder.Desc))));
+        options.add(SortOptions.of(builder -> builder.field(field -> field.field("id").order(SortOrder.Desc))));
+        return options;
+    }
+
+    private String cursorFingerprint(String keyword, String tag, String sort, String theme,
+                                     String contentKind, String difficulty) {
+        String canonical = String.join("\u001f", normalizeFilter(keyword), normalizeFilter(tag), sort,
+                normalizeFilter(theme), normalizeFilter(contentKind), normalizeFilter(difficulty));
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(canonical.getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is unavailable", ex);
+        }
+    }
+
+    private String normalizeFilter(String value) {
+        return value == null ? "" : value.trim().toUpperCase();
+    }
+
+    private SearchCursor decodeCursor(String cursor, String sort, String fingerprint) {
+        if (cursor == null || cursor.isBlank()) return SearchCursor.first();
+        try {
+            String decoded = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
+            JsonNode root = objectMapper.readTree(decoded);
+            if (root.path("version").asInt() != 2
+                    || !sort.equals(root.path("sort").asText())
+                    || !fingerprint.equals(root.path("fingerprint").asText())) {
+                throw new IllegalArgumentException();
+            }
+            CursorSource source = CursorSource.valueOf(root.path("source").asText());
+            if (source == CursorSource.SEED) {
+                int offset = root.path("offset").asInt(-1);
+                if (offset < 0) throw new IllegalArgumentException();
+                return new SearchCursor(source, offset, List.of());
+            }
+            if (!root.path("values").isArray() || root.path("values").isEmpty()) {
+                throw new IllegalArgumentException();
+            }
+            List<Object> values = objectMapper.convertValue(root.path("values"), new TypeReference<>() {});
+            return new SearchCursor(source, 0, values);
+        } catch (RuntimeException | JsonProcessingException ex) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "搜索游标无效或与当前筛选条件不匹配");
+        }
+    }
+
+    private String encodeElasticsearchCursor(String sort, String fingerprint, List<Object> values) {
+        return encodeCursor(new CursorPayload(2, CursorSource.ELASTICSEARCH.name(), sort, fingerprint,
+                normalizeSortValues(values), null));
+    }
+
+    private String encodeSeedCursor(int offset, String sort, String fingerprint) {
+        return encodeCursor(new CursorPayload(2, CursorSource.SEED.name(), sort, fingerprint, List.of(), offset));
+    }
+
+    private String encodeCursor(CursorPayload payload) {
+        try {
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(
+                    objectMapper.writeValueAsBytes(payload));
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Unable to encode search cursor", ex);
+        }
+    }
+
+    private List<Object> normalizeSortValues(List<Object> values) {
+        return values.stream().map(value -> value instanceof TemporalAccessor ? value.toString() : value).toList();
     }
 
     public int reindexSeedPosts() {
@@ -328,23 +421,6 @@ public class SearchService {
                 post.theme(), post.contentKind(), post.difficulty(), post.createdAt(), occurredAt);
     }
 
-    private int decodeCursor(String cursor) {
-        if (cursor == null || cursor.isBlank()) return 0;
-        try {
-            String decoded = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
-            if (!decoded.startsWith("v1:")) throw new IllegalArgumentException();
-            int page = Integer.parseInt(decoded.substring(3));
-            if (page < 0 || page > 10_000) throw new IllegalArgumentException();
-            return page;
-        } catch (IllegalArgumentException ex) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "搜索游标无效");
-        }
-    }
-
-    private String encodeCursor(int page) {
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(("v1:" + page).getBytes(StandardCharsets.UTF_8));
-    }
-
     private BusinessException dependency(String message, RuntimeException cause) {
         BusinessException failure = new BusinessException(ErrorCode.DEPENDENCY_UNAVAILABLE, message);
         failure.initCause(cause);
@@ -352,6 +428,20 @@ public class SearchService {
     }
 
     public record SearchSlice(List<PostSummary> records, String nextCursor, boolean hasMore) {
+    }
+
+    private enum CursorSource {
+        FIRST, ELASTICSEARCH, SEED
+    }
+
+    private record SearchCursor(CursorSource source, int offset, List<Object> values) {
+        private static SearchCursor first() {
+            return new SearchCursor(CursorSource.FIRST, 0, List.of());
+        }
+    }
+
+    private record CursorPayload(int version, String source, String sort, String fingerprint,
+                                 List<Object> values, Integer offset) {
     }
 
     void enableReadFallbackForTests() {

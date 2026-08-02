@@ -1,6 +1,7 @@
 package io.github.devcircle.search;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.search.application.SearchService;
 import io.github.devcircle.search.infrastructure.PostSearchDocument;
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(properties = {
@@ -92,5 +94,56 @@ class SearchIndexIntegrationTest {
 
         assertThat(elasticsearchOperations.get("8811", PostSearchDocument.class)).isNull();
         assertThat(searchService.search("neweralpha", null, "latest").records()).isEmpty();
+    }
+
+    @Test
+    void latestCursorUsesSearchAfterAndDoesNotRepeatWhenNewContentArrives() throws Exception {
+        searchService.upsertPostFromEvent("""
+                {"eventId":"ec093343-47bb-4b59-902c-260ece9e80ff","type":"post.updated","version":1,
+                 "occurredAt":"2099-01-01T10:00:00Z","producer":"dc-content","aggregateId":"8821",
+                 "payload":{"postId":8821,"title":"cursorfirst","excerpt":"cursorfirst","tags":[],"status":"PUBLISHED"}}
+                """);
+        searchService.upsertPostFromEvent("""
+                {"eventId":"fc093343-47bb-4b59-902c-260ece9e80ff","type":"post.updated","version":1,
+                 "occurredAt":"2099-01-01T09:00:00Z","producer":"dc-content","aggregateId":"8822",
+                 "payload":{"postId":8822,"title":"cursorsecond","excerpt":"cursorsecond","tags":[],"status":"PUBLISHED"}}
+                """);
+
+        var first = searchService.searchCursor("", null, "latest", null, null, null, null, 1);
+        assertThat(first.records()).extracting("id").containsExactly(8821L);
+        assertThat(first.nextCursor()).isNotBlank();
+
+        searchService.upsertPostFromEvent("""
+                {"eventId":"ac093343-47bb-4b59-902c-260ece9e80ff","type":"post.updated","version":1,
+                 "occurredAt":"2099-01-01T11:00:00Z","producer":"dc-content","aggregateId":"8823",
+                 "payload":{"postId":8823,"title":"cursornew","excerpt":"cursornew","tags":[],"status":"PUBLISHED"}}
+                """);
+
+        var second = searchService.searchCursor("", null, "latest", null, null, null, first.nextCursor(), 1);
+        assertThat(second.records()).extracting("id").containsExactly(8822L);
+        assertThat(second.records()).extracting("id").doesNotContain(8821L, 8823L);
+        assertThatThrownBy(() -> searchService.searchCursor("", null, "latest", "COSMOS", null, null,
+                first.nextCursor(), 1))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void relevanceCursorRetainsScoreAndTieBreakersAcrossPages() throws Exception {
+        searchService.upsertPostFromEvent("""
+                {"eventId":"bc093343-47bb-4b59-902c-260ece9e80aa","type":"post.updated","version":1,
+                 "occurredAt":"2098-01-01T10:00:00Z","producer":"dc-content","aggregateId":"8831",
+                 "payload":{"postId":8831,"title":"relevance signal","excerpt":"relevance signal","tags":[],"status":"PUBLISHED"}}
+                """);
+        searchService.upsertPostFromEvent("""
+                {"eventId":"cc093343-47bb-4b59-902c-260ece9e80aa","type":"post.updated","version":1,
+                 "occurredAt":"2098-01-01T09:00:00Z","producer":"dc-content","aggregateId":"8832",
+                 "payload":{"postId":8832,"title":"relevance signal","excerpt":"relevance signal","tags":[],"status":"PUBLISHED"}}
+                """);
+
+        var first = searchService.searchCursor("relevance", null, "relevance", null, null, null, null, 1);
+        assertThat(first.records()).extracting("id").containsExactly(8831L);
+        var second = searchService.searchCursor("relevance", null, "relevance", null, null, null,
+                first.nextCursor(), 1);
+        assertThat(second.records()).extracting("id").containsExactly(8832L);
     }
 }
