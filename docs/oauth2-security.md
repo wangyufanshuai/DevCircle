@@ -32,3 +32,12 @@ DEVCIRCLE_JWT_SECRET=replace-with-at-least-64-random-characters
 ```
 
 GitHub 返回的邮箱必须是已验证邮箱；如果该邮箱已有密码账号，系统拒绝静默合并并返回 `OAUTH_ACCOUNT_CONFLICT`。注册、登录、刷新和退出均要求 `Idempotency-Key`，刷新响应使用加密的短期幂等记录恢复原会话响应。
+
+Provider 返回的无效或过期授权码按认证失败处理；GitHub 5xx、网络中断和无法解析的依赖响应按依赖不可用处理。对外错误不会包含 GitHub 响应体、内部节点名或底层异常文本。账号绑定前还会执行以下规范化和边界校验：
+
+- GitHub 用户 ID 必须为正数。
+- 只接受 `/user/emails` 返回的非空、已验证邮箱，并统一去除首尾空格和按 `Locale.ROOT` 转为小写。
+- 展示名优先使用规范化后的 `name`，缺失时回退到规范化后的 `login`；两者都不可用时拒绝创建账号。
+- null 邮箱数组、null 项、空白邮箱和未验证邮箱不会进入账号绑定。
+
+仓库中的 Provider 测试使用 `MockRestServiceServer` 验证请求和失败分类，只属于本地契约测试，不代表真实 GitHub OAuth E2E。真实 Provider 验收仍需要在预发布域名、正式回调 URI 和独立测试账号下完成。

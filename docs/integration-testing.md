@@ -160,6 +160,12 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 同批部署/恢复门禁复验通过：生产环境变量校验、备份/恢复/迁移校验、生产资源预算 6/6、k6 脚本契约 3/3 均成功；注入专用测试环境变量（不提交、不用于生产）后 `docker compose -f docker-compose.prod.yml config --quiet` 通过。k6 契约和 Compose 语法不等于目标主机性能、Kafka/ES/MinIO 真实恢复或 RTO 证据，后续仍需在 Linux 4 vCPU/16GB 主机和满足内存的 Docker 上执行。
 
+2026-08-02 GitHub OAuth 边界回归扩展到 11 项：缺失回调参数不会消费一次性 state；无效授权码返回安全的认证失败；5xx/网络故障返回安全的依赖失败；null/空白/未验证邮箱会被过滤；邮箱、展示名和 login 会规范化；空 token、空 profile、非正 GitHub ID 和缺失身份名称均不会创建账号。`dc-auth` 共 44 项测试通过，`GitHubOAuthService` 行/分支覆盖率为 96.26%/90.00%，并纳入关键状态机 85% 分支门禁。该证据使用本地模拟 Provider，不替代真实 GitHub OAuth E2E。
+
+同日真实 MySQL 8.4/Flyway 回归发现并修复 `dc-content` 重复 V19 迁移：内容投影指纹保留为 V19，推荐消费者 lease token 顺延为 V20。清理陈旧构建产物后，20 个迁移均通过校验，V1→V18 与 V19→V20 两阶段升级成功。CI 新增不依赖 Docker 的迁移版本唯一性门禁，防止重复或 Flyway 等价版本再次进入运行时。
+
+随后全仓非容器覆盖回归为 399 个测试、0 failures/errors/skipped，14 份 JaCoCo 报告的聚合行/分支覆盖率为 79.43%/74.14%；13 个关键认证、事件、内容、通知、推荐、搜索和用户状态类全部通过 85% 分支门禁。该命令明确排除了 `*IntegrationTest`、`DockerPreflightTest` 和 `KafkaContainerSmokeTest`；上面的单条真实 MySQL 迁移测试是独立证据，二者都不替代四套真实 Compose E2E。
+
 ## 排查建议
 
 - 拉取镜像慢：先手动执行 `docker pull`。
