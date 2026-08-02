@@ -202,10 +202,22 @@ Authorization: {{adminToken}}
 ### v1.1 限制用户
 POST {{baseUrl}}/api/admin/risk/users/12/restrict?status=NO_POST
 Authorization: {{adminToken}}
+Idempotency-Key: risk-restrict-12-001
+Content-Type: application/json
+
+{
+  "reason": "连续发布的内容来源无法核验，暂停投稿七天"
+}
 
 ### v1.1 解除限制
 POST {{baseUrl}}/api/admin/risk/users/12/unrestrict
 Authorization: {{adminToken}}
+Idempotency-Key: risk-unrestrict-12-001
+Content-Type: application/json
+
+{
+  "reason": "复核完成，风险信号已解除"
+}
 
 ### v1.1 推荐行为事件
 POST {{baseUrl}}/api/recommend/events

@@ -43,7 +43,7 @@ flowchart LR
 - `POST /api/admin/risk/users/{id}/restrict`
 - `POST /api/admin/risk/users/{id}/unrestrict`
 
-审核和申诉决定接口都要求理由与 `Idempotency-Key`。受理申诉会把投稿重新置为 `PENDING`，创建独立的 `appeal-review` 人工复审任务，并通过 Outbox 通知作者；维持原决定不会改变投稿状态。
+审核、申诉、限制、解限和封禁决定都要求真实管理员身份、理由与 `Idempotency-Key`。用户治理状态只接受 `WATCH`、`RATE_LIMITED`、`NO_POST` 和 `BANNED`；未传限制状态时默认 `NO_POST`。用户风险状态与审计日志在同一事务内提交，审计或数据库写入失败时不得留下部分生效的限制。受理申诉会把投稿重新置为 `PENDING`，创建独立的 `appeal-review` 人工复审任务，并通过 Outbox 通知作者；维持原决定不会改变投稿状态。
 
 ## 当前边界
 

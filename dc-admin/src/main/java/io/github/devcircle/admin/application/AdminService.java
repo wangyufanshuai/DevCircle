@@ -16,12 +16,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 
 @Service
 public class AdminService {
+    private static final Set<String> RESTRICTION_STATUSES = Set.of("WATCH", "RATE_LIMITED", "NO_POST", "BANNED");
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
 
@@ -354,45 +357,77 @@ public class AdminService {
         }
     }
 
-    public AdminActionResult restrictUser(Long userId, String status) {
+    @Transactional
+    public AdminActionResult restrictUser(Long userId, Long auditorId, String traceId, String status,
+                                          String reason, String idempotencyKey) {
         requireDatabase();
+        requireAuditor(auditorId);
+        requirePositiveId(userId, "用户 ID 无效");
+        requireReason(reason);
+        String normalizedStatus = normalizeRestrictionStatus(status);
+        String normalizedReason = reason.trim();
+        return idempotent(auditorId, "ADMIN_RESTRICT_USER:" + userId, idempotencyKey, userId, "RESTRICT_USER",
+                () -> applyRestriction(userId, auditorId, traceId, normalizedStatus, normalizedReason));
+    }
+
+    private AdminActionResult applyRestriction(Long userId, Long auditorId, String traceId, String status,
+                                               String reason) {
         jdbcClient.sql("""
                             INSERT IGNORE INTO user_risk_profile(user_id, status, risk_score, reason, restricted_until)
-                            VALUES (:userId, :status, 90, :reason, DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 7 DAY))
+                            VALUES (:userId, :status, 90, :reason, TIMESTAMPADD(DAY, 7, CURRENT_TIMESTAMP))
                             """)
-                    .param("userId", userId)
-                    .param("status", status == null || status.isBlank() ? "NO_POST" : status)
-                    .param("reason", "管理员手动治理")
+                .param("userId", userId)
+                .param("status", status)
+                .param("reason", reason)
                 .update();
         jdbcClient.sql("""
                             UPDATE user_risk_profile
                             SET status = :status, risk_score = 90, reason = :reason,
-                                restricted_until = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 7 DAY)
+                                restricted_until = TIMESTAMPADD(DAY, 7, CURRENT_TIMESTAMP)
                             WHERE user_id = :userId
                             """)
                 .param("userId", userId)
-                .param("status", status == null || status.isBlank() ? "NO_POST" : status)
-                .param("reason", "管理员手动治理")
+                .param("status", status)
+                .param("reason", reason)
                 .update();
-        logAudit(1L, "RESTRICT_USER", "USER", String.valueOf(userId), null, null, Map.of("status", status));
-        return new AdminActionResult("RESTRICT_USER", Map.of("userId", userId, "status", status == null ? "NO_POST" : status));
+        logAudit(auditorId, "RESTRICT_USER", "USER", String.valueOf(userId), null, traceId,
+                Map.of("status", status, "reason", reason));
+        return new AdminActionResult("RESTRICT_USER", Map.of("userId", userId, "status", status));
     }
 
-    public AdminActionResult unrestrictUser(Long userId) {
+    @Transactional
+    public AdminActionResult unrestrictUser(Long userId, Long auditorId, String traceId, String reason,
+                                            String idempotencyKey) {
         requireDatabase();
+        requireAuditor(auditorId);
+        requirePositiveId(userId, "用户 ID 无效");
+        requireReason(reason);
+        String normalizedReason = reason.trim();
+        return idempotent(auditorId, "ADMIN_UNRESTRICT_USER:" + userId, idempotencyKey, userId, "UNRESTRICT_USER",
+                () -> applyUnrestriction(userId, auditorId, traceId, normalizedReason));
+    }
+
+    private AdminActionResult applyUnrestriction(Long userId, Long auditorId, String traceId, String reason) {
         jdbcClient.sql("""
                             INSERT INTO user_risk_profile(user_id, status, risk_score, reason, restricted_until)
                             VALUES (:userId, 'NORMAL', 0, '', NULL)
                             ON DUPLICATE KEY UPDATE status = 'NORMAL', risk_score = 0, reason = '', restricted_until = NULL
                             """)
-                    .param("userId", userId)
+                .param("userId", userId)
                 .update();
-        logAudit(1L, "UNRESTRICT_USER", "USER", String.valueOf(userId), null, null, Map.of());
+        logAudit(auditorId, "UNRESTRICT_USER", "USER", String.valueOf(userId), null, traceId,
+                Map.of("reason", reason));
         return new AdminActionResult("UNRESTRICT_USER", Map.of("userId", userId, "status", "NORMAL"));
     }
 
-    public AdminActionResult ban(Long userId) {
-        return restrictUser(userId, "BANNED");
+    private String normalizeRestrictionStatus(String status) {
+        String normalized = status == null || status.isBlank()
+                ? "NO_POST"
+                : status.trim().toUpperCase(Locale.ROOT);
+        if (!RESTRICTION_STATUSES.contains(normalized)) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "用户治理状态无效");
+        }
+        return normalized;
     }
 
     public AdminActionResult createTag() {

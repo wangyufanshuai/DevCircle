@@ -118,8 +118,12 @@ class AdminController {
     }
 
     @PostMapping("/users/{id}/ban")
-    ApiResponse<AdminActionResult> ban(@PathVariable Long id) {
-        return ApiResponse.ok(adminService.ban(id));
+    ApiResponse<AdminActionResult> ban(@PathVariable Long id,
+                                      @RequestHeader("X-User-Id") Long userId,
+                                      @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                      @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
+                                      @Valid @RequestBody ModerationDecisionRequest request) {
+        return ApiResponse.ok(adminService.restrictUser(id, userId, traceId, "BANNED", request.reason(), idempotencyKey));
     }
 
     @GetMapping("/risk/users")
@@ -136,13 +140,21 @@ class AdminController {
 
     @PostMapping("/risk/users/{id}/restrict")
     ApiResponse<AdminActionResult> restrictUser(@PathVariable Long id,
-                                                @RequestParam(defaultValue = "NO_POST") String status) {
-        return ApiResponse.ok(adminService.restrictUser(id, status));
+                                                @RequestHeader("X-User-Id") Long userId,
+                                                @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                                @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
+                                                @RequestParam(defaultValue = "NO_POST") String status,
+                                                @Valid @RequestBody ModerationDecisionRequest request) {
+        return ApiResponse.ok(adminService.restrictUser(id, userId, traceId, status, request.reason(), idempotencyKey));
     }
 
     @PostMapping("/risk/users/{id}/unrestrict")
-    ApiResponse<AdminActionResult> unrestrictUser(@PathVariable Long id) {
-        return ApiResponse.ok(adminService.unrestrictUser(id));
+    ApiResponse<AdminActionResult> unrestrictUser(@PathVariable Long id,
+                                                  @RequestHeader("X-User-Id") Long userId,
+                                                  @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                                  @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
+                                                  @Valid @RequestBody ModerationDecisionRequest request) {
+        return ApiResponse.ok(adminService.unrestrictUser(id, userId, traceId, request.reason(), idempotencyKey));
     }
 
     @PostMapping("/tags")

@@ -134,6 +134,15 @@ class AdminServiceStateTest {
                 """).update();
         jdbcClient.sql("CREATE TABLE post_media(post_id BIGINT NOT NULL, media_id BIGINT NOT NULL, PRIMARY KEY(post_id, media_id))")
                 .update();
+        jdbcClient.sql("""
+                CREATE TABLE user_risk_profile (
+                    user_id BIGINT PRIMARY KEY,
+                    status VARCHAR(32) NOT NULL DEFAULT 'NORMAL',
+                    risk_score DOUBLE NOT NULL DEFAULT 0,
+                    reason VARCHAR(512) NOT NULL DEFAULT '',
+                    restricted_until TIMESTAMP NULL,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
     }
 
     @Test
@@ -370,6 +379,64 @@ class AdminServiceStateTest {
         assertThat(postStatus(postId)).isEqualTo("PENDING");
     }
 
+    @Test
+    void restrictionDefaultsSafelyAndReplaysWithoutDuplicateMutation() {
+        var result = service.restrictUser(41L, 9L, "trace-restrict", null,
+                "连续发布无法核验来源的内容", "restrict-user-41");
+        var replay = service.restrictUser(41L, 9L, "trace-restrict", null,
+                "连续发布无法核验来源的内容", "restrict-user-41");
+
+        assertThat(result.attributes()).containsEntry("userId", 41L).containsEntry("status", "NO_POST");
+        assertThat(replay.attributes()).containsEntry("duplicateRequest", true).containsEntry("resourceId", 41L);
+        assertThat(riskStatus(41L)).isEqualTo("NO_POST");
+        assertThat(riskReason(41L)).isEqualTo("连续发布无法核验来源的内容");
+        assertThat(count("user_risk_profile")).isEqualTo(1);
+        assertThat(count("audit_log")).isEqualTo(1);
+        assertThat(auditUser("RESTRICT_USER")).isEqualTo(9L);
+        assertThat(idempotencyCount("restrict-user-41")).isEqualTo(1);
+
+        assertCode(() -> service.unrestrictUser(41L, 9L, "trace-unrestrict",
+                "不能复用限制操作的请求键", "restrict-user-41"), ErrorCode.DUPLICATE_OPERATION);
+        assertThat(riskStatus(41L)).isEqualTo("NO_POST");
+    }
+
+    @Test
+    void invalidRestrictionInputNeverBurnsTheRequestKey() {
+        assertCode(() -> service.restrictUser(42L, 9L, "trace", "UNKNOWN", "理由有效", "bad-status"),
+                ErrorCode.VALIDATION_FAILED);
+        assertCode(() -> service.restrictUser(42L, 9L, "trace", "NO_POST", " ", "bad-reason"),
+                ErrorCode.VALIDATION_FAILED);
+        assertCode(() -> service.restrictUser(0L, 9L, "trace", "NO_POST", "理由有效", "bad-user"),
+                ErrorCode.VALIDATION_FAILED);
+        assertCode(() -> service.restrictUser(42L, null, "trace", "NO_POST", "理由有效", "bad-auditor"),
+                ErrorCode.UNAUTHORIZED);
+
+        assertThat(count("user_risk_profile")).isZero();
+        assertThat(idempotencyCount("bad-status")).isZero();
+        assertThat(idempotencyCount("bad-reason")).isZero();
+        assertThat(idempotencyCount("bad-user")).isZero();
+        assertThat(idempotencyCount("bad-auditor")).isZero();
+
+        var repaired = service.restrictUser(42L, 9L, "trace", " watch ", "修复输入后重试", "bad-status");
+        assertThat(repaired.attributes()).containsEntry("status", "WATCH");
+    }
+
+    @Test
+    void auditStorageFailureRollsBackUnrestrictionAndRequestKey() {
+        service.restrictUser(43L, 9L, "trace-restrict", "NO_POST", "暂时限制投稿", "restrict-user-43");
+        jdbcClient.sql("DROP TABLE audit_log").update();
+
+        assertThatThrownBy(() -> service.unrestrictUser(43L, 9L, "trace-unrestrict",
+                "复核通过解除限制", "unrestrict-user-43"))
+                .isInstanceOfSatisfying(BusinessException.class, error -> {
+                    assertThat(error.code()).isEqualTo(ErrorCode.DEPENDENCY_UNAVAILABLE);
+                    assertThat(error.getCause()).isInstanceOf(DataAccessException.class);
+                });
+
+        assertThat(riskStatus(43L)).isEqualTo("NO_POST");
+        assertThat(idempotencyCount("unrestrict-user-43")).isZero();
+    }
+
     private long post(long authorId, String title, String status) {
         jdbcClient.sql("INSERT INTO post(author_id, title, status) VALUES (:authorId, :title, :status)")
                 .param("authorId", authorId).param("title", title).param("status", status).update();
@@ -447,6 +514,21 @@ class AdminServiceStateTest {
     private long idempotencyCount(String key) {
         return jdbcClient.sql("SELECT COUNT(*) FROM content_idempotency_record WHERE idempotency_key = :key")
                 .param("key", key).query(Long.class).single();
+    }
+
+    private String riskStatus(long userId) {
+        return jdbcClient.sql("SELECT status FROM user_risk_profile WHERE user_id = :userId")
+                .param("userId", userId).query(String.class).single();
+    }
+
+    private String riskReason(long userId) {
+        return jdbcClient.sql("SELECT reason FROM user_risk_profile WHERE user_id = :userId")
+                .param("userId", userId).query(String.class).single();
+    }
+
+    private long auditUser(String action) {
+        return jdbcClient.sql("SELECT user_id FROM audit_log WHERE action = :action")
+                .param("action", action).query(Long.class).single();
     }
 
     private void assertCode(ThrowingAction action, ErrorCode expected) {
