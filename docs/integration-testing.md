@@ -136,6 +136,8 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 2026-08-02 在申诉一致性补强后，`dc-admin` 定向回归为 22 个测试、0 failures/errors/skipped；其中 `AdminServiceStateTest` 20 个测试通过。新增用例验证申诉处理的同一 `Idempotency-Key` 不能更换审核理由、审核结论或审核员，且重放不会重复写入投稿状态、申诉状态、审核记录、审计日志或 Outbox；审计序列化故障还会整体回滚申诉、投稿、复审任务、审核记录、审计日志、Outbox 和幂等记录，依赖恢复后可使用原键重试。带 JaCoCo 的管理模块定向报告为 64.84% 行覆盖率、64.84% 分支覆盖率；该结果只证明管理模块状态测试通过，不替代完整 CI 和真实数据库/多服务验收。
 
+随后完整纯单元/H2 回归为 374 个测试、0 failures/errors/skipped；14 份 JaCoCo 报告的聚合行覆盖率为 77.26%、分支覆盖率为 70.58%，覆盖报告完整性与禁止 skipped 门禁均通过。该命令明确排除了 `*IntegrationTest`、`DockerPreflightTest` 和 `KafkaContainerSmokeTest`，因此仍不能替代 Testcontainers、真实 Compose E2E、性能或正式恢复演练。
+
 ## 排查建议
 
 - 拉取镜像慢：先手动执行 `docker pull`。
