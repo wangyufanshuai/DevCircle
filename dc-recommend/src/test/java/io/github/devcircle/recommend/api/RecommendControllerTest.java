@@ -34,4 +34,13 @@ class RecommendControllerTest {
         assertThat(thirdPage.data().records()).hasSize(50);
         assertThat(fourthPage.data().records()).hasSize(30);
     }
+
+    @Test
+    void feedClampsInvalidPageSizesInsteadOfReturningServerErrors() {
+        var service = new FeedService(new RecommendationScorer(), mock(StringRedisTemplate.class));
+        var controller = new RecommendController(service);
+
+        assertThat(controller.feed(2L, null, -10, "home").data().records()).hasSize(1);
+        assertThat(controller.feed(2L, null, 500, "home").data().records()).hasSize(50);
+    }
 }

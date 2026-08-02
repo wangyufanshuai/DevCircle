@@ -65,10 +65,11 @@ public class FeedService {
     }
 
     public CursorPage<FeedItem> feed(Long userId, String cursor, int size, String scene) {
-        CandidateSet candidates = loadCandidates(scene, Math.max(size * 4, 80));
-        CursorPage<FeedItem> page = feedFromPosts(userId, candidates.posts(), cursor, size, scene, candidates.source(), candidates.degraded());
+        int safeSize = safePageSize(size);
+        CandidateSet candidates = loadCandidates(scene, Math.max(safeSize * 4, 80));
+        CursorPage<FeedItem> page = feedFromPosts(userId, candidates.posts(), cursor, safeSize, scene, candidates.source(), candidates.degraded());
         if (readFallbackEnabled && page.records().isEmpty() && !"SEED_FALLBACK".equals(candidates.source())) {
-            return feedFromPosts(userId, seedPosts, cursor, size, scene, "SEED_FALLBACK", true);
+            return feedFromPosts(userId, seedPosts, cursor, safeSize, scene, "SEED_FALLBACK", true);
         }
         return page;
     }
@@ -82,6 +83,7 @@ public class FeedService {
     }
 
     private CursorPage<FeedItem> feedFromPosts(Long userId, List<PostSummary> candidates, String cursor, int size, String scene, String source, boolean degraded) {
+        int safeSize = safePageSize(size);
         int offset = parseCursor(cursor);
         String normalizedScene = normalizeScene(scene);
         Set<String> interests = interests(userId);
@@ -102,7 +104,7 @@ public class FeedService {
                     .sorted(Comparator.comparingDouble(FeedItem::score).reversed())
                     .toList();
         }
-        List<FeedItem> page = ranked.stream().skip(offset).limit(size).toList();
+        List<FeedItem> page = ranked.stream().skip(offset).limit(safeSize).toList();
         recordImpressions(userId, normalizedScene, page);
         int nextOffset = offset + page.size();
         return CursorPage.of(page, String.valueOf(nextOffset), nextOffset < ranked.size(), degraded, source);
@@ -316,6 +318,10 @@ public class FeedService {
         } catch (NumberFormatException ex) {
             return 0;
         }
+    }
+
+    private int safePageSize(int size) {
+        return Math.max(1, Math.min(size, 50));
     }
 
     private void requireWrite(Long userId, String idempotencyKey) {
