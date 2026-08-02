@@ -142,6 +142,8 @@ CI 使用完整 `verify -Pcoverage`，当前回归下限为行覆盖率 68%、�
 
 管理事件生产契约随后增加了直接回归：审核通过写入的 Outbox 行必须使用 `POST_AUDIT` 聚合类型，数据库列中的 `event_id/topic/aggregate_id` 必须与统一 `EventEnvelope` 一致；事件必须能被下游同款严格解析器按 `audit.completed + dc-admin` 契约解析，并携带版本 1、文章/接收者、审核动作和 `PUBLISHED` 状态。全仓纯单元/H2 基线上升为 375 个测试、0 failures/errors/skipped，聚合覆盖率保持 77.32%/70.69%，覆盖完整性和禁止 skipped 门禁通过。该测试验证序列化后的真实 Outbox 载荷，但仍不替代 Kafka 容器投递与消费者 E2E。
 
+公共 `EventEnvelope` 现在在生产端构造时拒绝空事件 ID、空/带首尾空格的 type、producer、aggregateId 和非正版本，并复制 payload 防止调用方后续修改已入队事件；`null` payload 明确归一为空对象。新增 2 项 common 事件不变量测试，随后完整纯单元/H2 回归为 377 个测试、0 failures/errors/skipped，聚合行/分支覆盖率为 77.40%/70.82%，覆盖报告与禁止 skipped 门禁均通过。该校验只提前阻断本地无效事件，仍需真实 Kafka 投递验证跨服务行为。
+
 ## 排查建议
 
 - 拉取镜像慢：先手动执行 `docker pull`。
