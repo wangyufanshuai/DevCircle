@@ -26,7 +26,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 
 ## 迁移顺序
 
-1. 运行 `scripts/ops/backup.sh`，保留生成目录和 `SHA256SUMS`。
+1. 运行 `scripts/ops/backup.sh`，保留生成目录、`backup-manifest.json` 和 `SHA256SUMS`。备份期间内容发生变化时脚本会删除不完整产物并失败，应在写入低峰重试。
 2. 对推荐消费者先执行优雅停机并确认无活跃消费，再发布兼容旧表结构的新镜像，让 Flyway 建立新表/字段；包含 `recommend_consumer_dedup.lease_token` 的迁移完成后，只启动支持 lease token 的新 `dc-recommend` 镜像，避免旧 worker 在过期租约后覆盖新 worker 状态。
 3. 迁移主题内容，运行 `EXPECTED_POST_COUNT=180 scripts/ops/verify-migration.sh` 校验数量和内容校验和。
 4. 触发 Elasticsearch 全量重建，再次运行校验脚本确认无非 `PUBLISHED` 文档。
@@ -48,10 +48,13 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 
 ```bash
 CONFIRM_RESTORE=RESTORE scripts/ops/restore.sh /srv/backups/devcircle/<timestamp>
-EXPECTED_POST_COUNT=180 scripts/ops/verify-migration.sh
+BACKUP_MANIFEST=/srv/backups/devcircle/<timestamp>/backup-manifest.json \
+  scripts/ops/verify-migration.sh
 ```
 
 在隔离恢复主机上没有应用容器时，使用 `RESTORE_MANAGE_APPLICATIONS=false`；生产主机保持默认值，让脚本在恢复前停止应用并在成功后重新启动。
+
+新备份必须包含 Manifest。恢复上一版本生成的旧格式备份时，需要先人工验证目录和 `SHA256SUMS`，然后显式设置 `ALLOW_LEGACY_BACKUP=true`；该开关不得写入长期生产环境变量。Manifest 与恢复后的文章数量、公开数量或内容哈希不一致时，恢复脚本会保持应用停止，不得绕过后直接启动。
 
 本地隔离演练证据记录在 [`recovery-rehearsal.md`](recovery-rehearsal.md)。
 

@@ -4,45 +4,47 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENV_FILE="${ENV_FILE:-${ROOT_DIR}/.env.production}"
 EXPECTED_POST_COUNT="${EXPECTED_POST_COUNT:-180}"
+BACKUP_MANIFEST="${BACKUP_MANIFEST:-}"
 COMPOSE=(docker compose --env-file "${ENV_FILE}" -f "${ROOT_DIR}/docker-compose.prod.yml")
+
+# shellcheck source=scripts/ops/backup-manifest.sh
+source "${ROOT_DIR}/scripts/ops/backup-manifest.sh"
+# shellcheck source=scripts/ops/content-baseline.sh
+source "${ROOT_DIR}/scripts/ops/content-baseline.sh"
 
 test -f "${ENV_FILE}" || { echo "Missing ${ENV_FILE}" >&2; exit 2; }
 bash "${ROOT_DIR}/scripts/ops/validate-production-env.sh" "${ENV_FILE}" >/dev/null
 
-COUNT_SQL='SELECT COUNT(*) FROM post;'
-PUBLISHED_COUNT_SQL="SELECT COUNT(*) FROM post WHERE status = 'PUBLISHED';"
-# MYSQL_ROOT_PASSWORD and $1 are expanded inside the container.
-# shellcheck disable=SC2016
-COUNT="$("${COMPOSE[@]}" exec -T mysql sh -c \
-  'exec mysql -N -B -uroot -p"$MYSQL_ROOT_PASSWORD" dc_content -e "$1"' _ "${COUNT_SQL}")"
+if [[ -n "${BACKUP_MANIFEST}" ]]; then
+  BACKUP_MANIFEST="$(cd "$(dirname "${BACKUP_MANIFEST}")" && pwd -P)/$(basename "${BACKUP_MANIFEST}")"
+  test "$(basename "${BACKUP_MANIFEST}")" = "backup-manifest.json" || {
+    echo "BACKUP_MANIFEST must point to backup-manifest.json" >&2
+    exit 2
+  }
+  verify_manifest_artifacts "$(dirname "${BACKUP_MANIFEST}")"
+  EXPECTED_POST_COUNT="${MANIFEST_POST_COUNT}"
+fi
+
+load_content_baseline
+COUNT="${CONTENT_POST_COUNT}"
+PUBLISHED_COUNT="${CONTENT_PUBLISHED_POST_COUNT}"
+CHECKSUM="${CONTENT_CHECKSUM}"
 
 test "${COUNT}" = "${EXPECTED_POST_COUNT}" || {
   echo "Post count mismatch: expected ${EXPECTED_POST_COUNT}, got ${COUNT}" >&2
   exit 1
 }
 
-PUBLISHED_COUNT="$("${COMPOSE[@]}" exec -T mysql sh -c \
-  'exec mysql -N -B -uroot -p"$MYSQL_ROOT_PASSWORD" dc_content -e "$1"' _ "${PUBLISHED_COUNT_SQL}")"
-[[ "${PUBLISHED_COUNT}" =~ ^[0-9]+$ ]] || {
-  echo "Could not parse published post count" >&2
-  exit 1
-}
-
-CONTENT_HASH_SQL="$(cat <<'SQL'
-SELECT p.id,
-       SHA2(CONCAT_WS(CHAR(31), p.author_id, p.type, p.theme, p.content_kind,
-                      p.title, p.status, COALESCE(pc.markdown, ''),
-                      COALESCE(CAST(pc.clues AS CHAR), ''), COALESCE(pc.solution, '')), 256)
-FROM post p
-LEFT JOIN post_content pc ON pc.post_id = p.id
-ORDER BY p.id;
-SQL
-)"
-# MYSQL_ROOT_PASSWORD and $1 are expanded inside the container.
-# shellcheck disable=SC2016
-CHECKSUM="$("${COMPOSE[@]}" exec -T mysql sh -c \
-  'exec mysql -N -B -uroot -p"$MYSQL_ROOT_PASSWORD" dc_content -e "$1"' _ "${CONTENT_HASH_SQL}" \
-  | sha256sum | awk '{print $1}')"
+if [[ -n "${BACKUP_MANIFEST}" ]]; then
+  test "${PUBLISHED_COUNT}" = "${MANIFEST_PUBLISHED_POST_COUNT}" || {
+    echo "Published post count mismatch: expected ${MANIFEST_PUBLISHED_POST_COUNT}, got ${PUBLISHED_COUNT}" >&2
+    exit 1
+  }
+  test "${CHECKSUM}" = "${MANIFEST_CONTENT_HASH}" || {
+    echo "Content checksum mismatch: expected ${MANIFEST_CONTENT_HASH}, got ${CHECKSUM}" >&2
+    exit 1
+  }
+fi
 
 INDEX_RESPONSE="$("${COMPOSE[@]}" exec -T elasticsearch sh -c \
   "curl --fail --silent --show-error 'http://localhost:9200/devcircle-posts/_count'")"

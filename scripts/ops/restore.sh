@@ -7,6 +7,11 @@ BACKUP_DIR="${1:-}"
 MANAGE_APPLICATIONS="${RESTORE_MANAGE_APPLICATIONS:-true}"
 COMPOSE=(docker compose --env-file "${ENV_FILE}" -f "${ROOT_DIR}/docker-compose.prod.yml")
 
+# shellcheck source=scripts/ops/backup-manifest.sh
+source "${ROOT_DIR}/scripts/ops/backup-manifest.sh"
+# shellcheck source=scripts/ops/content-baseline.sh
+source "${ROOT_DIR}/scripts/ops/content-baseline.sh"
+
 test -n "${BACKUP_DIR}" || { echo "Usage: CONFIRM_RESTORE=RESTORE $0 <backup-directory>" >&2; exit 2; }
 test "${CONFIRM_RESTORE:-}" = "RESTORE" || { echo "Set CONFIRM_RESTORE=RESTORE to continue" >&2; exit 2; }
 test -f "${ENV_FILE}" || { echo "Missing ${ENV_FILE}" >&2; exit 2; }
@@ -17,6 +22,17 @@ test -f "${BACKUP_DIR}/mysql.sql.gz" -a -f "${BACKUP_DIR}/minio-data.tar.gz" -a 
   exit 2
 }
 (cd "${BACKUP_DIR}" && sha256sum -c SHA256SUMS)
+
+HAS_MANIFEST=false
+if [[ -f "${BACKUP_DIR}/backup-manifest.json" ]]; then
+  verify_manifest_artifacts "${BACKUP_DIR}"
+  HAS_MANIFEST=true
+elif [[ "${ALLOW_LEGACY_BACKUP:-false}" == "true" ]]; then
+  echo "WARNING: restoring a legacy backup without a business data manifest" >&2
+else
+  echo "Backup has no backup-manifest.json; set ALLOW_LEGACY_BACKUP=true only for a verified legacy backup" >&2
+  exit 2
+fi
 
 APP_SERVICES=(web web-static dc-gateway dc-identity dc-content-aggregate dc-discovery dc-auth dc-user dc-content dc-comment dc-interaction dc-search dc-recommend dc-notification dc-file dc-admin)
 if [[ "${MANAGE_APPLICATIONS}" == "true" ]]; then
@@ -29,6 +45,14 @@ fi
 # MYSQL_ROOT_PASSWORD is expanded inside the container.
 # shellcheck disable=SC2016
 gunzip -c "${BACKUP_DIR}/mysql.sql.gz" | "${COMPOSE[@]}" exec -T mysql sh -c 'exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD"'
+
+if [[ "${HAS_MANIFEST}" == "true" ]]; then
+  assert_content_baseline \
+    "${MANIFEST_POST_COUNT}" \
+    "${MANIFEST_PUBLISHED_POST_COUNT}" \
+    "${MANIFEST_CONTENT_HASH}"
+fi
+
 "${COMPOSE[@]}" run --rm --no-deps -T minio-maintenance sh -c '
   test -d /minio-data
   find /minio-data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +

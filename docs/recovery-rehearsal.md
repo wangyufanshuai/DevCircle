@@ -8,7 +8,7 @@
 
 1. 在 `dc_content.restore_probe` 写入数据库标记 `before-backup`。
 2. 在 MinIO 数据卷写入对象标记 `before-backup`。
-3. 运行 `scripts/ops/backup.sh`，生成压缩 SQL、对象数据归档和 `SHA256SUMS`。
+3. 运行 `scripts/ops/backup.sh`，生成压缩 SQL、对象数据归档、`backup-manifest.json` 和 `SHA256SUMS`。脚本会在备份前后读取内容基线；文章数量、公开数量或内容哈希发生变化时废弃本次备份，避免发布与数据快照不一致的 Manifest。
 4. 将数据库和对象标记都改为 `after-backup`。
 5. 使用 `CONFIRM_RESTORE=RESTORE` 和 `RESTORE_MANAGE_APPLICATIONS=false` 运行恢复脚本。
 6. 重新读取数据库和对象标记，二者均恢复为 `before-backup`。
@@ -18,9 +18,10 @@
 
 - MySQL 备份与恢复：通过。
 - MinIO 数据卷备份与恢复：通过。
-- 两个备份文件 SHA-256 校验：通过。
+- MySQL、MinIO 与 Manifest 三个备份文件 SHA-256 校验：通过。
+- `backup-manifest.json` 记录备份时间、Git 提交、镜像 SHA、文章数量、公开数量、内容哈希以及 MySQL/MinIO 文件摘要；恢复前会校验产物，恢复数据库后会在应用重启前自动核对业务基线。
 - 最小数据集恢复命令耗时约 4.3 秒；该结果只证明脚本链路，不代表生产数据量下的 RTO。
-- `test-backup-restore.sh` 覆盖备份产物、校验和、恢复顺序、迁移计数以及 Elasticsearch 非公开文档阻断。
+- `test-backup-restore.sh` 覆盖 Manifest 正常恢复、产物被篡改、Manifest 内部摘要不一致、恢复后数量/内容哈希不一致、旧备份显式兼容、迁移计数以及 Elasticsearch 非公开文档阻断。
 
 演练过程中实际发现并修复：
 
