@@ -26,6 +26,8 @@ class ContentProjectionMigrationTest {
         try (Connection connection = dataSource.getConnection()) {
             ScriptUtils.executeSqlScript(connection,
                     new ClassPathResource("db/migration/V19__bind_content_projection_payloads.sql"));
+            ScriptUtils.executeSqlScript(connection,
+                    new ClassPathResource("db/migration/V21__order_content_counter_projections.sql"));
         }
 
         insertLegacyRow(jdbcClient, "interaction_projection_dedup",
@@ -34,6 +36,8 @@ class ContentProjectionMigrationTest {
                 "44444444-4444-4444-4444-444444444444", "comment.changed");
         assertThat(legacyRows(jdbcClient, "interaction_projection_dedup")).isEqualTo(2);
         assertThat(legacyRows(jdbcClient, "comment_projection_dedup")).isEqualTo(2);
+        assertThat(jdbcClient.sql("SELECT COUNT(*) FROM content_counter_projection_watermark")
+                .query(Integer.class).single()).isZero();
     }
 
     private void createLegacyTable(JdbcClient jdbcClient, String table) {

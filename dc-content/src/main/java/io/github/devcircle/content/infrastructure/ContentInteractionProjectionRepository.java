@@ -11,13 +11,22 @@ public class ContentInteractionProjectionRepository {
     private static final String LEGACY_FINGERPRINT = "0".repeat(64);
 
     private final JdbcClient jdbcClient;
+    private final ContentCounterProjectionCoordinator counterCoordinator;
 
-    public ContentInteractionProjectionRepository(JdbcClient jdbcClient) {
+    public ContentInteractionProjectionRepository(JdbcClient jdbcClient,
+                                                  ContentCounterProjectionCoordinator counterCoordinator) {
         this.jdbcClient = jdbcClient;
+        this.counterCoordinator = counterCoordinator;
     }
 
     @Transactional
     public boolean apply(ValidatedEvent event, Long postId, String interactionType) {
+        return apply(event, postId, interactionType, null, null);
+    }
+
+    @Transactional
+    public boolean apply(ValidatedEvent event, Long postId, String interactionType,
+                         Long sourceVersion, Long absoluteLikeCount) {
         String eventId = event.eventId().toString();
         String topic = event.type();
         String eventFingerprint = EventFingerprint.sha256(event);
@@ -42,20 +51,8 @@ public class ContentInteractionProjectionRepository {
             case "FAVORITE", "UNFAVORITE" -> 0;
             default -> throw new IllegalArgumentException("Unsupported interaction type: " + interactionType);
         };
-        if (delta == 0) {
-            return true;
-        }
-        int updated = jdbcClient.sql("""
-                        UPDATE post
-                        SET like_count = GREATEST(like_count + :delta, 0)
-                        WHERE id = :postId
-                        """)
-                .param("delta", delta)
-                .param("postId", postId)
-                .update();
-        if (updated != 1) {
-            throw new IllegalStateException("Interaction event references missing post " + postId);
-        }
+        counterCoordinator.apply(ContentCounterProjectionCoordinator.CounterType.LIKE,
+                postId, event.occurredAt(), eventId, sourceVersion, absoluteLikeCount, delta);
         return true;
     }
 
@@ -74,7 +71,7 @@ public class ContentInteractionProjectionRepository {
     private void upgradeLegacyFingerprint(String eventId, String topic, String eventFingerprint,
                                           ProjectionEventIdentity existing) {
         if (!LEGACY_FINGERPRINT.equals(existing.eventFingerprint())) return;
-        int upgraded = jdbcClient.sql("""
+        jdbcClient.sql("""
                         UPDATE interaction_projection_dedup
                         SET event_fingerprint = :eventFingerprint
                         WHERE event_id = :eventId AND event_fingerprint = :legacyFingerprint
@@ -83,7 +80,7 @@ public class ContentInteractionProjectionRepository {
                 .param("eventFingerprint", eventFingerprint)
                 .param("legacyFingerprint", LEGACY_FINGERPRINT)
                 .update();
-        if (upgraded == 0) validateEvent(loadEvent(eventId), topic, eventFingerprint);
+        validateEvent(loadEvent(eventId), topic, eventFingerprint);
     }
 
     private void validateEvent(ProjectionEventIdentity existing, String topic, String eventFingerprint) {

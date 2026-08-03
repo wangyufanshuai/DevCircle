@@ -33,7 +33,11 @@ public class InteractionRepository {
                 .param("postId", postId)
                 .update();
         if (rows > 0) {
-            jdbcClient.sql("UPDATE post_counter SET like_count = like_count + 1 WHERE post_id = :postId")
+            jdbcClient.sql("""
+                            UPDATE post_counter
+                            SET like_count = like_count + 1, projection_version = projection_version + 1
+                            WHERE post_id = :postId
+                            """)
                     .param("postId", postId)
                     .update();
             writeEvent(userId, postId, "LIKE");
@@ -53,7 +57,13 @@ public class InteractionRepository {
                 .param("postId", postId)
                 .update();
         if (rows > 0) {
-            jdbcClient.sql("INSERT INTO post_counter(post_id, favorite_count) VALUES (:postId, 1) ON DUPLICATE KEY UPDATE favorite_count = favorite_count + 1")
+            jdbcClient.sql("""
+                            INSERT INTO post_counter(post_id, favorite_count, projection_version)
+                            VALUES (:postId, 1, 1)
+                            ON DUPLICATE KEY UPDATE
+                                favorite_count = favorite_count + 1,
+                                projection_version = projection_version + 1
+                            """)
                     .param("postId", postId)
                     .update();
             writeEvent(userId, postId, "FAVORITE");
@@ -71,7 +81,12 @@ public class InteractionRepository {
         int rows = jdbcClient.sql("DELETE FROM like_record WHERE user_id = :userId AND target_type = 'POST' AND target_id = :postId")
                 .param("userId", userId).param("postId", postId).update();
         if (rows > 0) {
-            jdbcClient.sql("UPDATE post_counter SET like_count = GREATEST(like_count - 1, 0) WHERE post_id = :postId")
+            jdbcClient.sql("""
+                            UPDATE post_counter
+                            SET like_count = GREATEST(like_count - 1, 0),
+                                projection_version = projection_version + 1
+                            WHERE post_id = :postId
+                            """)
                     .param("postId", postId).update();
             writeEvent(userId, postId, "UNLIKE");
         }
@@ -88,7 +103,12 @@ public class InteractionRepository {
         int rows = jdbcClient.sql("DELETE FROM favorite_record WHERE user_id = :userId AND post_id = :postId")
                 .param("userId", userId).param("postId", postId).update();
         if (rows > 0) {
-            jdbcClient.sql("UPDATE post_counter SET favorite_count = GREATEST(favorite_count - 1, 0) WHERE post_id = :postId")
+            jdbcClient.sql("""
+                            UPDATE post_counter
+                            SET favorite_count = GREATEST(favorite_count - 1, 0),
+                                projection_version = projection_version + 1
+                            WHERE post_id = :postId
+                            """)
                     .param("postId", postId).update();
             writeEvent(userId, postId, "UNFAVORITE");
         }
@@ -140,8 +160,19 @@ public class InteractionRepository {
     }
 
     private void writeEvent(Long userId, Long postId, String interactionType) {
+        CounterSnapshot snapshot = jdbcClient.sql("""
+                        SELECT like_count, favorite_count, projection_version
+                        FROM post_counter WHERE post_id = :postId
+                        """)
+                .param("postId", postId)
+                .query((rs, rowNum) -> new CounterSnapshot(
+                        rs.getLong("like_count"), rs.getLong("favorite_count"),
+                        rs.getLong("projection_version")))
+                .single();
         EventEnvelope event = EventEnvelope.now(EventTopics.INTERACTION_CHANGED, "dc-interaction", String.valueOf(postId),
-                Map.of("actorId", userId, "postId", postId, "interactionType", interactionType));
+                        Map.of("actorId", userId, "postId", postId, "interactionType", interactionType,
+                        "likeCount", snapshot.likeCount(), "favoriteCount", snapshot.favoriteCount(),
+                        "counterVersion", snapshot.version()));
         try {
             String payload = objectMapper.writeValueAsString(event);
             jdbcClient.sql("""
@@ -188,6 +219,9 @@ public class InteractionRepository {
     }
 
     private record InteractionCounts(long likeCount, long favoriteCount) {
+    }
+
+    private record CounterSnapshot(long likeCount, long favoriteCount, long version) {
     }
 
     private record Idempotency(Long userId, String operation, Long resourceId) {

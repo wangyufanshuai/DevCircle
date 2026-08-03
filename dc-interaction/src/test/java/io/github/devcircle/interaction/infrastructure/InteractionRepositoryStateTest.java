@@ -58,6 +58,7 @@ class InteractionRepositoryStateTest {
                     post_id BIGINT PRIMARY KEY,
                     like_count BIGINT NOT NULL DEFAULT 0,
                     favorite_count BIGINT NOT NULL DEFAULT 0,
+                    projection_version BIGINT NOT NULL DEFAULT 0,
                     comment_count BIGINT NOT NULL DEFAULT 0,
                     view_count BIGINT NOT NULL DEFAULT 0)
                 """).update();
@@ -83,7 +84,7 @@ class InteractionRepositoryStateTest {
     }
 
     @Test
-    void likesAndFavoritesChangeCountersAndEventsExactlyOncePerRealTransition() {
+    void likesAndFavoritesChangeCountersAndEventsExactlyOncePerRealTransition() throws Exception {
         var like = repository.insertLike(7L, 1001L, 10, "like-key");
         var sameLikeRequest = repository.insertLike(7L, 1001L, 10, "like-key");
         var alreadyLiked = repository.insertLike(7L, 1001L, 10, "like-second-key");
@@ -111,6 +112,31 @@ class InteractionRepositoryStateTest {
         assertThat(alreadyUnfavorited.inserted()).isFalse();
         assertState(7L, 1001L, false, false, 10, 0);
         assertThat(eventCount()).isEqualTo(4);
+        ObjectMapper mapper = new ObjectMapper();
+        assertThat(jdbcClient.sql("SELECT payload FROM outbox_event ORDER BY id")
+                .query(String.class).list())
+                .extracting(payload -> {
+                    try {
+                        var root = mapper.readTree(payload);
+                        if (root.isTextual()) root = mapper.readTree(root.textValue());
+                        return root.path("payload").path("likeCount").asLong();
+                    } catch (Exception ex) {
+                        throw new AssertionError(ex);
+                    }
+                })
+                .containsExactly(11L, 11L, 10L, 10L);
+        assertThat(jdbcClient.sql("SELECT payload FROM outbox_event ORDER BY id")
+                .query(String.class).list())
+                .extracting(payload -> {
+                    try {
+                        var jsonRoot = mapper.readTree(payload);
+                        if (jsonRoot.isTextual()) jsonRoot = mapper.readTree(jsonRoot.textValue());
+                        return jsonRoot.path("payload").path("counterVersion").asLong();
+                    } catch (Exception ex) {
+                        throw new AssertionError(ex);
+                    }
+                })
+                .containsExactly(1L, 2L, 3L, 4L);
     }
 
     @Test

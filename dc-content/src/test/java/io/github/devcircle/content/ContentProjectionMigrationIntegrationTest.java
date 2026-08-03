@@ -22,7 +22,7 @@ class ContentProjectionMigrationIntegrationTest {
             .withPassword("devcircle");
 
     @Test
-    void v18RowsAreBackfilledAndOldWritersRemainCompatibleAfterV19() {
+    void v18RowsAreBackfilledOldWritersRemainCompatibleAndCounterOrderingIsAdded() {
         Flyway v18 = flyway(MigrationVersion.fromVersion("18"));
         v18.migrate();
         JdbcClient jdbcClient = jdbcClient();
@@ -44,6 +44,8 @@ class ContentProjectionMigrationIntegrationTest {
 
         assertThat(legacyRows(jdbcClient, "interaction_projection_dedup")).isEqualTo(2);
         assertThat(legacyRows(jdbcClient, "comment_projection_dedup")).isEqualTo(2);
+        assertThat(jdbcClient.sql("SELECT COUNT(*) FROM content_counter_projection_watermark")
+                .query(Integer.class).single()).isZero();
     }
 
     private Flyway flyway(MigrationVersion target) {

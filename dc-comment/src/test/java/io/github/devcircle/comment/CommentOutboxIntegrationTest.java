@@ -69,6 +69,7 @@ class CommentOutboxIntegrationTest {
 
     @BeforeEach
     void clean() {
+        jdbcClient.sql("DELETE FROM post_comment_counter").update();
         jdbcClient.sql("DELETE FROM comment").update();
         jdbcClient.sql("DELETE FROM outbox_event").update();
         jdbcClient.sql("DELETE FROM idempotency_record").update();
@@ -82,6 +83,8 @@ class CommentOutboxIntegrationTest {
         JsonNode event = readEvent();
         assertThat(event.path("type").asText()).isEqualTo(EventTopics.COMMENT_CHANGED);
         assertThat(event.path("payload").path("commentId").asLong()).isEqualTo(comment.id());
+        assertThat(event.path("payload").path("commentCount").asLong()).isEqualTo(1L);
+        assertThat(event.path("payload").path("counterVersion").asLong()).isEqualTo(1L);
         assertThat(jdbcClient.sql("SELECT status FROM outbox_event WHERE aggregate_id = :id")
                 .param("id", comment.id().toString()).query(String.class).single()).isEqualTo("PUBLISHED");
     }

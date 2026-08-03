@@ -50,6 +50,7 @@ class CommentRepositoryIntegrationTest {
 
     @BeforeEach
     void clean() {
+        jdbcClient.sql("DELETE FROM post_comment_counter").update();
         jdbcClient.sql("DELETE FROM comment").update();
         jdbcClient.sql("DELETE FROM comment_audit_record").update();
         jdbcClient.sql("DELETE FROM outbox_event").update();

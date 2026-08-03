@@ -54,6 +54,7 @@ class ContentCommentProjectionIntegrationTest {
 
     @BeforeEach
     void preparePost() {
+        jdbcClient.sql("DELETE FROM content_counter_projection_watermark WHERE counter_type = 'COMMENT'").update();
         jdbcClient.sql("DELETE FROM comment_projection_dedup").update();
         jdbcClient.sql("DELETE FROM post WHERE id IN (92001, 92002)").update();
         jdbcClient.sql("INSERT INTO post(id, author_id, title, status, comment_count) VALUES (92001, 7, 'Comments', 'PUBLISHED', 0)").update();

@@ -12,13 +12,22 @@ public class ContentCommentProjectionRepository {
     private static final String LEGACY_FINGERPRINT = "0".repeat(64);
 
     private final JdbcClient jdbcClient;
+    private final ContentCounterProjectionCoordinator counterCoordinator;
 
-    public ContentCommentProjectionRepository(JdbcClient jdbcClient) {
+    public ContentCommentProjectionRepository(JdbcClient jdbcClient,
+                                              ContentCounterProjectionCoordinator counterCoordinator) {
         this.jdbcClient = jdbcClient;
+        this.counterCoordinator = counterCoordinator;
     }
 
     @Transactional
     public boolean apply(ValidatedEvent event, Long postId, String changeType) {
+        return apply(event, postId, changeType, null, null);
+    }
+
+    @Transactional
+    public boolean apply(ValidatedEvent event, Long postId, String changeType,
+                         Long sourceVersion, Long absoluteCommentCount) {
         String eventId = event.eventId().toString();
         String topic = event.type();
         String eventFingerprint = EventFingerprint.sha256(event);
@@ -47,15 +56,8 @@ public class ContentCommentProjectionRepository {
         } else {
             throw new IllegalArgumentException("Unsupported comment event: " + topic + "/" + changeType);
         }
-        int updated = jdbcClient.sql("""
-                        UPDATE post
-                        SET comment_count = GREATEST(comment_count + :delta, 0)
-                        WHERE id = :postId
-                        """)
-                .param("delta", delta).param("postId", postId).update();
-        if (updated != 1) {
-            throw new IllegalStateException("Comment event references missing post " + postId);
-        }
+        counterCoordinator.apply(ContentCounterProjectionCoordinator.CounterType.COMMENT,
+                postId, event.occurredAt(), eventId, sourceVersion, absoluteCommentCount, delta);
         return true;
     }
 
@@ -74,7 +76,7 @@ public class ContentCommentProjectionRepository {
     private void upgradeLegacyFingerprint(String eventId, String topic, String eventFingerprint,
                                           ProjectionEventIdentity existing) {
         if (!LEGACY_FINGERPRINT.equals(existing.eventFingerprint())) return;
-        int upgraded = jdbcClient.sql("""
+        jdbcClient.sql("""
                         UPDATE comment_projection_dedup
                         SET event_fingerprint = :eventFingerprint
                         WHERE event_id = :eventId AND event_fingerprint = :legacyFingerprint
@@ -83,7 +85,7 @@ public class ContentCommentProjectionRepository {
                 .param("eventFingerprint", eventFingerprint)
                 .param("legacyFingerprint", LEGACY_FINGERPRINT)
                 .update();
-        if (upgraded == 0) validateEvent(loadEvent(eventId), topic, eventFingerprint);
+        validateEvent(loadEvent(eventId), topic, eventFingerprint);
     }
 
     private void validateEvent(ProjectionEventIdentity existing, String topic, String eventFingerprint) {

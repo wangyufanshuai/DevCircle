@@ -58,6 +58,13 @@ class CommentRepositoryStateTest {
                 """).update();
         createOutboxTable();
         jdbcClient.sql("""
+                CREATE TABLE post_comment_counter (
+                    post_id BIGINT PRIMARY KEY,
+                    visible_count BIGINT NOT NULL DEFAULT 0,
+                    projection_version BIGINT NOT NULL DEFAULT 0,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
+                """).update();
+        jdbcClient.sql("""
                 CREATE TABLE idempotency_record (
                     idempotency_key VARCHAR(128) PRIMARY KEY,
                     user_id BIGINT NOT NULL,
@@ -93,7 +100,7 @@ class CommentRepositoryStateTest {
     }
 
     @Test
-    void createAndDeleteKeysStayBoundAndDeletionEmitsOnce() {
+    void createAndDeleteKeysStayBoundAndDeletionEmitsOnce() throws Exception {
         var root = repository.create(7L, 1001L, null, "original", "create-key");
         var replay = repository.create(7L, 1001L, null, "original", "create-key");
 
@@ -118,6 +125,34 @@ class CommentRepositoryStateTest {
                 .isEqualTo(2);
         assertThat(count("idempotency_record", "idempotency_key = 'owner-retry-key'"))
                 .isEqualTo(1);
+        assertThat(jdbcClient.sql("SELECT visible_count FROM post_comment_counter WHERE post_id = 1001")
+                .query(Long.class).single()).isZero();
+        List<String> payloads = jdbcClient.sql("""
+                        SELECT payload FROM outbox_event
+                        WHERE aggregate_id = :commentId ORDER BY id
+                        """)
+                .param("commentId", root.id().toString())
+                .query(String.class)
+                .list();
+        ObjectMapper mapper = new ObjectMapper();
+        assertThat(payloads).extracting(payload -> {
+            try {
+                var jsonRoot = mapper.readTree(payload);
+                if (jsonRoot.isTextual()) jsonRoot = mapper.readTree(jsonRoot.textValue());
+                return jsonRoot.path("payload").path("commentCount").asLong();
+            } catch (Exception ex) {
+                throw new AssertionError(ex);
+            }
+        }).containsExactly(1L, 0L);
+        assertThat(payloads).extracting(payload -> {
+            try {
+                var jsonRoot = mapper.readTree(payload);
+                if (jsonRoot.isTextual()) jsonRoot = mapper.readTree(jsonRoot.textValue());
+                return jsonRoot.path("payload").path("counterVersion").asLong();
+            } catch (Exception ex) {
+                throw new AssertionError(ex);
+            }
+        }).containsExactly(1L, 2L);
     }
 
     @Test
@@ -253,6 +288,7 @@ class CommentRepositoryStateTest {
                 .isInstanceOf(DataAccessException.class);
         assertThat(count("comment", "content = 'recoverable'")).isZero();
         assertThat(count("idempotency_record", "idempotency_key = 'outbox-create'")).isZero();
+        assertThat(count("post_comment_counter", "post_id = 1001")).isZero();
 
         createOutboxTable();
         var created = repository.create(7L, 1001L, null, "recoverable", "outbox-create");
@@ -264,11 +300,15 @@ class CommentRepositoryStateTest {
         assertThat(status(created.id())).isEqualTo("VISIBLE");
         assertThat(count("comment_audit_record", "comment_id = " + created.id())).isZero();
         assertThat(count("idempotency_record", "idempotency_key = 'outbox-hide'")).isZero();
+        assertThat(jdbcClient.sql("SELECT visible_count FROM post_comment_counter WHERE post_id = 1001")
+                .query(Long.class).single()).isEqualTo(1L);
 
         createOutboxTable();
         repository.hide(created.id(), 99L, "outbox-hide", "contains private information");
         assertThat(status(created.id())).isEqualTo("HIDDEN");
         assertThat(count("comment_audit_record", "comment_id = " + created.id())).isEqualTo(1);
+        assertThat(jdbcClient.sql("SELECT visible_count FROM post_comment_counter WHERE post_id = 1001")
+                .query(Long.class).single()).isZero();
     }
 
     private void createOutboxTable() {

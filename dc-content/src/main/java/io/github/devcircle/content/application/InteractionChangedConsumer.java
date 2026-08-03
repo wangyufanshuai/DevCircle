@@ -40,7 +40,10 @@ class InteractionChangedConsumer {
         if (!event.aggregateId().equals(Long.toString(postId))) {
             throw new IllegalArgumentException("Interaction aggregateId does not match postId");
         }
-        projectionRepository.apply(event, postId, interactionType);
+        Long likeCount = optionalNonNegativeLong(payload, "likeCount");
+        Long counterVersion = optionalPositiveLong(payload, "counterVersion");
+        requirePairedSnapshot(likeCount, counterVersion);
+        projectionRepository.apply(event, postId, interactionType, counterVersion, likeCount);
     }
 
     private long requiredPositiveLong(JsonNode payload, String field) {
@@ -57,5 +60,29 @@ class InteractionChangedConsumer {
             throw new IllegalArgumentException("Interaction payload " + field + " must be a non-blank string");
         }
         return value.textValue();
+    }
+
+    private Long optionalNonNegativeLong(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || value.isNull()) return null;
+        if (!value.isIntegralNumber() || !value.canConvertToLong() || value.longValue() < 0) {
+            throw new IllegalArgumentException("Interaction payload " + field + " must be a non-negative integer");
+        }
+        return value.longValue();
+    }
+
+    private Long optionalPositiveLong(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || value.isNull()) return null;
+        if (!value.isIntegralNumber() || !value.canConvertToLong() || value.longValue() <= 0) {
+            throw new IllegalArgumentException("Interaction payload " + field + " must be a positive integer");
+        }
+        return value.longValue();
+    }
+
+    private void requirePairedSnapshot(Long count, Long version) {
+        if ((count == null) != (version == null)) {
+            throw new IllegalArgumentException("Interaction counter snapshot requires likeCount and counterVersion");
+        }
     }
 }

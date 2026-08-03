@@ -28,10 +28,11 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 
 1. 运行 `scripts/ops/backup.sh`，保留生成目录、`backup-manifest.json` 和 `SHA256SUMS`。备份期间内容发生变化时脚本会删除不完整产物并失败，应在写入低峰重试。
 2. 对推荐消费者先执行优雅停机并确认无活跃消费，再发布兼容旧表结构的新镜像，让 Flyway 建立新表/字段；包含 `recommend_consumer_dedup.lease_token` 的迁移完成后，只启动支持 lease token 的新 `dc-recommend` 镜像，避免旧 worker 在过期租约后覆盖新 worker 状态。
-3. 迁移主题内容，运行 `EXPECTED_POST_COUNT=180 scripts/ops/verify-migration.sh` 校验数量和内容校验和。
-4. 触发 Elasticsearch 全量重建，再次运行校验脚本确认无非 `PUBLISHED` 文档。
-5. 将入口切为只读验证，抽查登录、详情、搜索、媒体和审核链路。
-6. 解除只读并观察错误率、Outbox backlog、磁盘与容器重启次数至少 30 分钟。
+3. 引入评论/点赞权威计数快照时，先停止旧 `dc-comment` 和 `dc-interaction` 写入实例，再执行 `dc-content` V21、`dc-comment` V6 与 `dc-interaction` V4 迁移，最后启动同时发布 `counterVersion` 的新实例。禁止在评论计数回填完成后重新启动不会维护 `post_comment_counter` 的旧评论镜像。
+4. 迁移主题内容，运行 `EXPECTED_POST_COUNT=180 scripts/ops/verify-migration.sh` 校验数量和内容校验和。
+5. 触发 Elasticsearch 全量重建，再次运行校验脚本确认无非 `PUBLISHED` 文档。
+6. 将入口切为只读验证，抽查登录、详情、搜索、媒体和审核链路。
+7. 解除只读并观察错误率、Outbox backlog、磁盘与容器重启次数至少 30 分钟。
 
 数据库迁移必须保持前一版本镜像可读取；删除列、改名和收紧约束要拆成至少两个版本。
 

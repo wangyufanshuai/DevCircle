@@ -52,6 +52,15 @@ class ContentProjectionDedupTest {
                   event_id CHAR(36) PRIMARY KEY, topic VARCHAR(128) NOT NULL,
                   event_fingerprint CHAR(64) NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000')
                 """).update();
+        jdbcClient.sql("""
+                CREATE TABLE content_counter_projection_watermark(
+                  counter_type VARCHAR(16) NOT NULL,
+                  post_id BIGINT NOT NULL,
+                  source_version BIGINT,
+                  occurred_at TIMESTAMP,
+                  event_id CHAR(36),
+                  PRIMARY KEY(counter_type, post_id))
+                """).update();
     }
 
     @Test
@@ -195,6 +204,109 @@ class ContentProjectionDedupTest {
                         """).query(Integer.class).single()).isZero();
     }
 
+    @Test
+    void absoluteCounterSnapshotsConvergeUnderOutOfOrderAndSameMillisecondDelivery() {
+        Instant first = Instant.parse("2026-08-01T11:00:00.000900Z");
+        Instant sameMillisecondNewer = Instant.parse("2026-08-01T11:00:00.000100Z");
+        Instant sameMillisecondOlder = Instant.parse("2026-08-01T11:00:00.000800Z");
+        Instant older = Instant.parse("2026-08-01T10:59:59Z");
+
+        assertThat(comments.apply(commentEvent(
+                "66666666-1111-4111-8111-111111111111", EventTopics.COMMENT_CHANGED,
+                21L, 1001L, "CREATED", first), 1001L, "CREATED", 10L, 8L)).isTrue();
+        assertThat(comments.apply(commentEvent(
+                "99999999-1111-4111-8111-111111111111", EventTopics.COMMENT_CHANGED,
+                22L, 1001L, "DELETED", older), 1001L, "DELETED", 9L, 99L)).isTrue();
+        assertThat(comments.apply(commentEvent(
+                "77777777-1111-4111-8111-111111111111", EventTopics.COMMENT_CHANGED,
+                23L, 1001L, "HIDDEN", sameMillisecondNewer), 1001L, "HIDDEN", 11L, 7L)).isTrue();
+        assertThat(comments.apply(commentEvent(
+                "55555555-1111-4111-8111-111111111111", EventTopics.COMMENT_CHANGED,
+                24L, 1001L, "CREATED", sameMillisecondOlder), 1001L, "CREATED", 10L, 88L)).isTrue();
+
+        assertThat(interactions.apply(interactionEvent(
+                "66666666-2222-4222-8222-222222222222", 1001L, "LIKE", first),
+                1001L, "LIKE", 10L, 5L)).isTrue();
+        assertThat(interactions.apply(interactionEvent(
+                "99999999-2222-4222-8222-222222222222", 1001L, "UNLIKE", older),
+                1001L, "UNLIKE", 9L, 50L)).isTrue();
+        assertThat(interactions.apply(interactionEvent(
+                "77777777-2222-4222-8222-222222222222", 1001L, "FAVORITE", sameMillisecondNewer),
+                1001L, "FAVORITE", 11L, 4L)).isTrue();
+        assertThat(interactions.apply(interactionEvent(
+                "55555555-2222-4222-8222-222222222222", 1001L, "UNFAVORITE", sameMillisecondOlder),
+                1001L, "UNFAVORITE", 10L, 44L)).isTrue();
+
+        assertThat(commentCount()).isEqualTo(7L);
+        assertThat(likeCount()).isEqualTo(4L);
+        assertThat(watermarkEvent("COMMENT")).isEqualTo("77777777-1111-4111-8111-111111111111");
+        assertThat(watermarkEvent("LIKE")).isEqualTo("77777777-2222-4222-8222-222222222222");
+        assertThat(watermarkVersion("COMMENT")).isEqualTo(11L);
+        assertThat(watermarkVersion("LIKE")).isEqualTo(11L);
+    }
+
+    @Test
+    void invalidAbsoluteSnapshotRollsBackTheConsumerClaimAndWatermark() {
+        String eventId = "99999999-9999-4999-8999-999999999999";
+        ValidatedEvent event = interactionEvent(eventId, 1001L, "LIKE");
+
+        assertThatThrownBy(() -> interactions.apply(event, 1001L, "LIKE", 1L, -1L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Projected counter cannot be negative");
+        assertThat(jdbcClient.sql("""
+                        SELECT COUNT(*) FROM interaction_projection_dedup WHERE event_id = :eventId
+                        """).param("eventId", eventId).query(Integer.class).single()).isZero();
+        assertThat(jdbcClient.sql("SELECT COUNT(*) FROM content_counter_projection_watermark")
+                .query(Integer.class).single()).isZero();
+    }
+
+    @Test
+    void versionedWatermarkRejectsLegacyEventsAndInvalidSourceVersions() {
+        String versionedId = "aaaaaaaa-1111-4111-8111-111111111111";
+        assertThat(comments.apply(commentEvent(versionedId, EventTopics.COMMENT_CHANGED,
+                31L, 1001L, "CREATED", Instant.parse("2026-08-01T12:00:00Z")),
+                1001L, "CREATED", 5L, 6L)).isTrue();
+
+        assertThat(comments.apply(commentEvent(
+                "bbbbbbbb-1111-4111-8111-111111111111", EventTopics.COMMENT_CHANGED,
+                32L, 1001L, "CREATED", Instant.parse("2026-08-01T13:00:00Z")),
+                1001L, "CREATED")).isTrue();
+        assertThat(commentCount()).isEqualTo(6L);
+        assertThat(watermarkEvent("COMMENT")).isEqualTo(versionedId);
+
+        String invalidId = "cccccccc-1111-4111-8111-111111111111";
+        assertThatThrownBy(() -> comments.apply(commentEvent(
+                invalidId, EventTopics.COMMENT_CHANGED, 33L, 1001L, "CREATED"),
+                1001L, "CREATED", 0L, 7L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Projected counter version must be positive");
+        assertThat(jdbcClient.sql("""
+                        SELECT COUNT(*) FROM comment_projection_dedup WHERE event_id = :eventId
+                        """).param("eventId", invalidId).query(Integer.class).single()).isZero();
+    }
+
+    @Test
+    void legacyWatermarksUseTimeThenEventIdAndAcceptMissingHistoricalTieBreaker() {
+        jdbcClient.sql("""
+                        INSERT INTO content_counter_projection_watermark(
+                            counter_type, post_id, occurred_at, event_id)
+                        VALUES ('LIKE', 1001, TIMESTAMP '2026-08-01 14:00:00', NULL)
+                        """).update();
+
+        assertThat(interactions.apply(interactionEvent(
+                "aaaaaaaa-2222-4222-8222-222222222222", 1001L, "LIKE",
+                Instant.parse("2026-08-01T14:00:00Z")), 1001L, "LIKE")).isTrue();
+        assertThat(interactions.apply(interactionEvent(
+                "bbbbbbbb-2222-4222-8222-222222222222", 1001L, "UNLIKE",
+                Instant.parse("2026-08-01T14:00:01Z")), 1001L, "UNLIKE")).isTrue();
+        assertThat(interactions.apply(interactionEvent(
+                "cccccccc-2222-4222-8222-222222222222", 1001L, "LIKE",
+                Instant.parse("2026-08-01T13:59:59Z")), 1001L, "LIKE")).isTrue();
+
+        assertThat(likeCount()).isZero();
+        assertThat(watermarkEvent("LIKE")).isEqualTo("bbbbbbbb-2222-4222-8222-222222222222");
+    }
+
     private void createPostTable() {
         jdbcClient.sql("""
                 CREATE TABLE post(
@@ -216,8 +328,14 @@ class ContentProjectionDedupTest {
     }
 
     private ValidatedEvent commentEvent(String eventId, String topic, long commentId, long postId, String changeType) {
+        return commentEvent(eventId, topic, commentId, postId, changeType,
+                Instant.parse("2026-08-01T10:15:30Z"));
+    }
+
+    private ValidatedEvent commentEvent(String eventId, String topic, long commentId, long postId,
+                                        String changeType, Instant occurredAt) {
         return new ValidatedEvent(UUID.fromString(eventId), topic, 1,
-                Instant.parse("2026-08-01T10:15:30Z"), "dc-comment", Long.toString(commentId),
+                occurredAt, "dc-comment", Long.toString(commentId),
                 objectMapper.createObjectNode()
                         .put("commentId", commentId)
                         .put("postId", postId)
@@ -225,8 +343,14 @@ class ContentProjectionDedupTest {
     }
 
     private ValidatedEvent interactionEvent(String eventId, long postId, String interactionType) {
+        return interactionEvent(eventId, postId, interactionType,
+                Instant.parse("2026-08-01T10:15:30Z"));
+    }
+
+    private ValidatedEvent interactionEvent(String eventId, long postId, String interactionType,
+                                            Instant occurredAt) {
         return new ValidatedEvent(UUID.fromString(eventId), EventTopics.INTERACTION_CHANGED, 1,
-                Instant.parse("2026-08-01T10:15:30Z"), "dc-interaction", Long.toString(postId),
+                occurredAt, "dc-interaction", Long.toString(postId),
                 objectMapper.createObjectNode()
                         .put("actorId", 7L)
                         .put("postId", postId)
@@ -239,6 +363,26 @@ class ContentProjectionDedupTest {
 
     private long likeCount() {
         return jdbcClient.sql("SELECT like_count FROM post WHERE id = 1001").query(Long.class).single();
+    }
+
+    private String watermarkEvent(String counterType) {
+        return jdbcClient.sql("""
+                        SELECT event_id FROM content_counter_projection_watermark
+                        WHERE counter_type = :counterType AND post_id = 1001
+                        """)
+                .param("counterType", counterType)
+                .query(String.class)
+                .single();
+    }
+
+    private Long watermarkVersion(String counterType) {
+        return jdbcClient.sql("""
+                        SELECT source_version FROM content_counter_projection_watermark
+                        WHERE counter_type = :counterType AND post_id = 1001
+                        """)
+                .param("counterType", counterType)
+                .query(Long.class)
+                .single();
     }
 
     @Configuration
@@ -257,13 +401,20 @@ class ContentProjectionDedupTest {
         }
 
         @Bean
-        ContentCommentProjectionRepository comments(JdbcClient jdbcClient) {
-            return new ContentCommentProjectionRepository(jdbcClient);
+        ContentCounterProjectionCoordinator counterCoordinator(JdbcClient jdbcClient) {
+            return new ContentCounterProjectionCoordinator(jdbcClient);
         }
 
         @Bean
-        ContentInteractionProjectionRepository interactions(JdbcClient jdbcClient) {
-            return new ContentInteractionProjectionRepository(jdbcClient);
+        ContentCommentProjectionRepository comments(JdbcClient jdbcClient,
+                                                    ContentCounterProjectionCoordinator coordinator) {
+            return new ContentCommentProjectionRepository(jdbcClient, coordinator);
+        }
+
+        @Bean
+        ContentInteractionProjectionRepository interactions(JdbcClient jdbcClient,
+                                                            ContentCounterProjectionCoordinator coordinator) {
+            return new ContentInteractionProjectionRepository(jdbcClient, coordinator);
         }
 
         @Bean

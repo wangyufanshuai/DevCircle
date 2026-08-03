@@ -119,7 +119,8 @@ public class CommentRepository {
         Long commentId = key.longValue();
         jdbc.update("UPDATE idempotency_record SET resource_id = :commentId WHERE idempotency_key = :key",
                 Map.of("commentId", commentId, "key", idempotencyKey));
-        writeEvent(EventTopics.COMMENT_CHANGED, commentId, postId, userId, parentId, "CREATED");
+        CounterSnapshot snapshot = adjustVisibleCount(postId, 1);
+        writeEvent(EventTopics.COMMENT_CHANGED, commentId, postId, userId, parentId, "CREATED", snapshot);
         return find(commentId);
     }
 
@@ -138,7 +139,9 @@ public class CommentRepository {
         if (changed != 1) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "只能删除自己的可见评论");
         }
-        writeEvent(EventTopics.COMMENT_CHANGED, commentId, meta.postId(), userId, meta.parentId(), "DELETED");
+        CounterSnapshot snapshot = adjustVisibleCount(meta.postId(), -1);
+        writeEvent(EventTopics.COMMENT_CHANGED, commentId, meta.postId(), userId, meta.parentId(), "DELETED",
+                snapshot);
     }
 
     @Transactional
@@ -158,7 +161,9 @@ public class CommentRepository {
                         VALUES (:commentId, :moderatorId, 'HIDE', :reason)
                 """, Map.of("commentId", commentId, "moderatorId", moderatorId,
                 "reason", normalizedReason));
-        writeEvent(EventTopics.COMMENT_CHANGED, commentId, meta.postId(), moderatorId, meta.parentId(), "HIDDEN");
+        CounterSnapshot snapshot = adjustVisibleCount(meta.postId(), -1);
+        writeEvent(EventTopics.COMMENT_CHANGED, commentId, meta.postId(), moderatorId, meta.parentId(), "HIDDEN",
+                snapshot);
     }
 
     private CommentView replayOrClaimCreate(Long userId, String idempotencyKey, String requestFingerprint) {
@@ -220,10 +225,44 @@ public class CommentRepository {
         };
     }
 
-    private void writeEvent(String topic, Long commentId, Long postId, Long userId, Long parentId, String changeType) {
+    private CounterSnapshot adjustVisibleCount(Long postId, int delta) {
+        if (delta > 0) {
+            jdbc.update("""
+                            INSERT INTO post_comment_counter(post_id, visible_count, projection_version)
+                            VALUES (:postId, 1, 1)
+                            ON DUPLICATE KEY UPDATE
+                                visible_count = visible_count + 1,
+                                projection_version = projection_version + 1
+                            """, Map.of("postId", postId));
+        } else {
+            jdbc.update("""
+                            INSERT IGNORE INTO post_comment_counter(post_id, visible_count, projection_version)
+                            VALUES (:postId, 0, 0)
+                            """,
+                    Map.of("postId", postId));
+            jdbc.update("""
+                            UPDATE post_comment_counter
+                            SET visible_count = GREATEST(visible_count - 1, 0),
+                                projection_version = projection_version + 1
+                            WHERE post_id = :postId
+                            """, Map.of("postId", postId));
+        }
+        CounterSnapshot snapshot = jdbc.query("""
+                        SELECT visible_count, projection_version
+                        FROM post_comment_counter WHERE post_id = :postId
+                        """, Map.of("postId", postId), rs -> rs.next()
+                        ? new CounterSnapshot(rs.getLong("visible_count"), rs.getLong("projection_version"))
+                        : null);
+        if (snapshot == null) throw new IllegalStateException("Comment counter update returned no result");
+        return snapshot;
+    }
+
+    private void writeEvent(String topic, Long commentId, Long postId, Long userId, Long parentId,
+                            String changeType, CounterSnapshot snapshot) {
         EventEnvelope event = EventEnvelope.now(topic, "dc-comment", String.valueOf(commentId),
                 Map.of("commentId", commentId, "postId", postId, "actorId", userId,
-                        "parentId", parentId == null ? 0L : parentId, "changeType", changeType));
+                        "parentId", parentId == null ? 0L : parentId, "changeType", changeType,
+                        "commentCount", snapshot.count(), "counterVersion", snapshot.version()));
         try {
             jdbc.update("""
                             INSERT INTO outbox_event(event_id, topic, aggregate_type, aggregate_id, payload)
@@ -286,5 +325,8 @@ public class CommentRepository {
     }
 
     private record CommentMeta(Long id, Long postId, Long parentId, Long authorId, String status) {
+    }
+
+    private record CounterSnapshot(long count, long version) {
     }
 }

@@ -8,6 +8,10 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 2026-08-03 搜索事件协调器与 Elasticsearch 投影统一采用 `(occurredAtMillis, eventId)` 单调顺序，修复同一毫秒内 eventId 较大的合法事件在进入 Elasticsearch 前被误判为旧事件的问题。全仓非容器覆盖回归为 402 个测试、0 failures/errors/skipped，聚合行覆盖率 79.68%、分支覆盖率 74.00%，`SearchEventCoordinator` 分支覆盖率 87.50%，全部关键状态机继续通过 85% 门禁。当前 Docker 守护进程未运行，因此本条证据明确不包含 Testcontainers、真实 Elasticsearch 或 Compose E2E。
 
+同日评论与互动生产者增加事务内权威计数和单调 `counterVersion`，内容计数投影优先按生产者版本收敛，旧增量事件保留一个版本兼容。全仓非容器回归为 408 个测试、0 failures/errors/skipped，聚合行覆盖率 80.03%、分支覆盖率 74.30%；新增计数协调器分支覆盖率 92.11%，评论/互动投影仓储分别为 90.91%/92.86%，关键状态机门禁通过。真实 Testcontainers 回归包含内容 MySQL 投影/迁移 5 项、评论 MySQL/Kafka 4 项、互动 MySQL/Redis 4 项，均为 0 failures/errors/skipped。该证据验证单基础设施切片，不替代四套真实 Compose E2E。
+
+2026-08-04 对同一批次执行完整 `./mvnw.cmd -B verify -Pcoverage`：16/16 个 Maven 模块成功，104 个测试套件共 449 个测试，0 failures、0 errors、0 skipped；MySQL、Redis、Kafka、Elasticsearch 和 MinIO Testcontainers 均实际启动。14 份 JaCoCo 报告聚合行覆盖率 84.31%、分支覆盖率 75.73%，包括 `ContentCounterProjectionCoordinator` 在内的全部关键状态机均通过 85% 分支门禁。迁移版本唯一性门禁通过。该结果证明单进程测试与容器切片完整通过，仍不替代四套 Gateway/Compose 真实 E2E、50 并发性能或目标主机恢复演练。
+
 真实 E2E profile 的 Outbox 依赖现在显式声明：auth/content/review 脚本关闭 Outbox，避免在无 Kafka 的隔离套件中产生无关 broker 重试；community 脚本开启 Outbox，并由 `test-docker-preflight.sh` 契约校验该差异。
 
 前端当前基线为 `npm run build` 成功、四个 Playwright project 共 116/116 通过。该套件使用显式 API 拦截，不等同于真实多服务 E2E。真实认证、内容、审核和社区 Compose E2E 仍需在至少 2 GiB Docker（建议 4 GiB 以上）环境执行；本机当前 Docker 配额约 1.93 GiB，按设计阻断真实业务验收。

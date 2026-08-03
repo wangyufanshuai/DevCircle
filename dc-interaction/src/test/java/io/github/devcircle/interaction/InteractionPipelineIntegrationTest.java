@@ -1,5 +1,6 @@
 package io.github.devcircle.interaction;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.interaction.application.InteractionService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -58,6 +59,9 @@ class InteractionPipelineIntegrationTest {
     @Autowired
     StringRedisTemplate redisTemplate;
 
+    @Autowired
+    ObjectMapper objectMapper;
+
     @TestConfiguration
     static class PublicationTestConfig {
         @Bean
@@ -68,7 +72,7 @@ class InteractionPipelineIntegrationTest {
     }
 
     @Test
-    void duplicateLikeIsIdempotentAndRedisHeatChangesOnce() {
+    void duplicateLikeIsIdempotentAndRedisHeatChangesOnce() throws Exception {
         var first = interactionService.like(7L, 9001L, "like-9001");
         var duplicate = interactionService.like(7L, 9001L, "like-9001");
 
@@ -86,6 +90,11 @@ class InteractionPipelineIntegrationTest {
         assertThat(likeRows).isEqualTo(1);
         assertThat(likeCount).isEqualTo(1);
         assertThat(interactionEvents).isEqualTo(1L);
+        String payload = jdbcClient.sql("""
+                        SELECT payload FROM outbox_event WHERE topic = 'interaction.changed'
+                        """).query(String.class).single();
+        assertThat(objectMapper.readTree(payload).path("payload").path("likeCount").asLong()).isEqualTo(1L);
+        assertThat(objectMapper.readTree(payload).path("payload").path("counterVersion").asLong()).isEqualTo(1L);
     }
 
     @Test

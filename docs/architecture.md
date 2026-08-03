@@ -41,6 +41,8 @@ Outbox 发送等待受 `DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS` 控制，默认 15 秒
 
 搜索投影以 `(occurredAtMillis, eventId)` 作为统一的单调版本。协调器和 Elasticsearch 脚本使用相同的字典序规则：较新的事件毫秒时间优先；同一毫秒内 eventId 较大的事件优先。这样同一时刻产生的审核、更新或删除事件不会被协调器误判为重复，也不会由旧事件覆盖较新投影。
 
+评论服务和互动服务分别在本地事务中维护文章级权威计数与单调 `counterVersion`，并把计数快照写入 Outbox 事件。内容服务按生产者版本更新 `comment_count` 和 `like_count`，乱序旧版本只能写消费去重记录，不能回退计数；一旦接收带版本快照的事件，无版本旧事件也不能覆盖它。升级期间遗留事件仍可使用 `(occurredAtMillis, eventId)` 增量兼容路径。
+
 ## 推荐策略
 
 第一版推荐不训练模型，采用可解释规则：

@@ -21,11 +21,11 @@ class InteractionChangedConsumerTest {
     @Test
     void projectsValidInteractionEnvelope() throws Exception {
         consumer.consume(event("1001", "dc-interaction", """
-                {"postId":1001,"actorId":7,"interactionType":"LIKE"}
+                {"postId":1001,"actorId":7,"interactionType":"LIKE","likeCount":11,"counterVersion":4}
                 """));
 
         ArgumentCaptor<ValidatedEvent> eventCaptor = ArgumentCaptor.forClass(ValidatedEvent.class);
-        verify(repository).apply(eventCaptor.capture(), eq(1001L), eq("LIKE"));
+        verify(repository).apply(eventCaptor.capture(), eq(1001L), eq("LIKE"), eq(4L), eq(11L));
         assertThat(eventCaptor.getValue().eventId().toString())
                 .isEqualTo("e7106d33-45e2-4e26-9a25-757488b57f98");
         assertThat(eventCaptor.getValue().type()).isEqualTo(EventTopics.INTERACTION_CHANGED);
@@ -72,6 +72,14 @@ class InteractionChangedConsumerTest {
                 "Interaction payload interactionType must be a non-blank string");
         assertRejected("{\"actorId\":7,\"postId\":1001,\"interactionType\":\"SHARE\"}",
                 "Unsupported interaction type: SHARE");
+        assertRejected("{\"actorId\":7,\"postId\":1001,\"interactionType\":\"LIKE\",\"likeCount\":-1}",
+                "Interaction payload likeCount must be a non-negative integer");
+        assertRejected("{\"actorId\":7,\"postId\":1001,\"interactionType\":\"LIKE\",\"likeCount\":\"1\"}",
+                "Interaction payload likeCount must be a non-negative integer");
+        assertRejected("{\"actorId\":7,\"postId\":1001,\"interactionType\":\"LIKE\",\"likeCount\":1}",
+                "Interaction counter snapshot requires likeCount and counterVersion");
+        assertRejected("{\"actorId\":7,\"postId\":1001,\"interactionType\":\"LIKE\",\"likeCount\":1,\"counterVersion\":0}",
+                "Interaction payload counterVersion must be a positive integer");
 
         verifyNoInteractions(repository);
     }

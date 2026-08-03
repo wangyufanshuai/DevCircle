@@ -16,6 +16,7 @@ CRITICAL_CLASSES = (
     ("dc-common", "io/github/devcircle/common/event/ReliableOutboxWorker"),
     ("dc-content", "io/github/devcircle/content/application/DeductionService"),
     ("dc-content", "io/github/devcircle/content/application/PostService"),
+    ("dc-content", "io/github/devcircle/content/infrastructure/ContentCounterProjectionCoordinator"),
     ("dc-content", "io/github/devcircle/content/infrastructure/ContentCommentProjectionRepository"),
     ("dc-content", "io/github/devcircle/content/infrastructure/ContentInteractionProjectionRepository"),
     ("dc-notification", "io/github/devcircle/notification/application/NotificationEventConsumer"),

@@ -10,6 +10,7 @@ import org.mockito.ArgumentCaptor;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -26,7 +27,7 @@ class CommentChangedConsumerTest {
                         """));
 
         ArgumentCaptor<ValidatedEvent> eventCaptor = ArgumentCaptor.forClass(ValidatedEvent.class);
-        verify(repository).apply(eventCaptor.capture(), eq(1001L), eq("CREATED"));
+        verify(repository).apply(eventCaptor.capture(), eq(1001L), eq("CREATED"), isNull(), isNull());
         assertThat(eventCaptor.getValue().eventId().toString())
                 .isEqualTo("11111111-1111-1111-1111-111111111111");
         assertThat(eventCaptor.getValue().type()).isEqualTo(EventTopics.COMMENT_CREATED);
@@ -36,11 +37,11 @@ class CommentChangedConsumerTest {
     void projectsCreatedCommentOnTheOrderedLifecycleTopic() throws Exception {
         consumer.consume(event("33333333-3333-3333-3333-333333333333",
                 EventTopics.COMMENT_CHANGED, "10", """
-                        {"commentId":10,"postId":1002,"changeType":"CREATED"}
+                        {"commentId":10,"postId":1002,"changeType":"CREATED","commentCount":5,"counterVersion":9}
                         """));
 
         ArgumentCaptor<ValidatedEvent> eventCaptor = ArgumentCaptor.forClass(ValidatedEvent.class);
-        verify(repository).apply(eventCaptor.capture(), eq(1002L), eq("CREATED"));
+        verify(repository).apply(eventCaptor.capture(), eq(1002L), eq("CREATED"), eq(9L), eq(5L));
         assertThat(eventCaptor.getValue().eventId().toString())
                 .isEqualTo("33333333-3333-3333-3333-333333333333");
         assertThat(eventCaptor.getValue().type()).isEqualTo(EventTopics.COMMENT_CHANGED);
@@ -90,6 +91,14 @@ class CommentChangedConsumerTest {
                 "Comment payload changeType must be a non-blank string");
         assertRejected("{\"commentId\":13,\"postId\":1001,\"changeType\":\"UPDATED\"}",
                 "Unsupported comment change type: UPDATED");
+        assertRejected("{\"commentId\":13,\"postId\":1001,\"changeType\":\"CREATED\",\"commentCount\":-1}",
+                "Comment payload commentCount must be a non-negative integer");
+        assertRejected("{\"commentId\":13,\"postId\":1001,\"changeType\":\"CREATED\",\"commentCount\":\"1\"}",
+                "Comment payload commentCount must be a non-negative integer");
+        assertRejected("{\"commentId\":13,\"postId\":1001,\"changeType\":\"CREATED\",\"commentCount\":1}",
+                "Comment counter snapshot requires commentCount and counterVersion");
+        assertRejected("{\"commentId\":13,\"postId\":1001,\"changeType\":\"CREATED\",\"commentCount\":1,\"counterVersion\":0}",
+                "Comment payload counterVersion must be a positive integer");
 
         verifyNoInteractions(repository);
     }

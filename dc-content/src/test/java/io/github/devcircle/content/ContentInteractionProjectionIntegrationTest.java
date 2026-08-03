@@ -54,6 +54,7 @@ class ContentInteractionProjectionIntegrationTest {
 
     @BeforeEach
     void preparePost() {
+        jdbcClient.sql("DELETE FROM content_counter_projection_watermark WHERE counter_type = 'LIKE'").update();
         jdbcClient.sql("DELETE FROM interaction_projection_dedup").update();
         jdbcClient.sql("DELETE FROM post WHERE id IN (1001, 1002)").update();
         jdbcClient.sql("""

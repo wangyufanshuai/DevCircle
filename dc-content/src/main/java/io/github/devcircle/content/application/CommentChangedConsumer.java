@@ -44,7 +44,10 @@ class CommentChangedConsumer {
         if (!event.aggregateId().equals(Long.toString(commentId))) {
             throw new IllegalArgumentException("Comment aggregateId does not match commentId");
         }
-        projectionRepository.apply(event, postId, changeType);
+        Long commentCount = optionalNonNegativeLong(payload, "commentCount");
+        Long counterVersion = optionalPositiveLong(payload, "counterVersion");
+        requirePairedSnapshot(commentCount, counterVersion);
+        projectionRepository.apply(event, postId, changeType, counterVersion, commentCount);
     }
 
     private long requiredPositiveLong(JsonNode payload, String field) {
@@ -61,5 +64,29 @@ class CommentChangedConsumer {
             throw new IllegalArgumentException("Comment payload " + field + " must be a non-blank string");
         }
         return value.textValue();
+    }
+
+    private Long optionalNonNegativeLong(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || value.isNull()) return null;
+        if (!value.isIntegralNumber() || !value.canConvertToLong() || value.longValue() < 0) {
+            throw new IllegalArgumentException("Comment payload " + field + " must be a non-negative integer");
+        }
+        return value.longValue();
+    }
+
+    private Long optionalPositiveLong(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || value.isNull()) return null;
+        if (!value.isIntegralNumber() || !value.canConvertToLong() || value.longValue() <= 0) {
+            throw new IllegalArgumentException("Comment payload " + field + " must be a positive integer");
+        }
+        return value.longValue();
+    }
+
+    private void requirePairedSnapshot(Long count, Long version) {
+        if ((count == null) != (version == null)) {
+            throw new IllegalArgumentException("Comment counter snapshot requires commentCount and counterVersion");
+        }
     }
 }
