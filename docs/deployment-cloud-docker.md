@@ -6,7 +6,7 @@
 
 - 2 核 8 GB 内存以上，推荐 4 核 16 GB。
 - Docker 29+ 和 Docker Compose v2。
-- 生产公网只需要开放 80/443；Gateway 的 8080 仅在确有运维需要时由防火墙限制来源。
+- 生产公网只开放 80/443；Gateway 的 8080 固定绑定宿主机 `127.0.0.1`，不接受远程连接。
 - 所有环境都使用真实认证；生产必须通过环境变量注入强随机 JWT secret、数据库密码和 MinIO 密钥。
 
 ## 启动步骤
@@ -22,7 +22,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 访问入口：
 
 - 网站：`https://<domain>`
-- Gateway（如开放）：`http://<server-ip>:8080`
+- Gateway 本机诊断：`http://127.0.0.1:8080`
 
 本地演示仍使用 `docker-compose.yml` 的 `demo` profile；它会暴露开发端口，不得直接作为公网生产配置。
 

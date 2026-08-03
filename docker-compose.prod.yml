@@ -332,7 +332,7 @@ services:
       DC_IDENTITY_URI: http://dc-identity:8201
       DC_CONTENT_AGGREGATE_URI: http://dc-content-aggregate:8202
       DC_DISCOVERY_URI: http://dc-discovery:8203
-    ports: ["8080:8080"]
+    ports: ["127.0.0.1:8080:8080"]
     depends_on:
       dc-identity: { condition: service_healthy }
       dc-content-aggregate: { condition: service_healthy }

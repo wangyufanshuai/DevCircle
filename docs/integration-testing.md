@@ -16,6 +16,8 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 随后同步 HTTP 调用统一收口到有界客户端工厂，连接和读取超时分别固定为 1 秒与 2 秒；评论、互动、推荐、搜索、旧通知事件回源和 GitHub OAuth 不再使用无限等待的默认客户端，聚合门面另保留 2 秒 Reactor 超时。工厂测试用真实本地 HTTP Server 验证健康响应、尾部斜杠规范化、读取超时和非法配置失败。清理陈旧测试报告后的完整 `./mvnw.cmd -B clean verify -Pcoverage` 通过：16/16 个模块、105 个套件、455 个测试，0 failures/errors/skipped；五类 Testcontainers 实际运行，聚合行/分支覆盖率为 84.37%/75.84%，全部关键状态机通过门禁。该证据不改变真实 Compose E2E 的资源阻断状态。
 
+生产暴露面门禁随后扩展为 9 项：Gateway 的宿主机 8080 必须绑定 `127.0.0.1`，所有应用必须保持生产模式、关闭读取降级与主题 Seed，并禁用 SpringDoc API 与 Swagger UI；Caddy 管理 API 必须只监听容器内 localhost。生产 Compose 实际渲染确认 `host_ip=127.0.0.1`，`caddy:2.10.2-alpine` 对当前 Caddyfile 的真实 `caddy validate` 通过。该结果验证配置契约，不替代目标主机防火墙和公网探测。
+
 真实 E2E profile 的 Outbox 依赖现在显式声明：auth/content/review 脚本关闭 Outbox，避免在无 Kafka 的隔离套件中产生无关 broker 重试；community 脚本开启 Outbox，并由 `test-docker-preflight.sh` 契约校验该差异。
 
 前端当前基线为 `npm run build` 成功、四个 Playwright project 共 116/116 通过。该套件使用显式 API 拦截，不等同于真实多服务 E2E。真实认证、内容、审核和社区 Compose E2E 仍需在至少 2 GiB Docker（建议 4 GiB 以上）环境执行；本机当前 Docker 配额约 1.93 GiB，按设计阻断真实业务验收。

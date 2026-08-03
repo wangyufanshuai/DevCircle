@@ -20,9 +20,17 @@ APP_SERVICES = {
 EXPECTED_SERVICES = APP_SERVICES | {
     "mysql", "redis", "kafka", "elasticsearch", "minio", "web-static", "web",
 }
-PUBLIC_PORTS = {
-    "dc-gateway": {(8080, 8080, "tcp")},
-    "web": {(80, 80, "tcp"), (443, 443, "tcp"), (443, 443, "udp")},
+PUBLISHED_PORTS = {
+    "dc-gateway": {("127.0.0.1", 8080, 8080, "tcp")},
+    "web": {(None, 80, 80, "tcp"), (None, 443, 443, "tcp"), (None, 443, 443, "udp")},
+}
+
+PRODUCTION_ENVIRONMENT = {
+    "DEVCIRCLE_PRODUCTION_MODE": "true",
+    "DEVCIRCLE_READ_FALLBACK_ENABLED": "false",
+    "DEVCIRCLE_THEME_CONTENT_SEED_ENABLED": "false",
+    "SPRINGDOC_API_DOCS_ENABLED": "false",
+    "SPRINGDOC_SWAGGER_UI_ENABLED": "false",
 }
 
 
@@ -52,14 +60,26 @@ def positive_number(service: str, config: dict, field: str) -> float:
     return value
 
 
-def port_contract(service: str, config: dict) -> set[tuple[int, int, str]]:
+def port_contract(service: str, config: dict) -> set[tuple[str | None, int, int, str]]:
     ports = set()
     for port in config.get("ports", []):
-        ports.add((int(port["published"]), int(port["target"]), port.get("protocol", "tcp")))
-    expected = PUBLIC_PORTS.get(service, set())
+        ports.add((port.get("host_ip"), int(port["published"]), int(port["target"]),
+                   port.get("protocol", "tcp")))
+    expected = PUBLISHED_PORTS.get(service, set())
     if ports != expected:
         fail(f"{service} published ports {sorted(ports)} do not match {sorted(expected)}")
     return ports
+
+
+def validate_caddyfile(caddyfile: Path) -> None:
+    try:
+        text = caddyfile.read_text(encoding="utf-8")
+    except OSError as error:
+        fail(f"cannot read production Caddyfile: {error}")
+    if "admin localhost:2019" not in text:
+        fail("Caddy admin API must listen on localhost:2019")
+    if "admin 0.0.0.0:" in text or "admin :2019" in text:
+        fail("Caddy admin API must not listen on all container interfaces")
 
 
 def validate(data: dict) -> tuple[int, int]:
@@ -98,6 +118,9 @@ def validate(data: dict) -> tuple[int, int]:
         if not 384 * MIB <= memory <= 768 * MIB:
             fail(f"{name} memory limit must stay between 384 and 768 MiB")
         environment = config.get("environment") or {}
+        for key, expected in PRODUCTION_ENVIRONMENT.items():
+            if str(environment.get(key, "")).lower() != expected:
+                fail(f"{name} must set {key}={expected}")
         java_options = environment.get("JAVA_TOOL_OPTIONS", "")
         for option in ("-XX:MaxRAMPercentage=", "-XX:+ExitOnOutOfMemoryError"):
             if option not in java_options:
@@ -129,15 +152,17 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--compose-file", default="docker-compose.prod.yml", type=Path)
     parser.add_argument("--env-file", default=".env.production.example", type=Path)
+    parser.add_argument("--caddyfile", default="deploy/Caddyfile", type=Path)
     args = parser.parse_args()
     try:
         service_count, total_memory = validate(rendered_compose(args.compose_file, args.env_file))
+        validate_caddyfile(args.caddyfile)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(f"Production resource budget validation failed: {error}", file=sys.stderr)
         return 1
     print(
         f"Production resource budgets validated: services={service_count} "
-        f"memory_ceiling={total_memory / GIB:.2f}GiB public_services={len(PUBLIC_PORTS)}"
+        f"memory_ceiling={total_memory / GIB:.2f}GiB published_services={len(PUBLISHED_PORTS)}"
     )
     return 0
 

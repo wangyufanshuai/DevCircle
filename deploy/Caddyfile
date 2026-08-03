@@ -1,6 +1,6 @@
 {
     email {$TLS_EMAIL}
-    admin 0.0.0.0:2019
+    admin localhost:2019
 }
 
 {$DOMAIN} {

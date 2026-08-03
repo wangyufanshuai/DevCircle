@@ -23,6 +23,11 @@ def app_environment() -> dict[str, str]:
         "SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE": "8",
         "SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT": "3000",
         "SERVER_TOMCAT_THREADS_MAX": "48",
+        "DEVCIRCLE_PRODUCTION_MODE": "true",
+        "DEVCIRCLE_READ_FALLBACK_ENABLED": "false",
+        "DEVCIRCLE_THEME_CONTENT_SEED_ENABLED": "false",
+        "SPRINGDOC_API_DOCS_ENABLED": "false",
+        "SPRINGDOC_SWAGGER_UI_ENABLED": "false",
     }
 
 
@@ -71,7 +76,7 @@ def valid_compose() -> dict:
         },
     })
     services["dc-gateway"]["ports"] = [
-        {"published": 8080, "target": 8080, "protocol": "tcp"},
+        {"host_ip": "127.0.0.1", "published": 8080, "target": 8080, "protocol": "tcp"},
     ]
     return {"services": services}
 
@@ -120,6 +125,33 @@ class ProductionResourceBudgetTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "unexpected=.*debug-console"):
             budgets.validate(invalid)
+
+    def test_rejects_a_gateway_port_bound_to_all_interfaces(self) -> None:
+        self.compose["services"]["dc-gateway"]["ports"][0].pop("host_ip")
+
+        with self.assertRaisesRegex(ValueError, "dc-gateway published ports"):
+            budgets.validate(self.compose)
+
+    def test_rejects_production_fallback_or_api_documentation(self) -> None:
+        self.compose["services"]["dc-content"]["environment"]["DEVCIRCLE_READ_FALLBACK_ENABLED"] = "true"
+        with self.assertRaisesRegex(ValueError, "DEVCIRCLE_READ_FALLBACK_ENABLED=false"):
+            budgets.validate(self.compose)
+
+        self.compose = valid_compose()
+        self.compose["services"]["dc-auth"]["environment"]["SPRINGDOC_API_DOCS_ENABLED"] = "true"
+        with self.assertRaisesRegex(ValueError, "SPRINGDOC_API_DOCS_ENABLED=false"):
+            budgets.validate(self.compose)
+
+    def test_caddy_admin_api_is_restricted_to_the_container_loopback(self) -> None:
+        temporary = Path(self.id().replace(".", "-") + ".Caddyfile")
+        try:
+            temporary.write_text("{\n    admin localhost:2019\n}\n", encoding="utf-8")
+            budgets.validate_caddyfile(temporary)
+            temporary.write_text("{\n    admin 0.0.0.0:2019\n}\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "localhost:2019"):
+                budgets.validate_caddyfile(temporary)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
