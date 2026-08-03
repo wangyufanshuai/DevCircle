@@ -40,7 +40,12 @@ class HttpPostPublicationGateway implements PostPublicationGateway {
             }
             Object likes = data.get("likes");
             long likeCount = likes instanceof Number number ? Math.max(0, number.longValue()) : 0;
-            return new PublishedPost(postId, likeCount);
+            if (!(data.get("author") instanceof Map<?, ?> author)
+                    || !(author.get("id") instanceof Number authorIdValue)
+                    || authorIdValue.longValue() <= 0) {
+                throw new BusinessException(ErrorCode.DEPENDENCY_UNAVAILABLE, "内容作者暂时无法确认，请稍后重试");
+            }
+            return new PublishedPost(postId, likeCount, authorIdValue.longValue());
         } catch (HttpClientErrorException.NotFound exception) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "内容不存在或尚未发布");
         } catch (RestClientException exception) {

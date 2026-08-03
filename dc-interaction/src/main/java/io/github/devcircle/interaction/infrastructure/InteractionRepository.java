@@ -23,7 +23,9 @@ public class InteractionRepository {
     }
 
     @Transactional
-    public InteractionWriteResult insertLike(Long userId, Long postId, long baselineLikeCount, String idempotencyKey) {
+    public InteractionWriteResult insertLike(Long userId, Long postId, long baselineLikeCount,
+                                             long receiverId, String idempotencyKey) {
+        requireValidReceiver(receiverId);
         if (claimIdempotency(userId, "LIKE", postId, idempotencyKey)) {
             return new InteractionWriteResult(false, true);
         }
@@ -40,14 +42,16 @@ public class InteractionRepository {
                             """)
                     .param("postId", postId)
                     .update();
-            writeEvent(userId, postId, "LIKE");
+            writeEvent(userId, receiverId, postId, "LIKE");
         }
         attachResource(idempotencyKey, postId);
         return new InteractionWriteResult(rows > 0, false);
     }
 
     @Transactional
-    public InteractionWriteResult insertFavorite(Long userId, Long postId, long baselineLikeCount, String idempotencyKey) {
+    public InteractionWriteResult insertFavorite(Long userId, Long postId, long baselineLikeCount,
+                                                 long receiverId, String idempotencyKey) {
+        requireValidReceiver(receiverId);
         if (claimIdempotency(userId, "FAVORITE", postId, idempotencyKey)) {
             return new InteractionWriteResult(false, true);
         }
@@ -66,14 +70,16 @@ public class InteractionRepository {
                             """)
                     .param("postId", postId)
                     .update();
-            writeEvent(userId, postId, "FAVORITE");
+            writeEvent(userId, receiverId, postId, "FAVORITE");
         }
         attachResource(idempotencyKey, postId);
         return new InteractionWriteResult(rows > 0, false);
     }
 
     @Transactional
-    public InteractionWriteResult deleteLike(Long userId, Long postId, long baselineLikeCount, String idempotencyKey) {
+    public InteractionWriteResult deleteLike(Long userId, Long postId, long baselineLikeCount,
+                                             long receiverId, String idempotencyKey) {
+        requireValidReceiver(receiverId);
         if (claimIdempotency(userId, "UNLIKE", postId, idempotencyKey)) {
             return new InteractionWriteResult(false, true);
         }
@@ -88,14 +94,16 @@ public class InteractionRepository {
                             WHERE post_id = :postId
                             """)
                     .param("postId", postId).update();
-            writeEvent(userId, postId, "UNLIKE");
+            writeEvent(userId, receiverId, postId, "UNLIKE");
         }
         attachResource(idempotencyKey, postId);
         return new InteractionWriteResult(rows > 0, false);
     }
 
     @Transactional
-    public InteractionWriteResult deleteFavorite(Long userId, Long postId, long baselineLikeCount, String idempotencyKey) {
+    public InteractionWriteResult deleteFavorite(Long userId, Long postId, long baselineLikeCount,
+                                                 long receiverId, String idempotencyKey) {
+        requireValidReceiver(receiverId);
         if (claimIdempotency(userId, "UNFAVORITE", postId, idempotencyKey)) {
             return new InteractionWriteResult(false, true);
         }
@@ -110,7 +118,7 @@ public class InteractionRepository {
                             WHERE post_id = :postId
                             """)
                     .param("postId", postId).update();
-            writeEvent(userId, postId, "UNFAVORITE");
+            writeEvent(userId, receiverId, postId, "UNFAVORITE");
         }
         attachResource(idempotencyKey, postId);
         return new InteractionWriteResult(rows > 0, false);
@@ -141,6 +149,12 @@ public class InteractionRepository {
         return true;
     }
 
+    private void requireValidReceiver(long receiverId) {
+        if (receiverId <= 0) {
+            throw new IllegalArgumentException("Interaction receiverId must be positive");
+        }
+    }
+
     private void attachResource(String key, Long resourceId) {
         jdbcClient.sql("UPDATE idempotency_record SET resource_id = :resourceId WHERE idempotency_key = :key")
                 .param("resourceId", resourceId)
@@ -159,7 +173,7 @@ public class InteractionRepository {
                 .update();
     }
 
-    private void writeEvent(Long userId, Long postId, String interactionType) {
+    private void writeEvent(Long userId, long receiverId, Long postId, String interactionType) {
         CounterSnapshot snapshot = jdbcClient.sql("""
                         SELECT like_count, favorite_count, projection_version
                         FROM post_counter WHERE post_id = :postId
@@ -170,7 +184,8 @@ public class InteractionRepository {
                         rs.getLong("projection_version")))
                 .single();
         EventEnvelope event = EventEnvelope.now(EventTopics.INTERACTION_CHANGED, "dc-interaction", String.valueOf(postId),
-                        Map.of("actorId", userId, "postId", postId, "interactionType", interactionType,
+                        Map.of("actorId", userId, "receiverId", receiverId, "postId", postId,
+                        "interactionType", interactionType,
                         "likeCount", snapshot.likeCount(), "favoriteCount", snapshot.favoriteCount(),
                         "counterVersion", snapshot.version()));
         try {

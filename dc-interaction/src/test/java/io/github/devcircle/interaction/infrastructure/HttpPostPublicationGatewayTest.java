@@ -24,7 +24,7 @@ class HttpPostPublicationGatewayTest {
     void startServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/api/posts/1001", exchange -> respond(exchange, 200,
-                "{\"code\":\"OK\",\"data\":{\"id\":1001,\"status\":\"PUBLISHED\",\"likes\":17}}"));
+                "{\"code\":\"OK\",\"data\":{\"id\":1001,\"status\":\"PUBLISHED\",\"likes\":17,\"author\":{\"id\":42}}}"));
         server.createContext("/api/posts/1002", exchange -> respond(exchange, 404,
                 "{\"code\":\"RESOURCE_NOT_FOUND\",\"data\":null}"));
         server.createContext("/api/posts/1003", exchange -> respond(exchange, 200,
@@ -41,12 +41,23 @@ class HttpPostPublicationGatewayTest {
     @Test
     void acceptsOnlyPublishedContent() {
         assertThat(gateway.requirePublished(1001L).likeCount()).isEqualTo(17);
+        assertThat(gateway.requirePublished(1001L).authorId()).isEqualTo(42L);
         assertThatThrownBy(() -> gateway.requirePublished(1002L))
                 .isInstanceOfSatisfying(BusinessException.class,
                         error -> assertThat(error.code()).isEqualTo(ErrorCode.RESOURCE_NOT_FOUND));
         assertThatThrownBy(() -> gateway.requirePublished(1003L))
                 .isInstanceOfSatisfying(BusinessException.class,
                         error -> assertThat(error.code()).isEqualTo(ErrorCode.RESOURCE_NOT_FOUND));
+    }
+
+    @Test
+    void rejectsPublishedContentWithoutAnAuthorBeforeWritingAnInteraction() {
+        server.createContext("/api/posts/1004", exchange -> respond(exchange, 200,
+                "{\"code\":\"OK\",\"data\":{\"id\":1004,\"status\":\"PUBLISHED\",\"likes\":3}}"));
+
+        assertThatThrownBy(() -> gateway.requirePublished(1004L))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.code()).isEqualTo(ErrorCode.DEPENDENCY_UNAVAILABLE));
     }
 
     @Test

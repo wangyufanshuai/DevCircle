@@ -85,11 +85,11 @@ class InteractionRepositoryStateTest {
 
     @Test
     void likesAndFavoritesChangeCountersAndEventsExactlyOncePerRealTransition() throws Exception {
-        var like = repository.insertLike(7L, 1001L, 10, "like-key");
-        var sameLikeRequest = repository.insertLike(7L, 1001L, 10, "like-key");
-        var alreadyLiked = repository.insertLike(7L, 1001L, 10, "like-second-key");
-        var favorite = repository.insertFavorite(7L, 1001L, 10, "favorite-key");
-        var alreadyFavorite = repository.insertFavorite(7L, 1001L, 10, "favorite-second-key");
+        var like = repository.insertLike(7L, 1001L, 10, 42L, "like-key");
+        var sameLikeRequest = repository.insertLike(7L, 1001L, 10, 42L, "like-key");
+        var alreadyLiked = repository.insertLike(7L, 1001L, 10, 42L, "like-second-key");
+        var favorite = repository.insertFavorite(7L, 1001L, 10, 42L, "favorite-key");
+        var alreadyFavorite = repository.insertFavorite(7L, 1001L, 10, 42L, "favorite-second-key");
 
         assertThat(like.inserted()).isTrue();
         assertThat(sameLikeRequest.duplicateRequest()).isTrue();
@@ -99,11 +99,11 @@ class InteractionRepositoryStateTest {
         assertState(7L, 1001L, true, true, 11, 1);
         assertThat(eventCount()).isEqualTo(2);
 
-        var unlike = repository.deleteLike(7L, 1001L, 10, "unlike-key");
-        var sameUnlikeRequest = repository.deleteLike(7L, 1001L, 10, "unlike-key");
-        var alreadyUnliked = repository.deleteLike(7L, 1001L, 10, "unlike-second-key");
-        var unfavorite = repository.deleteFavorite(7L, 1001L, 10, "unfavorite-key");
-        var alreadyUnfavorited = repository.deleteFavorite(7L, 1001L, 10, "unfavorite-second-key");
+        var unlike = repository.deleteLike(7L, 1001L, 10, 42L, "unlike-key");
+        var sameUnlikeRequest = repository.deleteLike(7L, 1001L, 10, 42L, "unlike-key");
+        var alreadyUnliked = repository.deleteLike(7L, 1001L, 10, 42L, "unlike-second-key");
+        var unfavorite = repository.deleteFavorite(7L, 1001L, 10, 42L, "unfavorite-key");
+        var alreadyUnfavorited = repository.deleteFavorite(7L, 1001L, 10, 42L, "unfavorite-second-key");
 
         assertThat(unlike.inserted()).isTrue();
         assertThat(sameUnlikeRequest.duplicateRequest()).isTrue();
@@ -137,19 +137,31 @@ class InteractionRepositoryStateTest {
                     }
                 })
                 .containsExactly(1L, 2L, 3L, 4L);
+        assertThat(jdbcClient.sql("SELECT payload FROM outbox_event ORDER BY id")
+                .query(String.class).list())
+                .extracting(payload -> {
+                    try {
+                        var jsonRoot = mapper.readTree(payload);
+                        if (jsonRoot.isTextual()) jsonRoot = mapper.readTree(jsonRoot.textValue());
+                        return jsonRoot.path("payload").path("receiverId").asLong();
+                    } catch (Exception ex) {
+                        throw new AssertionError(ex);
+                    }
+                })
+                .containsOnly(42L);
     }
 
     @Test
     void idempotencyKeysCannotMoveAcrossUsersPostsOrOperations() {
-        repository.insertLike(7L, 1001L, 0, "bound-key");
+        repository.insertLike(7L, 1001L, 0, 42L, "bound-key");
 
-        assertCode(() -> repository.insertLike(8L, 1001L, 0, "bound-key"),
+        assertCode(() -> repository.insertLike(8L, 1001L, 0, 42L, "bound-key"),
                 ErrorCode.DUPLICATE_OPERATION);
-        assertCode(() -> repository.insertLike(7L, 1002L, 0, "bound-key"),
+        assertCode(() -> repository.insertLike(7L, 1002L, 0, 42L, "bound-key"),
                 ErrorCode.DUPLICATE_OPERATION);
-        assertCode(() -> repository.insertFavorite(7L, 1001L, 0, "bound-key"),
+        assertCode(() -> repository.insertFavorite(7L, 1001L, 0, 42L, "bound-key"),
                 ErrorCode.DUPLICATE_OPERATION);
-        assertCode(() -> repository.deleteLike(7L, 1001L, 0, "bound-key"),
+        assertCode(() -> repository.deleteLike(7L, 1001L, 0, 42L, "bound-key"),
                 ErrorCode.DUPLICATE_OPERATION);
 
         assertThat(count("like_record")).isEqualTo(1);
@@ -165,21 +177,21 @@ class InteractionRepositoryStateTest {
         assertThat(missing.likeCount()).isNull();
         assertThat(missing.favoriteCount()).isNull();
 
-        repository.insertFavorite(9L, 2001L, -50, "clamped-favorite");
-        repository.insertFavorite(9L, 2002L, 3, "second-favorite");
+        repository.insertFavorite(9L, 2001L, -50, 42L, "clamped-favorite");
+        repository.insertFavorite(9L, 2002L, 3, 42L, "second-favorite");
 
         assertState(9L, 2001L, false, true, 0, 1);
         assertThat(repository.favoritePostIds(9L, 0)).hasSize(1);
         assertThat(repository.favoritePostIds(9L, 1000)).containsExactlyInAnyOrder(2001L, 2002L);
 
-        repository.deleteFavorite(9L, 2001L, 0, "remove-clamped");
-        repository.deleteFavorite(9L, 2001L, 0, "remove-clamped-again");
+        repository.deleteFavorite(9L, 2001L, 0, 42L, "remove-clamped");
+        repository.deleteFavorite(9L, 2001L, 0, 42L, "remove-clamped-again");
         assertState(9L, 2001L, false, false, 0, 0);
     }
 
     @Test
     void eventSerializationFailureRollsBackStateCounterAndIdempotencyTogether() {
-        assertThatThrownBy(() -> failingRepository.insertLike(7L, 3001L, 12, "failing-like"))
+        assertThatThrownBy(() -> failingRepository.insertLike(7L, 3001L, 12, 42L, "failing-like"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("serialize interaction event");
 
@@ -188,9 +200,20 @@ class InteractionRepositoryStateTest {
         assertThat(count("idempotency_record")).isZero();
         assertThat(eventCount()).isZero();
 
-        var retry = repository.insertLike(7L, 3001L, 12, "failing-like");
+        var retry = repository.insertLike(7L, 3001L, 12, 42L, "failing-like");
         assertThat(retry.inserted()).isTrue();
         assertState(7L, 3001L, true, false, 13, 0);
+    }
+
+    @Test
+    void invalidNotificationReceiverFailsBeforeClaimingTheRequestKey() {
+        assertThatThrownBy(() -> repository.insertLike(7L, 4001L, 0, 0, "invalid-receiver"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("receiverId");
+
+        assertThat(count("idempotency_record")).isZero();
+        assertThat(count("like_record")).isZero();
+        assertThat(eventCount()).isZero();
     }
 
     private void assertState(Long userId, Long postId, boolean liked, boolean favorited,

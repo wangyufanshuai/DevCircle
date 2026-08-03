@@ -67,7 +67,7 @@ class InteractionPipelineIntegrationTest {
         @Bean
         @Primary
         PostPublicationGateway postPublicationGateway() {
-            return postId -> new PostPublicationGateway.PublishedPost(postId, postId == 9004L ? 17 : 0);
+            return postId -> new PostPublicationGateway.PublishedPost(postId, postId == 9004L ? 17 : 0, 42L);
         }
     }
 
@@ -95,6 +95,7 @@ class InteractionPipelineIntegrationTest {
                         """).query(String.class).single();
         assertThat(objectMapper.readTree(payload).path("payload").path("likeCount").asLong()).isEqualTo(1L);
         assertThat(objectMapper.readTree(payload).path("payload").path("counterVersion").asLong()).isEqualTo(1L);
+        assertThat(objectMapper.readTree(payload).path("payload").path("receiverId").asLong()).isEqualTo(42L);
     }
 
     @Test

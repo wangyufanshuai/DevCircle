@@ -15,6 +15,7 @@ import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
@@ -49,6 +50,23 @@ class NotificationEventConsumerTest {
         verify(repository).createOnce(matching(event, objectMapper), eq(7L), eq(2L),
                 eq("INTERACTION"), eq("新的内容互动"), eq("你的内容收到了一次新的互动"),
                 eq("POST"), eq(9001L), eq("/posts/9001"));
+    }
+
+    @Test
+    void interactionWithReceiverDoesNotDependOnTheContentService() throws Exception {
+        NotificationRepository repository = mock(NotificationRepository.class);
+        NotificationTargetResolver resolver = mock(NotificationTargetResolver.class);
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+        NotificationEventConsumer consumer = new NotificationEventConsumer(repository, objectMapper, resolver);
+        EventEnvelope event = EventEnvelope.now(EventTopics.INTERACTION_CHANGED, "dc-interaction", "9001",
+                Map.of("actorId", 2L, "receiverId", 7L, "postId", 9001L, "interactionType", "LIKE"));
+
+        consumer.consume(objectMapper.writeValueAsString(event));
+
+        verify(repository).createOnce(matching(event, objectMapper), eq(7L), eq(2L),
+                eq("INTERACTION"), eq("新的内容互动"), eq("你的内容收到了一次新的互动"),
+                eq("POST"), eq(9001L), eq("/posts/9001"));
+        verifyNoInteractions(resolver);
     }
 
     @Test

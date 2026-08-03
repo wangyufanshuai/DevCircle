@@ -22,7 +22,7 @@ public class InteractionService {
     /** Compatibility constructor retained for isolated unit tests and older embedders. */
     public InteractionService(InteractionRepository interactionRepository,
                               org.springframework.data.redis.core.StringRedisTemplate ignoredRedisTemplate) {
-        this(interactionRepository, postId -> new PostPublicationGateway.PublishedPost(postId, 0));
+        this(interactionRepository, postId -> new PostPublicationGateway.PublishedPost(postId, 0, 1));
     }
 
     public InteractionResult like(Long userId, Long postId, String idempotencyKey) {
@@ -52,11 +52,15 @@ public class InteractionService {
         PostPublicationGateway.PublishedPost publishedPost = postPublicationGateway.requirePublished(postId);
         InteractionRepository.InteractionWriteResult result;
         if ("LIKE".equals(type)) {
-            result = active ? interactionRepository.insertLike(userId, postId, publishedPost.likeCount(), idempotencyKey)
-                    : interactionRepository.deleteLike(userId, postId, publishedPost.likeCount(), idempotencyKey);
+            result = active ? interactionRepository.insertLike(userId, postId, publishedPost.likeCount(),
+                    publishedPost.authorId(), idempotencyKey)
+                    : interactionRepository.deleteLike(userId, postId, publishedPost.likeCount(),
+                    publishedPost.authorId(), idempotencyKey);
         } else {
-            result = active ? interactionRepository.insertFavorite(userId, postId, publishedPost.likeCount(), idempotencyKey)
-                    : interactionRepository.deleteFavorite(userId, postId, publishedPost.likeCount(), idempotencyKey);
+            result = active ? interactionRepository.insertFavorite(userId, postId, publishedPost.likeCount(),
+                    publishedPost.authorId(), idempotencyKey)
+                    : interactionRepository.deleteFavorite(userId, postId, publishedPost.likeCount(),
+                    publishedPost.authorId(), idempotencyKey);
         }
         return new InteractionResult(postId, type, active, result.duplicateRequest() || !result.inserted(), idempotencyKey);
     }

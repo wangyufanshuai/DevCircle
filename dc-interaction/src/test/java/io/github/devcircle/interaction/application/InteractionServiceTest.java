@@ -20,8 +20,8 @@ class InteractionServiceTest {
         InteractionRepository repository = mock(InteractionRepository.class);
         PostPublicationGateway publicationGateway = mock(PostPublicationGateway.class);
         when(publicationGateway.requirePublished(1001L))
-                .thenReturn(new PostPublicationGateway.PublishedPost(1001L, 17));
-        when(repository.insertLike(1L, 1001L, 17L, "like-1001-user-1"))
+                .thenReturn(new PostPublicationGateway.PublishedPost(1001L, 17, 42L));
+        when(repository.insertLike(1L, 1001L, 17L, 42L, "like-1001-user-1"))
                 .thenReturn(new InteractionRepository.InteractionWriteResult(true, false))
                 .thenReturn(new InteractionRepository.InteractionWriteResult(false, true));
         InteractionService service = new InteractionService(repository, publicationGateway);
@@ -49,7 +49,7 @@ class InteractionServiceTest {
 
         verify(repository, never()).insertLike(org.mockito.ArgumentMatchers.anyLong(),
                 org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong(),
-                org.mockito.ArgumentMatchers.anyString());
+                org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test
@@ -74,14 +74,14 @@ class InteractionServiceTest {
         InteractionRepository repository = mock(InteractionRepository.class);
         PostPublicationGateway publicationGateway = mock(PostPublicationGateway.class);
         when(publicationGateway.requirePublished(1001L))
-                .thenReturn(new PostPublicationGateway.PublishedPost(1001L, 17));
-        when(repository.insertLike(1L, 1001L, 17L, "like-key"))
+                .thenReturn(new PostPublicationGateway.PublishedPost(1001L, 17, 42L));
+        when(repository.insertLike(1L, 1001L, 17L, 42L, "like-key"))
                 .thenReturn(new InteractionRepository.InteractionWriteResult(true, false));
-        when(repository.insertFavorite(1L, 1001L, 17L, "favorite-key"))
+        when(repository.insertFavorite(1L, 1001L, 17L, 42L, "favorite-key"))
                 .thenReturn(new InteractionRepository.InteractionWriteResult(false, false));
-        when(repository.deleteLike(1L, 1001L, 17L, "unlike-key"))
+        when(repository.deleteLike(1L, 1001L, 17L, 42L, "unlike-key"))
                 .thenReturn(new InteractionRepository.InteractionWriteResult(true, false));
-        when(repository.deleteFavorite(1L, 1001L, 17L, "unfavorite-key"))
+        when(repository.deleteFavorite(1L, 1001L, 17L, 42L, "unfavorite-key"))
                 .thenReturn(new InteractionRepository.InteractionWriteResult(false, true));
         InteractionService service = new InteractionService(repository, publicationGateway);
 
@@ -98,9 +98,9 @@ class InteractionServiceTest {
         assertThat(unlike.duplicated()).isFalse();
         assertThat(unfavorite.active()).isFalse();
         assertThat(unfavorite.duplicated()).isTrue();
-        verify(repository).insertFavorite(1L, 1001L, 17L, "favorite-key");
-        verify(repository).deleteLike(1L, 1001L, 17L, "unlike-key");
-        verify(repository).deleteFavorite(1L, 1001L, 17L, "unfavorite-key");
+        verify(repository).insertFavorite(1L, 1001L, 17L, 42L, "favorite-key");
+        verify(repository).deleteLike(1L, 1001L, 17L, 42L, "unlike-key");
+        verify(repository).deleteFavorite(1L, 1001L, 17L, 42L, "unfavorite-key");
     }
 
     private void assertCode(ThrowingAction action, ErrorCode expected) {

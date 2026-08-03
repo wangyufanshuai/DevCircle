@@ -43,6 +43,8 @@ Outbox 发送等待受 `DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS` 控制，默认 15 秒
 
 评论服务和互动服务分别在本地事务中维护文章级权威计数与单调 `counterVersion`，并把计数快照写入 Outbox 事件。内容服务按生产者版本更新 `comment_count` 和 `like_count`，乱序旧版本只能写消费去重记录，不能回退计数；一旦接收带版本快照的事件，无版本旧事件也不能覆盖它。升级期间遗留事件仍可使用 `(occurredAtMillis, eventId)` 增量兼容路径。
 
+互动服务在接受写入前通过内容详情确认公开状态、当前点赞基线和作者身份，并把作者作为 `receiverId` 写入同一条 `interaction.changed` 事件。通知消费者处理新版事件时不再同步调用内容服务；缺少 `receiverId` 的旧事件保留一个版本的回源兼容路径，避免升级窗口内丢失通知。
+
 ## 推荐策略
 
 第一版推荐不训练模型，采用可解释规则：
