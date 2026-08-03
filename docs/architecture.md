@@ -39,6 +39,8 @@ Outbox 发送等待受 `DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS` 控制，默认 15 秒
 
 搜索服务只依赖事件，不直接跨库读取内容库。`post.created` 和 `post.updated` 更新索引，`post.deleted` 删除索引。Elasticsearch 短暂不可用时，消费者保留失败状态并由补偿任务重放。
 
+搜索投影以 `(occurredAtMillis, eventId)` 作为统一的单调版本。协调器和 Elasticsearch 脚本使用相同的字典序规则：较新的事件毫秒时间优先；同一毫秒内 eventId 较大的事件优先。这样同一时刻产生的审核、更新或删除事件不会被协调器误判为重复，也不会由旧事件覆盖较新投影。
+
 ## 推荐策略
 
 第一版推荐不训练模型，采用可解释规则：

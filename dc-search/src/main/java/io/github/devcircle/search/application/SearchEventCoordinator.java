@@ -84,15 +84,19 @@ class SearchEventCoordinator {
         }
 
         EventWatermark watermark = jdbcClient.sql("""
-                        SELECT occurred_at FROM search_event_watermark WHERE post_id = :postId
+                        SELECT occurred_at, last_event_id
+                        FROM search_event_watermark
+                        WHERE post_id = :postId
                         """)
                 .param("postId", postId)
                 .query((rs, rowNum) -> {
                     Timestamp value = rs.getTimestamp("occurred_at");
-                    return new EventWatermark(value == null ? null : value.toInstant());
+                    return new EventWatermark(
+                            value == null ? null : value.toInstant(),
+                            rs.getString("last_event_id"));
                 })
                 .single();
-        if (watermark.occurredAt() != null && !watermark.occurredAt().isBefore(occurredAt)) {
+        if (!isNewerThanWatermark(occurredAt, eventId, watermark)) {
             markCompletedRecord(eventId, leaseToken);
             releaseLease(leaseToken, postId);
             return ClaimResult.duplicate();
@@ -205,7 +209,14 @@ class SearchEventCoordinator {
         }
     }
 
-    private record EventWatermark(Instant occurredAt) {
+    private boolean isNewerThanWatermark(Instant occurredAt, String eventId, EventWatermark watermark) {
+        if (watermark.occurredAt() == null) return true;
+        int timeOrder = Long.compare(occurredAt.toEpochMilli(), watermark.occurredAt().toEpochMilli());
+        if (timeOrder != 0) return timeOrder > 0;
+        return watermark.lastEventId() == null || eventId.compareTo(watermark.lastEventId()) > 0;
+    }
+
+    private record EventWatermark(Instant occurredAt, String lastEventId) {
     }
 
     private record EventIdentity(String topic, long postId, String eventFingerprint) {

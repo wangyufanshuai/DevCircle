@@ -94,6 +94,45 @@ class SearchEventCoordinatorTest {
     }
 
     @Test
+    void equalProjectionMillisecondUsesEventIdAsTheDeterministicTieBreaker() {
+        Instant firstOccurredAt = Instant.parse("2026-07-30T10:30:00.000900Z");
+        Instant newerOccurredAt = Instant.parse("2026-07-30T10:30:00.000100Z");
+        Instant olderOccurredAt = Instant.parse("2026-07-30T10:30:00.000800Z");
+        String firstId = "55555555-5555-4555-8555-555555555555";
+        String newerId = "66666666-6666-4666-8666-666666666666";
+        String olderId = "44444444-4444-4444-8444-444444444444";
+
+        SearchEventCoordinator.ClaimResult firstClaim = acquire(
+                event(firstId, "post.updated", 43L, firstOccurredAt), 43L);
+        coordinator.complete(firstId, 43L, firstOccurredAt, "UPSERT", firstClaim.leaseToken());
+
+        SearchEventCoordinator.ClaimResult newerClaim = acquire(
+                event(newerId, "content.rejected", 43L, newerOccurredAt), 43L);
+        coordinator.complete(newerId, 43L, newerOccurredAt, "REMOVE", newerClaim.leaseToken());
+
+        assertDuplicate(event(olderId, "post.updated", 43L, olderOccurredAt), 43L);
+
+        String lastEventId = jdbcClient.sql("""
+                        SELECT last_event_id FROM search_event_watermark WHERE post_id = 43
+                        """)
+                .query(String.class)
+                .single();
+        String lastAction = jdbcClient.sql("""
+                        SELECT last_action FROM search_event_watermark WHERE post_id = 43
+                        """)
+                .query(String.class)
+                .single();
+        assertThat(lastEventId).isEqualTo(newerId);
+        assertThat(lastAction).isEqualTo("REMOVE");
+        assertThat(jdbcClient.sql("""
+                        SELECT status FROM search_consumer_dedup WHERE event_id = :eventId
+                        """)
+                .param("eventId", olderId)
+                .query(String.class)
+                .single()).isEqualTo("COMPLETED");
+    }
+
+    @Test
     void failedEventReleasesItsLeaseAndCanBeRetried() {
         String eventId = "33333333-3333-3333-3333-333333333333";
         Instant occurredAt = Instant.parse("2026-07-30T11:00:00Z");
