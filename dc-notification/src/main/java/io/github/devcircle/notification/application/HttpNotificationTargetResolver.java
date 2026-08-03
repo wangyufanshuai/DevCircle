@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
+import io.github.devcircle.common.http.BoundedRestClientFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -15,7 +16,7 @@ class HttpNotificationTargetResolver implements NotificationTargetResolver {
 
     HttpNotificationTargetResolver(@Value("${devcircle.content.base-url:http://localhost:8103}") String contentBaseUrl,
                                    ObjectMapper objectMapper) {
-        this.contentClient = RestClient.builder().baseUrl(contentBaseUrl).build();
+        this.contentClient = BoundedRestClientFactory.create(contentBaseUrl);
         this.objectMapper = objectMapper;
     }
 

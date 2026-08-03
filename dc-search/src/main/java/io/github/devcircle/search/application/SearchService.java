@@ -13,6 +13,7 @@ import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.common.model.PostSummary;
 import io.github.devcircle.common.seed.ThemeContentLibrary;
+import io.github.devcircle.common.http.BoundedRestClientFactory;
 import io.github.devcircle.search.infrastructure.PostSearchDocument;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
@@ -91,7 +92,7 @@ public class SearchService {
         this.elasticsearchOperations = elasticsearchOperations;
         this.objectMapper = objectMapper;
         this.envelopeValidator = new EventEnvelopeValidator(objectMapper);
-        this.contentClient = RestClient.builder().baseUrl(contentBaseUrl).build();
+        this.contentClient = BoundedRestClientFactory.create(contentBaseUrl);
         this.eventCoordinator = eventCoordinator;
     }
 

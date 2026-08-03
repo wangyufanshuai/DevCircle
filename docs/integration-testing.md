@@ -14,6 +14,8 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 同日互动写入契约增加内容作者 `receiverId`：互动服务在公开状态校验时同时取得作者身份，并在本地事务内把接收者、计数快照和单调版本写入 `interaction.changed`。通知消费者对新版事件不再同步调用内容服务，旧无接收者事件保留一个版本的回源兼容。完整 `./mvnw.cmd -B verify -Pcoverage` 再次通过：16/16 个模块、104 个套件、452 个测试，0 failures/errors/skipped，五类 Testcontainers 均实际运行；聚合行/分支覆盖率为 84.35%/75.77%，`NotificationEventConsumer` 分支覆盖率为 91.51%，全部关键状态机继续通过 85% 门禁。真实 Compose E2E 仍因本机 `.wslconfig` 的 2GB 上限被预检阻断，未记为通过。
 
+随后同步 HTTP 调用统一收口到有界客户端工厂，连接和读取超时分别固定为 1 秒与 2 秒；评论、互动、推荐、搜索、旧通知事件回源和 GitHub OAuth 不再使用无限等待的默认客户端，聚合门面另保留 2 秒 Reactor 超时。工厂测试用真实本地 HTTP Server 验证健康响应、尾部斜杠规范化、读取超时和非法配置失败。清理陈旧测试报告后的完整 `./mvnw.cmd -B clean verify -Pcoverage` 通过：16/16 个模块、105 个套件、455 个测试，0 failures/errors/skipped；五类 Testcontainers 实际运行，聚合行/分支覆盖率为 84.37%/75.84%，全部关键状态机通过门禁。该证据不改变真实 Compose E2E 的资源阻断状态。
+
 真实 E2E profile 的 Outbox 依赖现在显式声明：auth/content/review 脚本关闭 Outbox，避免在无 Kafka 的隔离套件中产生无关 broker 重试；community 脚本开启 Outbox，并由 `test-docker-preflight.sh` 契约校验该差异。
 
 前端当前基线为 `npm run build` 成功、四个 Playwright project 共 116/116 通过。该套件使用显式 API 拦截，不等同于真实多服务 E2E。真实认证、内容、审核和社区 Compose E2E 仍需在至少 2 GiB Docker（建议 4 GiB 以上）环境执行；本机当前 Docker 配额约 1.93 GiB，按设计阻断真实业务验收。

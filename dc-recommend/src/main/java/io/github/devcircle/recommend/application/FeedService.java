@@ -7,6 +7,7 @@ import io.github.devcircle.common.model.ExposureRequest;
 import io.github.devcircle.common.model.FeedItem;
 import io.github.devcircle.common.model.PostSummary;
 import io.github.devcircle.common.seed.ThemeContentLibrary;
+import io.github.devcircle.common.http.BoundedRestClientFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
@@ -57,7 +58,7 @@ public class FeedService {
         this.redisTemplate = redisTemplate;
         this.impressionRepository = impressionRepository;
         this.followSignalStore = followSignalStore;
-        this.contentClient = RestClient.builder().baseUrl(contentBaseUrl).build();
+        this.contentClient = BoundedRestClientFactory.create(contentBaseUrl);
     }
 
     public CursorPage<FeedItem> feed(Long userId, String cursor, int size) {
