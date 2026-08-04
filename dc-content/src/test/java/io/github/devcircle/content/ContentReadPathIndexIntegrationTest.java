@@ -1,0 +1,92 @@
+package io.github.devcircle.content;
+
+import org.flywaydb.core.Flyway;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.testcontainers.containers.MySQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@Testcontainers(disabledWithoutDocker = true)
+class ContentReadPathIndexIntegrationTest {
+    @Container
+    static final MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.4")
+            .withDatabaseName("dc_content")
+            .withUsername("devcircle")
+            .withPassword("devcircle");
+
+    static JdbcTemplate jdbc;
+
+    @BeforeAll
+    static void migrate() {
+        Flyway.configure()
+                .dataSource(mysql.getJdbcUrl(), mysql.getUsername(), mysql.getPassword())
+                .locations("classpath:db/migration")
+                .load()
+                .migrate();
+        jdbc = new JdbcTemplate(new DriverManagerDataSource(
+                mysql.getJdbcUrl(), mysql.getUsername(), mysql.getPassword()));
+        jdbc.execute("SET SESSION cte_max_recursion_depth = 12000");
+        jdbc.update("""
+                INSERT INTO post(id, author_id, title, status, theme, content_kind, difficulty,
+                                 created_at, updated_at)
+                WITH RECURSIVE seq(n) AS (
+                    SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 10000
+                )
+                SELECT n, 42, CONCAT('post-', n), 'PUBLISHED', 'DEDUCTION', 'CASE_FILE', 'MEDIUM',
+                       TIMESTAMPADD(SECOND, n, '2026-01-01'),
+                       TIMESTAMPADD(SECOND, n, '2026-01-01')
+                FROM seq
+                """);
+        jdbc.execute("ANALYZE TABLE post");
+    }
+
+    @Test
+    void channelAndSubmissionIndexesMatchTheirCursorQueries() {
+        assertThat(indexColumns("post", "idx_post_channel_cursor"))
+                .isEqualTo("status,theme,content_kind,difficulty,created_at,id");
+        assertThat(indexColumns("post", "idx_post_author_updated"))
+                .isEqualTo("author_id,updated_at,id");
+
+        assertPlan("""
+                SELECT id FROM post
+                WHERE status = 'PUBLISHED'
+                  AND theme = 'DEDUCTION'
+                  AND content_kind = 'CASE_FILE'
+                  AND difficulty = 'MEDIUM'
+                  AND (created_at < CURRENT_TIMESTAMP
+                       OR (created_at = CURRENT_TIMESTAMP AND id < 20000))
+                ORDER BY created_at DESC, id DESC LIMIT 21
+                """, "idx_post_channel_cursor");
+        assertPlan("""
+                SELECT id FROM post
+                WHERE author_id = 42
+                ORDER BY updated_at DESC LIMIT 50
+                """, "idx_post_author_updated");
+    }
+
+    private String indexColumns(String table, String index) {
+        return jdbc.queryForObject("""
+                SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',')
+                FROM information_schema.statistics
+                WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?
+                """, String.class, table, index);
+    }
+
+    private void assertPlan(String query, String expectedIndex) {
+        Plan plan = jdbc.queryForObject("EXPLAIN " + query,
+                (rs, rowNum) -> new Plan(rs.getString("possible_keys"),
+                        rs.getString("key"), rs.getString("Extra")));
+        assertThat(plan).isNotNull();
+        assertThat(plan.possibleKeys()).contains(expectedIndex);
+        assertThat(plan.key()).isEqualTo(expectedIndex);
+        assertThat(plan.extra()).doesNotContain("filesort");
+    }
+
+    private record Plan(String possibleKeys, String key, String extra) {
+    }
+}

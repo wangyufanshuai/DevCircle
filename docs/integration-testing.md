@@ -18,6 +18,8 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 生产暴露面门禁随后扩展为 9 项：Gateway 的宿主机 8080 必须绑定 `127.0.0.1`，所有应用必须保持生产模式、关闭读取降级与主题 Seed，并禁用 SpringDoc API 与 Swagger UI；Caddy 管理 API 必须只监听容器内 localhost。生产 Compose 实际渲染确认 `host_ip=127.0.0.1`，`caddy:2.10.2-alpine` 对当前 Caddyfile 的真实 `caddy validate` 通过。该结果验证配置契约，不替代目标主机防火墙和公网探测。
 
+同日高频读路径审计补充了通知收件箱、评论线程、收藏时间线、频道游标和作者投稿列表的组合索引，并增加四个 MySQL 8.4 `EXPLAIN` 集成测试。测试先迁移完整模块 schema，再为每条路径写入 10,000 行代表性数据，要求优化器实际选择目标索引且执行计划不含 `filesort`；仅检查“索引存在”不能通过。当前 Docker Engine 停止，因此这些 Testcontainers 用例只完成了编译，定向执行被明确标记为 skipped，不能记为 MySQL 8.4 通过。作为独立兼容性证据，项目目录下的一次性 MySQL 9.3 实例实际执行了四个模块共 39 份迁移，并以同样的 10,000 行数据确认目标索引被选中且无 `filesort`；实例、数据目录和日志随后已清理。全仓非容器回归为 414 个测试、0 failures/errors/skipped，聚合行覆盖率 80.20%、分支覆盖率 74.45%，14 个关键状态类继续通过 85% 门禁。该结果仍不替代固定 MySQL 8.4 的自动化回归、四套真实 Compose E2E 或 k6 延迟验收。
+
 真实 E2E profile 的 Outbox 依赖现在显式声明：auth/content/review 脚本关闭 Outbox，避免在无 Kafka 的隔离套件中产生无关 broker 重试；community 脚本开启 Outbox，并由 `test-docker-preflight.sh` 契约校验该差异。
 
 前端当前基线为 `npm run build` 成功、四个 Playwright project 共 116/116 通过。该套件使用显式 API 拦截，不等同于真实多服务 E2E。真实认证、内容、审核和社区 Compose E2E 仍需在至少 2 GiB Docker（建议 4 GiB 以上）环境执行；本机当前 Docker 配额约 1.93 GiB，按设计阻断真实业务验收。

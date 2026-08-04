@@ -29,9 +29,14 @@ Outbox 发送等待受 `DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS` 控制，默认 15 秒
 ## 关键索引
 
 - `post(status, created_at)`: 支撑审核列表和最新内容流。
+- `post(status, theme, content_kind, difficulty, created_at, id)`: 支撑完整频道筛选和不透明游标。
 - `post(author_id, created_at)`: 支撑个人主页内容列表。
+- `post(author_id, updated_at, id)`: 支撑个人中心投稿时间线。
+- `comment(post_id, parent_id, id)` 与 `comment(post_id, root_id, id)`: 支撑根评论游标和二级回复装配。
 - `like_record(user_id, target_type, target_id)`: 保证点赞幂等。
 - `favorite_record(user_id, post_id)`: 保证收藏幂等。
+- `favorite_record(user_id, created_at, post_id)`: 支撑收藏内容的最新优先时间线。
+- `notification(receiver_id, id)` 与 `notification(receiver_id, type, id)`: 支撑收件箱及类型筛选的 ID 游标。
 - `consumer_dedup(event_id)`: 保证 Kafka 至少一次投递下的消费幂等。
 - `outbox_event(status, created_at)`: 支撑事件发布任务扫描。
 
