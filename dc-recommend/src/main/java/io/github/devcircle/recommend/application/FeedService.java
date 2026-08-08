@@ -19,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -91,9 +92,11 @@ public class FeedService {
         Set<Long> followedAuthors = followedAuthors(userId);
         Set<Long> exposed = exposed(userId);
         ExperimentContext experiment = experiment(userId, normalizedScene);
+        Map<Long, Double> hotScores = hotScores(candidates);
         List<FeedItem> ranked = candidates.stream()
                 .filter(post -> matchesScene(post, normalizedScene))
-                .map(post -> toFeedItem(userId, post, interests, followedAuthors, exposed, normalizedScene, experiment))
+                .map(post -> toFeedItem(post, interests, followedAuthors, exposed,
+                        normalizedScene, experiment, hotScores))
                 .filter(item -> item.score() > -100)
                 .sorted(Comparator.comparingDouble(FeedItem::score).reversed())
                 .toList();
@@ -101,7 +104,8 @@ public class FeedService {
             degraded = true;
             ranked = candidates.stream()
                     .filter(post -> matchesScene(post, normalizedScene))
-                    .map(post -> toFeedItem(userId, post, interests, followedAuthors, Set.of(), normalizedScene, experiment))
+                    .map(post -> toFeedItem(post, interests, followedAuthors, Set.of(),
+                            normalizedScene, experiment, hotScores))
                     .sorted(Comparator.comparingDouble(FeedItem::score).reversed())
                     .toList();
         }
@@ -197,9 +201,10 @@ public class FeedService {
                 : new CandidateSet(List.of(), "DB", false);
     }
 
-    private FeedItem toFeedItem(Long userId, PostSummary post, Set<String> interests, Set<Long> followedAuthors,
-                                Set<Long> exposed, String scene, ExperimentContext experiment) {
-        double hotScore = hotScore(post.id());
+    private FeedItem toFeedItem(PostSummary post, Set<String> interests, Set<Long> followedAuthors,
+                                Set<Long> exposed, String scene, ExperimentContext experiment,
+                                Map<Long, Double> hotScores) {
+        double hotScore = hotScores.getOrDefault(post.id(), 0.0);
         boolean followedAuthor = post.authorId() != null && followedAuthors.contains(post.authorId());
         boolean alreadyExposed = exposed.contains(post.id());
         RecommendationScorer.ScoreResult ranked = scorer.rank(post, interests, hotScore, followedAuthor, alreadyExposed);
@@ -228,6 +233,37 @@ public class FeedService {
     }
 
     private void recordImpressions(Long userId, String scene, List<FeedItem> page) {
+        if (page.isEmpty()) {
+            return;
+        }
+        if (page.size() == 1) {
+            recordImpressionsIndividually(userId, scene, page);
+            return;
+        }
+        try {
+            String key = "recommend:impression:" + userId + ":" + scene;
+            byte[] serializedKey = redisTemplate.getStringSerializer().serialize(key);
+            byte[][] values = page.stream()
+                    .map(item -> item.post().id() + "|" + item.algorithm() + "|" + item.score())
+                    .map(redisTemplate.getStringSerializer()::serialize)
+                    .toArray(byte[][]::new);
+            redisTemplate.executePipelined((org.springframework.data.redis.core.RedisCallback<Object>) connection -> {
+                connection.listCommands().lPush(serializedKey, values);
+                connection.listCommands().lTrim(serializedKey, 0, 199);
+                connection.keyCommands().expire(serializedKey, Duration.ofDays(7));
+                return null;
+            });
+        } catch (RuntimeException ex) {
+            failIfStrict("推荐曝光缓存暂时不可用", ex);
+        }
+        try {
+            if (impressionRepository != null) impressionRepository.saveAll(userId, scene, page);
+        } catch (RuntimeException ex) {
+            failIfStrict("推荐曝光记录暂时不可用", ex);
+        }
+    }
+
+    private void recordImpressionsIndividually(Long userId, String scene, List<FeedItem> page) {
         for (FeedItem item : page) {
             try {
                 String key = "recommend:impression:" + userId + ":" + scene;
@@ -299,6 +335,29 @@ public class FeedService {
         } catch (RuntimeException ex) {
             if (!readFallbackEnabled) throw dependency("关注图谱暂时不可用", ex);
             return Set.of();
+        }
+    }
+
+    private Map<Long, Double> hotScores(List<PostSummary> posts) {
+        if (posts.isEmpty()) {
+            return Map.of();
+        }
+        if (posts.size() == 1) {
+            Long postId = posts.getFirst().id();
+            return Map.of(postId, hotScore(postId));
+        }
+        try {
+            Object[] postIds = posts.stream().map(post -> post.id().toString()).toArray();
+            List<Double> scores = redisTemplate.opsForZSet().score("feed:hot-posts", postIds);
+            Map<Long, Double> result = new LinkedHashMap<>();
+            for (int index = 0; index < posts.size(); index++) {
+                Double score = scores == null || index >= scores.size() ? null : scores.get(index);
+                result.put(posts.get(index).id(), score == null ? 0.0 : score);
+            }
+            return result;
+        } catch (RuntimeException ex) {
+            if (!readFallbackEnabled) throw dependency("推荐热度数据暂时不可用", ex);
+            return Map.of();
         }
     }
 

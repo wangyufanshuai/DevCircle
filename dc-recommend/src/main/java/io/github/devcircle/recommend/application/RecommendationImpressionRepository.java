@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -47,6 +48,43 @@ class RecommendationImpressionRepository {
                     .param("score", item.score())
                     .param("features", objectMapper.writeValueAsString(item.features()))
                     .update();
+        } catch (DataAccessException ex) {
+            if (!readFallbackEnabled) throw dependency("推荐曝光记录暂时不可用", ex);
+        } catch (JsonProcessingException ex) {
+            throw dependency("推荐曝光记录暂时不可用", ex);
+        }
+    }
+
+    void saveAll(Long userId, String scene, List<FeedItem> items) {
+        if (items == null || items.isEmpty()) {
+            return;
+        }
+        try {
+            StringBuilder sql = new StringBuilder("""
+                    INSERT INTO recommendation_impression(user_id, post_id, scene, algorithm, score, features)
+                    VALUES
+                    """);
+            List<String> features = new ArrayList<>(items.size());
+            for (int index = 0; index < items.size(); index++) {
+                if (index > 0) sql.append(',');
+                sql.append("(:userId, :postId").append(index)
+                        .append(", :scene, :algorithm").append(index)
+                        .append(", :score").append(index)
+                        .append(", CAST(:features").append(index).append(" AS JSON))");
+                features.add(objectMapper.writeValueAsString(items.get(index).features()));
+            }
+            JdbcClient.StatementSpec statement = jdbcClient.sql(sql.toString())
+                    .param("userId", userId)
+                    .param("scene", scene);
+            for (int index = 0; index < items.size(); index++) {
+                FeedItem item = items.get(index);
+                statement = statement
+                        .param("postId" + index, item.post().id())
+                        .param("algorithm" + index, item.algorithm())
+                        .param("score" + index, item.score())
+                        .param("features" + index, features.get(index));
+            }
+            statement.update();
         } catch (DataAccessException ex) {
             if (!readFallbackEnabled) throw dependency("推荐曝光记录暂时不可用", ex);
         } catch (JsonProcessingException ex) {

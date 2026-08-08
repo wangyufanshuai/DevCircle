@@ -3,12 +3,16 @@ package io.github.devcircle.recommend.application;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
+import io.github.devcircle.common.model.FeedItem;
+import io.github.devcircle.common.model.PostSummary;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -38,6 +42,16 @@ class RecommendationImpressionRepositoryStateTest {
                     scene VARCHAR(64) NOT NULL,
                     exposed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (user_id, post_id, scene))
+                """).update();
+        jdbc.sql("""
+                CREATE TABLE recommendation_impression (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    post_id BIGINT NOT NULL,
+                    scene VARCHAR(64) NOT NULL,
+                    algorithm VARCHAR(64) NOT NULL,
+                    score DOUBLE NOT NULL,
+                    features JSON NOT NULL)
                 """).update();
         jdbc.sql("""
                 CREATE TABLE recommend_event_log (
@@ -84,6 +98,23 @@ class RecommendationImpressionRepositoryStateTest {
         assertThat(count("outbox_event")).isOne();
         assertDuplicate(() -> repository.saveRecommendEvent(
                 7L, 12L, "click", "home", "exp-v1", "control", "event-key"));
+    }
+
+    @Test
+    void feedImpressionsArePersistedAsOneBatch() {
+        repository.saveAll(7L, "home", List.of(feedItem(11L), feedItem(12L)));
+
+        assertThat(count("recommendation_impression")).isEqualTo(2);
+        assertThat(jdbc.sql("SELECT post_id FROM recommendation_impression ORDER BY post_id")
+                .query(Long.class).list()).containsExactly(11L, 12L);
+    }
+
+    private FeedItem feedItem(Long postId) {
+        PostSummary post = new PostSummary(postId, "TEXT", "DEDUCTION", "CASE_FILE", "MEDIUM", false, 0,
+                "Post " + postId, "Excerpt", "Author", List.of("mystery"), List.of(), 10, 2, 100,
+                "PUBLISHED", Instant.now());
+        return new FeedItem(post, "Popular with readers", 80, false, false, "EXPLAINABLE_RULE_V1", "TEXT",
+                Map.of("qualityHotness20", 18.0), "exp-theme-feed-v1", "control", List.of("hot"));
     }
 
     private long count(String table) {
