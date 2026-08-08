@@ -78,6 +78,18 @@ if [[ -n "${github_id}" || -n "${github_secret}" ]]; then
   [[ "${github_secret,,}" != *replace-with* ]] || fail "GITHUB_CLIENT_SECRET still contains a documented placeholder"
 fi
 
+bounded_integer() {
+  local key="$1" default_value="$2" minimum="$3" maximum="$4" value
+  value="${values[$key]:-${default_value}}"
+  if [[ ! "${value}" =~ ^[0-9]+$ ]] || (( value < minimum || value > maximum )); then
+    fail "${key} must be an integer between ${minimum} and ${maximum}"
+  fi
+}
+
+bounded_integer OUTBOX_BATCH_SIZE 50 1 500
+bounded_integer OUTBOX_MAX_ATTEMPTS 8 1 100
+bounded_integer OUTBOX_SEND_TIMEOUT_MS 15000 100 60000
+
 if (( ${#errors[@]} > 0 )); then
   echo "Production environment validation failed:" >&2
   printf ' - %s\n' "${errors[@]}" >&2

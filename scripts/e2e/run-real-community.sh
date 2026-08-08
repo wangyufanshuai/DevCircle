@@ -7,8 +7,14 @@ PROJECT_NAME="${REAL_E2E_PROJECT_NAME:-devcircle-real-community-e2e}"
 WAIT_TIMEOUT="${REAL_E2E_WAIT_TIMEOUT:-240}"
 PULL_POLICY="${REAL_E2E_PULL_POLICY:-missing}"
 BUILD_MODE="${REAL_E2E_BUILD:-true}"
+RECOVERY_MODE="${REAL_E2E_COMMUNITY_RECOVERY_MODE:-retry}"
 export REAL_E2E_ENABLE_OUTBOX=true
 export REAL_E2E_OUTBOX_SEND_TIMEOUT_MS="${REAL_E2E_OUTBOX_SEND_TIMEOUT_MS:-2000}"
+if [[ "${RECOVERY_MODE}" == "dead" ]]; then
+  export REAL_E2E_OUTBOX_MAX_ATTEMPTS="${REAL_E2E_OUTBOX_MAX_ATTEMPTS:-2}"
+else
+  export REAL_E2E_OUTBOX_MAX_ATTEMPTS="${REAL_E2E_OUTBOX_MAX_ATTEMPTS:-8}"
+fi
 COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" --profile community)
 # shellcheck source=docker-preflight.sh
 source "${ROOT_DIR}/scripts/e2e/docker-preflight.sh"
@@ -26,7 +32,12 @@ command -v npx >/dev/null 2>&1 || { echo "npx is required" >&2; exit 2; }
 test -d "${ROOT_DIR}/web/node_modules" || { echo "Run npm ci in web before the real E2E suite" >&2; exit 2; }
 require_real_e2e_docker "community E2E"
 
-MODULES="dc-auth,dc-user,dc-content,dc-recommend,dc-notification,dc-gateway"
+[[ "${RECOVERY_MODE}" == "retry" || "${RECOVERY_MODE}" == "dead" ]] || {
+  echo "REAL_E2E_COMMUNITY_RECOVERY_MODE must be retry or dead" >&2
+  exit 2
+}
+
+MODULES="dc-auth,dc-user,dc-content,dc-recommend,dc-notification,dc-admin,dc-gateway"
 if command -v java >/dev/null 2>&1; then
   "${ROOT_DIR}/mvnw" -q -pl "${MODULES}" -am -DskipTests package
 elif command -v cmd.exe >/dev/null 2>&1; then
@@ -64,5 +75,10 @@ recommend_dedup="$(${COMPOSE[@]} exec -T mysql mysql -uroot -pe2e-root-password 
 [[ "${dedup}" == "2" ]] || { echo "expected followed and unfollowed events to be deduplicated, got ${dedup}" >&2; exit 1; }
 [[ "${recommend_dedup}" == "2" ]] || { echo "expected two completed recommendation projections, got ${recommend_dedup}" >&2; exit 1; }
 
-REAL_E2E_PROJECT_NAME="${PROJECT_NAME}" REAL_E2E_COMPOSE_FILE="${COMPOSE_FILE}" \
-  bash "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
+if [[ "${RECOVERY_MODE}" == "dead" ]]; then
+  REAL_E2E_PROJECT_NAME="${PROJECT_NAME}" REAL_E2E_COMPOSE_FILE="${COMPOSE_FILE}" \
+    bash "${ROOT_DIR}/scripts/e2e/verify-community-outbox-dead-recovery.sh"
+else
+  REAL_E2E_PROJECT_NAME="${PROJECT_NAME}" REAL_E2E_COMPOSE_FILE="${COMPOSE_FILE}" \
+    bash "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
+fi

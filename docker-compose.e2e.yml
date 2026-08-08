@@ -10,6 +10,8 @@ x-app-defaults: &app-defaults
     REDIS_HOST: redis
     REDIS_PORT: 6379
     KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    DEVCIRCLE_OUTBOX_BATCH_SIZE: ${REAL_E2E_OUTBOX_BATCH_SIZE:-50}
+    DEVCIRCLE_OUTBOX_MAX_ATTEMPTS: ${REAL_E2E_OUTBOX_MAX_ATTEMPTS:-8}
     DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS: ${REAL_E2E_OUTBOX_SEND_TIMEOUT_MS:-15000}
     SPRINGDOC_API_DOCS_ENABLED: "false"
     SPRINGDOC_SWAGGER_UI_ENABLED: "false"
@@ -272,7 +274,7 @@ services:
 
   dc-admin:
     <<: *app-defaults
-    profiles: ["review", "search-recovery"]
+    profiles: ["review", "community", "search-recovery"]
     build:
       <<: *service-build
       args: { JAR_FILE: dc-admin/target/dc-admin-0.1.0-SNAPSHOT.jar }

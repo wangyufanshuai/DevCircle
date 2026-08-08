@@ -102,6 +102,8 @@ curl -fsS -X POST https://<domain>/api/admin/ops/dlt/replay \
 - `docker compose ... ps`：所有健康检查通过且无重启循环。
 - `/actuator/health/readiness`：Gateway 与内部服务均为 UP。
 - Outbox 无持续增长的 `FAILED/DEAD`，DLT 有告警和人工重放记录。
+- `/api/admin/ops/health` 中 `outboxDead` 与 `outboxBlockedByDead` 必须为 0；`outboxScope=CONTENT_DB` 表示当前数字只覆盖内容库，其他领域库仍需结合各服务指标和 Kafka Lag 检查。
+- Outbox 每批数量、最大尝试次数和发送等待分别由 `OUTBOX_BATCH_SIZE`（默认 50）、`OUTBOX_MAX_ATTEMPTS`（默认 8）和 `OUTBOX_SEND_TIMEOUT_MS`（默认 15000ms）注入。调整重试上限前必须评估故障持续时间与告警响应时间。
 - DLT 发布等待时间由 `KAFKA_DLT_PUBLISH_TIMEOUT_MS` 控制（默认 5000ms）；DLT broker 未确认时源消息不得提交 offset。
 - 磁盘低于 80%，备份校验和每天成功，证书续期无错误。
 - 写接口失败时必须带公开错误码和 `traceId`，日志中按 `traceId` 关联，禁止向页面暴露内部服务名或堆栈。

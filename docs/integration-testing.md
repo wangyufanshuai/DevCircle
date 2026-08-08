@@ -6,7 +6,7 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 ### 2026-08-08 可执行基线
 
-Docker Desktop 的 WSL 配额已从 2GB 调整为 6GB，Testcontainers 实测可用内存约 5930MB。当前工作树执行 `./mvnw.cmd -B verify -Pcoverage` 后，16/16 个 Maven 模块成功，113 个测试套件共 472 个测试，0 failures、0 errors、0 skipped；MySQL 8.4、Redis、Kafka、Elasticsearch 和 MinIO 容器均实际启动。聚合 JaCoCo 行覆盖率为 84.70%、分支覆盖率为 75.37%，14 个关键状态类全部通过 85% 分支门禁，Flyway 迁移版本门禁通过。
+Docker Desktop 的 WSL 配额已从 2GB 调整为 6GB，Testcontainers 实测可用内存约 5930MB。当前工作树执行 `./mvnw.cmd -B verify -Pcoverage` 后，16/16 个 Maven 模块成功，114 个测试套件共 474 个测试，0 failures、0 errors、0 skipped；MySQL 8.4、Redis、Kafka、Elasticsearch 和 MinIO 容器均实际启动。聚合 JaCoCo 行覆盖率为 85.36%、分支覆盖率为 75.44%，14 个关键状态类全部通过 85% 分支门禁，Flyway 迁移版本门禁通过。
 
 五条真实 Compose E2E 均使用本地固定镜像并通过：
 
@@ -19,6 +19,8 @@ Docker Desktop 的 WSL 配额已从 2GB 调整为 6GB，Testcontainers 实测可
 Community 首轮执行实际发现并修复了两项生产缺陷：Gateway 现仅对匿名读者开放精确的 `/api/users/{id}` 与 `/api/users/batch` GET 路径，关注状态等私有路径继续受保护；`dc-user` 的注册事件消费者不再因过早的 `@ConditionalOnBean` 判定而被静默排除。前端 `npm run build` 通过，四个 Playwright project 共 120/120 通过。
 
 2026-08-08 最新 Community 故障注入在完整 Compose 网络中通过：Kafka 容器被确认停止后，关注接口仍返回真实成功且可立即读到关注状态；对应 `follow.changed` Outbox 事件在 2 秒有界发送超时后进入 `FAILED`，通知表和推荐关注投影均保持 0。Kafka 原容器重启后，应用进程无需重启，Outbox 自动重试并转为 `PUBLISHED`；通知消费者去重记录、推荐消费者 `COMPLETED` 记录、单条通知和单条关注投影全部到位。同一 `Idempotency-Key` 再次请求返回重复标记，事件与通知数量仍为 1。该证据覆盖 Kafka 短时停机与恢复追平，不等同于长时间积压、跨主机 Kafka 数据恢复或 DLT 人工重放演练。
+
+2026-08-08 Community profile 的 `dead` 模式补齐 Outbox 耗尽重试后的恢复证据，并证明部署配置会真实传入 Worker：最大尝试次数设为 2，Kafka 停机后首次 `post.submitted` 进入 `DEAD:2`，同一 `(topic, aggregateId)` 的第二次投稿保持 `NEW:0`，独立的 `content.rejected` 也进入 `DEAD:2`。管理健康接口明确返回 `degraded=true`、`OUTBOX_DEAD`、DEAD 数、被前序阻塞数和 `CONTENT_DB` 作用域；Kafka 恢复后 DEAD 不会被静默自动跳过。管理员使用真实 ADMIN JWT 与幂等键重放后，两个 `post.submitted` 和一个 `content.rejected` 按 Topic 精确追加，三条事件全部转为 `PUBLISHED`，重复请求不追加记录，健康状态恢复且审计日志只有一条。该证据覆盖单机 Kafka 暂停、DEAD 可观测、同流保序和人工恢复，不等同于跨主机 Kafka 数据目录灾难恢复。
 
 2026-08-08 Search recovery 故障注入在完整 Auth/Content/Admin/Search/Gateway 与 MySQL/Redis/Kafka/Elasticsearch 网络中通过：待审核内容搜索结果为 0，审核后正文立即公开；Elasticsearch 停止期间搜索明确返回 `DEPENDENCY_UNAVAILABLE`，`audit.completed` Outbox 保持 `PUBLISHED`，搜索消费记录进入 `FAILED` 且 DLT 为 0。原 Elasticsearch 容器启动后应用无需重启，消费者第 11 次尝试转为 `COMPLETED`，关键词搜索恰好返回一条内容。随后投递一条 2020 年的旧拒绝事件，消费记录正常完成但水位线和已发布索引均未回退；同一审核幂等键重放也未产生第二个事件或文档。演练同时发现并修复了空索引缺少数值型 `id` 映射导致全部搜索返回 503 的生产缺陷；索引初始化现在会在服务就绪前为新旧索引补齐稳定游标映射。该证据覆盖短时 Elasticsearch 停机与 Kafka 原记录重试，不等同于超过重试上限后的 DLT 人工重放或 Elasticsearch 数据目录灾难恢复。
 
@@ -71,9 +73,14 @@ bash scripts/e2e/run-real-auth.sh
 
 ```bash
 bash scripts/e2e/run-real-community.sh
+
+# 耗尽 Outbox 重试，验证 DEAD 可观测、保序阻塞和人工恢复
+REAL_E2E_COMMUNITY_RECOVERY_MODE=dead \
+  REAL_E2E_PULL_POLICY=never \
+  bash scripts/e2e/run-real-community.sh
 ```
 
-该脚本启动 Kafka、Auth、User、Content、Notification、Recommend 和 Gateway，先验证正常资料同步、关注幂等、通知去重、取消关注静默以及推荐投影；随后停止并重启 Kafka，验证 Outbox `FAILED → PUBLISHED`、消费者自动重连、投影追平和恢复后的幂等重放。
+该脚本启动 Kafka、Auth、User、Content、Admin、Notification、Recommend 和 Gateway，先验证正常资料同步、关注幂等、通知去重、取消关注静默以及推荐投影。默认 `retry` 模式停止并重启 Kafka，验证 Outbox `FAILED → PUBLISHED`、消费者自动重连和投影追平；`dead` 模式把最大尝试次数设为 2，验证 `DEAD` 告警、同 Topic 聚合保序、管理员审计重放、精确 offset 增量和恢复后的健康状态。
 
 搜索索引故障恢复使用独立 profile：
 

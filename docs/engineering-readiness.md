@@ -20,6 +20,7 @@ Copy-Item .env.example .env
 - `DEVCIRCLE_JWT_SECRET`: JWT 签名密钥。
 - `VITE_API_BASE_URL`: 前端请求 Gateway 的地址。
 - `DEVCIRCLE_READ_FALLBACK_ENABLED`: 仅开发环境可显式开启后端 seed 读取降级；生产必须为 `false`。
+- `DEVCIRCLE_OUTBOX_BATCH_SIZE` / `DEVCIRCLE_OUTBOX_MAX_ATTEMPTS` / `DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS`: Outbox 每批数量、进入 DEAD 前的最大尝试次数和 Kafka ACK 等待上限。
 
 真实 secret 不应提交到仓库。
 
@@ -50,6 +51,8 @@ Copy-Item .env.example .env
 - `POST /api/admin/ops/dlt/replay`（要求 ADMIN、`Idempotency-Key`、原始 topic、partition、offset 和操作理由）
 - `GET /api/admin/ops/degradation`
 
+`ops/health` 和 `ops/degradation` 会同时返回 `outboxBacklog`、`outboxRetryable`、`outboxDead`、`outboxBlockedByDead` 与 `outboxScope`。当前 Admin 直接连接内容库，因此作用域明确为 `CONTENT_DB`；不得把它误读为所有领域库的全局 Outbox 总量。
+
 ## 开发环境显式降级
 
 本地演示可以显式开启读取降级，但它不是生产可用性策略：
@@ -72,4 +75,5 @@ Copy-Item .env.example .env
 - 前端请求失败：检查 `VITE_API_BASE_URL` 是否指向 Gateway；不要通过增加本地 mock 绕过错误。
 - 管理端 403：确认真实 JWT 中包含 `ADMIN`。
 - Outbox 积压：查看 `/api/admin/ops/outbox`，必要时调用 replay 接口。
+- Outbox DEAD：先确认依赖已恢复，检查 `outboxBlockedByDead` 和失败详情，再使用原操作理由与唯一幂等键重放；DEAD 不会自动越过，同 Topic、同聚合的后续事件会保持等待。
 - DLT 积压：先修复消费者依赖并定位 DLT 的 partition/offset，再调用 `/api/admin/ops/dlt/replay`；重试必须保持完全相同的参数和 `Idempotency-Key`，不得通过换键重复发布同一位置。

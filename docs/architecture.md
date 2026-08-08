@@ -22,7 +22,7 @@ DevCircle 使用按业务域拆分、兼容聚合的微服务结构。Gateway �
 
 同一 Outbox 表内，相同 `topic + aggregate_id` 的事件严格按自增 ID 发布。前序事件处于 `NEW`、`PROCESSING`、`FAILED` 或 `DEAD` 时，后续事件不会越过它；死信必须由运营重放或明确处置后才能解除该聚合的阻塞。评论创建、删除和隐藏统一发布到 `comment.changed`，以评论 ID 作为 Kafka Key；旧版 `comment.created` 仅作为一个版本的消费兼容入口。
 
-Outbox 发送等待受 `DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS` 控制，默认 15 秒。Kafka Future 超时会释放租约、记录失败并按指数退避重试；不会让半挂的 broker 长期占用 `PROCESSING` 状态。
+Outbox 批量大小、最大尝试次数和发送等待分别受 `DEVCIRCLE_OUTBOX_BATCH_SIZE`（默认 50）、`DEVCIRCLE_OUTBOX_MAX_ATTEMPTS`（默认 8）和 `DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS`（默认 15 秒）控制。Kafka Future 超时会释放租约、记录失败并按指数退避重试；耗尽尝试后进入 `DEAD`，同一 `(topic, aggregateId)` 的后续事件保持等待，不能越过失败前序。
 
 生产 `aggregate` Gateway 将内容、评论、媒体和审核请求统一路由到 `dc-content-aggregate`；旧领域服务只作为聚合门面内部依赖，不允许被外部 Gateway 路由直接绕过。
 

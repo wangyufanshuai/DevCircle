@@ -81,11 +81,31 @@ timeout_values="$(grep -E '^      DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS:' <<<"${timeo
   exit 1
 }
 
+retry_config="$(REAL_E2E_OUTBOX_BATCH_SIZE=23 REAL_E2E_OUTBOX_MAX_ATTEMPTS=3 docker compose \
+  -f "${ROOT_DIR}/docker-compose.e2e.yml" --profile community config)"
+grep -q 'DEVCIRCLE_OUTBOX_BATCH_SIZE: "23"' <<<"${retry_config}"
+grep -q 'DEVCIRCLE_OUTBOX_MAX_ATTEMPTS: "3"' <<<"${retry_config}"
+
 bash -n "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
+bash -n "${ROOT_DIR}/scripts/e2e/verify-community-outbox-dead-recovery.sh"
+bash -n "${ROOT_DIR}/scripts/e2e/run-real-community.sh"
 grep -q 'stop -t 10 kafka' "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
 grep -q 'FAILED' "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
 grep -q 'PUBLISHED' "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
 grep -q 'verify-community-kafka-recovery.sh' "${ROOT_DIR}/scripts/e2e/run-real-community.sh"
+grep -q 'REAL_E2E_COMMUNITY_RECOVERY_MODE' "${ROOT_DIR}/scripts/e2e/run-real-community.sh"
+grep -q 'DEAD:2' "${ROOT_DIR}/scripts/e2e/verify-community-outbox-dead-recovery.sh"
+grep -q 'OUTBOX_DEAD' "${ROOT_DIR}/scripts/e2e/verify-community-outbox-dead-recovery.sh"
+grep -q 'outboxBlockedByDead' "${ROOT_DIR}/scripts/e2e/verify-community-outbox-dead-recovery.sh"
+
+community_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
+  --profile community config --services | sort)"
+expected_community_services="$(printf '%s\n' dc-admin dc-auth dc-content dc-gateway dc-notification \
+  dc-recommend dc-user kafka mysql redis | sort)"
+[[ "${community_services}" == "${expected_community_services}" ]] || {
+  echo "Unexpected community services: ${community_services}" >&2
+  exit 1
+}
 
 search_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
   --profile search-recovery config --services | sort)"

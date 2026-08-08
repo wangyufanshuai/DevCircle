@@ -64,8 +64,8 @@ const emit = defineEmits<{
       <h2>工程状态</h2>
       <div class="rank-row">
         <span>数据库 {{ opsHealth?.database ?? 'UNKNOWN' }} / 来源 {{ opsHealth?.source ?? '-' }}</span>
-        <strong>Outbox {{ opsHealth?.outboxBacklog ?? 0 }}</strong>
-        <small>待审 {{ opsHealth?.pendingModeration ?? 0 }} / 风险用户 {{ opsHealth?.riskUsers ?? 0 }}</small>
+        <strong>Outbox {{ opsHealth?.outboxBacklog ?? 0 }} / DEAD {{ opsHealth?.outboxDead ?? 0 }}</strong>
+        <small>可重试 {{ opsHealth?.outboxRetryable ?? 0 }} / 被 DEAD 阻塞 {{ opsHealth?.outboxBlockedByDead ?? 0 }} / 范围 {{ opsHealth?.outboxScope ?? '-' }}</small>
       </div>
       <div class="rank-row">
         <span>推荐降级 {{ degradationOverview?.degraded ? '是' : '否' }} / {{ degradationOverview?.source ?? '-' }}</span>
@@ -74,8 +74,8 @@ const emit = defineEmits<{
       </div>
       <div v-for="event in outboxEvents" :key="event.eventId" class="rank-row">
         <span>{{ event.topic }} / {{ event.status }}</span>
-        <strong>{{ event.aggregateType ?? 'OUTBOX' }}</strong>
-        <small>{{ event.eventId }}</small>
+        <strong>{{ event.aggregateType ?? 'OUTBOX' }} / 尝试 {{ event.attempts ?? 0 }}</strong>
+        <small>{{ event.lastError || event.eventId }}</small>
       </div>
       <div class="button-row">
         <n-button secondary @click="emit('refreshOps')">刷新状态</n-button>

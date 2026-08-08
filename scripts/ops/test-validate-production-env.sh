@@ -30,6 +30,23 @@ EOF
 
 bash "${VALIDATOR}" "${TEMP_ENV}" >/dev/null
 
+expect_invalid_outbox_value() {
+  local key="$1" value="$2" invalid_env
+  invalid_env="$(mktemp)"
+  cp "${TEMP_ENV}" "${invalid_env}"
+  printf '%s=%s\n' "${key}" "${value}" >> "${invalid_env}"
+  if bash "${VALIDATOR}" "${invalid_env}" >/dev/null 2>&1; then
+    rm -f "${invalid_env}"
+    echo "Expected ${key}=${value} to be rejected" >&2
+    exit 1
+  fi
+  rm -f "${invalid_env}"
+}
+
+expect_invalid_outbox_value OUTBOX_BATCH_SIZE 501
+expect_invalid_outbox_value OUTBOX_MAX_ATTEMPTS 0
+expect_invalid_outbox_value OUTBOX_SEND_TIMEOUT_MS not-a-number
+
 # The literal dollar sign is the unsafe Compose input under test.
 # shellcheck disable=SC2016
 printf '%s\n' 'MYSQL_PASSWORD=Unsafe-Compose-$PASSWORD-Interpolation-Value' >> "${TEMP_ENV}"

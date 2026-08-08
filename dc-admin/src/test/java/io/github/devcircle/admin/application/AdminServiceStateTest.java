@@ -166,12 +166,45 @@ class AdminServiceStateTest {
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
                 """).update();
+        jdbcClient.sql("CREATE TABLE recommendation_impression (id BIGINT AUTO_INCREMENT PRIMARY KEY)").update();
+        jdbcClient.sql("CREATE TABLE recommend_event_log (id BIGINT AUTO_INCREMENT PRIMARY KEY)").update();
         jdbcClient.sql("""
                 CREATE TABLE tag (
                     id BIGINT AUTO_INCREMENT PRIMARY KEY,
                     name VARCHAR(64) NOT NULL UNIQUE,
                     use_count BIGINT NOT NULL DEFAULT 0)
                 """).update();
+    }
+
+    @Test
+    void operationsHealthSurfacesDeadAndAggregateBlockedOutboxEvents() {
+        outbox("post.submitted", "DEAD", null, 60);
+        outbox("post.submitted", "NEW", null, 50);
+        outbox("appeal.created", "FAILED", null, 40);
+
+        Map<String, Object> health = service.opsHealth();
+        Map<String, Object> degradation = service.degradation();
+        List<Map<String, Object>> deadEvents = service.outboxEvents("DEAD", "post.submitted", 1, 20);
+
+        assertThat(health)
+                .containsEntry("database", "UP")
+                .containsEntry("outboxBacklog", 3L)
+                .containsEntry("outboxRetryable", 2L)
+                .containsEntry("outboxDead", 1L)
+                .containsEntry("outboxBlockedByDead", 1L)
+                .containsEntry("outboxScope", "CONTENT_DB")
+                .containsEntry("degraded", true)
+                .containsEntry("degradationReason", "OUTBOX_DEAD");
+        assertThat(degradation)
+                .containsEntry("degraded", true)
+                .containsEntry("reason", "OUTBOX_DEAD")
+                .containsEntry("outboxBacklog", 3L)
+                .containsEntry("outboxDead", 1L)
+                .containsEntry("outboxBlockedByDead", 1L);
+        assertThat(deadEvents).singleElement().satisfies(event -> assertThat(event)
+                .containsEntry("status", "DEAD")
+                .containsEntry("attempts", 3)
+                .containsEntry("lastError", "previous failure"));
     }
 
     @Test

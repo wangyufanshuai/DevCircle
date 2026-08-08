@@ -24,8 +24,10 @@ public class ReliableMessagingConfig {
     @ConditionalOnProperty(prefix = "devcircle.outbox", name = "enabled", havingValue = "true", matchIfMissing = true)
     ReliableOutboxWorker reliableOutboxWorker(JdbcClient jdbcClient,
                                                KafkaTemplate<String, String> kafkaTemplate,
+                                               @Value("${devcircle.outbox.batch-size:50}") int batchSize,
+                                               @Value("${devcircle.outbox.max-attempts:8}") int maxAttempts,
                                                @Value("${devcircle.outbox.send-timeout-ms:15000}") long sendTimeoutMs) {
-        return new ReliableOutboxWorker(jdbcClient, kafkaTemplate, 50, 8, sendTimeoutMs);
+        return new ReliableOutboxWorker(jdbcClient, kafkaTemplate, batchSize, maxAttempts, sendTimeoutMs);
     }
 
 }
