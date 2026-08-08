@@ -606,21 +606,26 @@ class PostRepositoryStateTest {
 
         @Bean("normalRepository")
         PostRepository postRepository(JdbcTemplate jdbcTemplate, DraftMediaRepository draftMediaRepository,
-                                      ContentIdempotencyStore idempotencyStore) {
+                                      ContentIdempotencyStore idempotencyStore,
+                                      ContentEventStore eventStore,
+                                      ContentModerationStore moderationStore) {
             return new PostRepository(jdbcTemplate, new ObjectMapper().findAndRegisterModules(),
-                    draftMediaRepository, idempotencyStore);
+                    draftMediaRepository, idempotencyStore, eventStore, moderationStore);
         }
 
         @Bean("failingRepository")
         PostRepository failingRepository(JdbcTemplate jdbcTemplate, DraftMediaRepository draftMediaRepository,
-                                         ContentIdempotencyStore idempotencyStore) {
+                                         ContentIdempotencyStore idempotencyStore,
+                                         ContentEventStore eventStore,
+                                         ContentModerationStore moderationStore) {
             ObjectMapper failingMapper = new ObjectMapper() {
                 @Override
                 public String writeValueAsString(Object value) throws JsonProcessingException {
                     throw new JsonProcessingException("structured content serializer unavailable") { };
                 }
             };
-            return new PostRepository(jdbcTemplate, failingMapper, draftMediaRepository, idempotencyStore);
+            return new PostRepository(jdbcTemplate, failingMapper, draftMediaRepository, idempotencyStore,
+                    eventStore, moderationStore);
         }
 
         @Bean
@@ -631,6 +636,16 @@ class PostRepositoryStateTest {
         @Bean
         ContentIdempotencyStore contentIdempotencyStore(JdbcTemplate jdbcTemplate) {
             return new ContentIdempotencyStore(jdbcTemplate);
+        }
+
+        @Bean
+        ContentEventStore contentEventStore(JdbcTemplate jdbcTemplate) {
+            return new ContentEventStore(jdbcTemplate, new ObjectMapper().findAndRegisterModules());
+        }
+
+        @Bean
+        ContentModerationStore contentModerationStore(JdbcTemplate jdbcTemplate, ContentEventStore eventStore) {
+            return new ContentModerationStore(jdbcTemplate, eventStore);
         }
 
         @Bean

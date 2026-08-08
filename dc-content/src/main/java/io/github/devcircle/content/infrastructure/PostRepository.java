@@ -6,7 +6,6 @@ import io.github.devcircle.common.seed.ThemeContentLibrary;
 import io.github.devcircle.common.seed.ThemeSeedPost;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
-import io.github.devcircle.common.event.EventEnvelope;
 import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.common.model.MediaAssetView;
 import io.github.devcircle.common.model.PostSummary;
@@ -48,15 +47,21 @@ public class PostRepository {
     private final ObjectMapper objectMapper;
     private final DraftMediaRepository draftMediaRepository;
     private final ContentIdempotencyStore idempotencyStore;
+    private final ContentEventStore eventStore;
+    private final ContentModerationStore moderationStore;
 
     public PostRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper,
                           DraftMediaRepository draftMediaRepository,
-                          ContentIdempotencyStore idempotencyStore) {
+                          ContentIdempotencyStore idempotencyStore,
+                          ContentEventStore eventStore,
+                          ContentModerationStore moderationStore) {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.objectMapper = objectMapper;
         this.draftMediaRepository = draftMediaRepository;
         this.idempotencyStore = idempotencyStore;
+        this.eventStore = eventStore;
+        this.moderationStore = moderationStore;
     }
 
     public List<PostSummary> list(int page, int size) {
@@ -418,7 +423,7 @@ public class PostRepository {
                     .param("sortOrder", index++)
                     .update();
         }
-        createModerationTask(postId, authorId, request);
+        moderationStore.createTask(postId, authorId, request);
         writeOutbox(postId, authorId, request);
         idempotencyStore.attachResource(idempotencyKey, postId);
         return new PostSummary(postId, normalizeType(request.type()), normalizeTheme(request.theme()), normalizeContentKind(request.contentKind()),
@@ -550,8 +555,8 @@ public class PostRepository {
         CreatePostRequest submitted = new CreatePostRequest(
                 draft.title(), draft.content(), draft.tags(), draft.type(), draft.mediaIds(), draft.theme(),
                 draft.contentKind(), draft.difficulty(), draft.solvable(), draft.clues(), draft.solution());
-        createModerationTask(draftId, authorId, submitted);
-        writeOutbox(EventTopics.POST_SUBMITTED, "POST", draftId.toString(), Map.of(
+        moderationStore.createTask(draftId, authorId, submitted);
+        eventStore.append(EventTopics.POST_SUBMITTED, "POST", draftId.toString(), Map.of(
                 "postId", draftId, "authorId", authorId, "title", draft.title(),
                 "theme", draft.theme(), "contentKind", draft.contentKind()));
         idempotencyStore.attachResource(idempotencyKey, draftId);
@@ -656,7 +661,8 @@ public class PostRepository {
                 .param("userId", userId)
                 .param("reason", reason.trim())
                 .update();
-        writeOutbox(EventTopics.APPEAL_CREATED, "APPEAL", appealId.toString(), Map.of("appealId", appealId, "postId", postId, "userId", userId));
+        eventStore.append(EventTopics.APPEAL_CREATED, "APPEAL", appealId.toString(),
+                Map.of("appealId", appealId, "postId", postId, "userId", userId));
         idempotencyStore.attachResource(idempotencyKey, appealId);
         return Map.of("appealId", appealId, "postId", postId, "status", "PENDING");
     }
@@ -838,7 +844,7 @@ public class PostRepository {
     }
 
     private void writeOutbox(Long postId, Long authorId, CreatePostRequest request) {
-        writeOutbox(EventTopics.POST_SUBMITTED, "POST", postId.toString(), Map.of(
+        eventStore.append(EventTopics.POST_SUBMITTED, "POST", postId.toString(), Map.of(
                 "postId", postId,
                 "authorId", authorId,
                 "title", request.title(),
@@ -1067,89 +1073,6 @@ public class PostRepository {
         }
     }
 
-    private void writeOutbox(String topic, String aggregateType, String aggregateId, Object payload) {
-        try {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> eventPayload = payload instanceof Map<?, ?> map
-                    ? (Map<String, Object>) map
-                    : objectMapper.convertValue(payload, Map.class);
-            EventEnvelope event = EventEnvelope.now(topic, "dc-content", aggregateId, eventPayload);
-            jdbcClient.sql("""
-                            INSERT INTO outbox_event(event_id, topic, aggregate_type, aggregate_id, payload)
-                            VALUES (:eventId, :topic, :aggregateType, :aggregateId, CAST(:payload AS JSON))
-                            """)
-                    .param("eventId", event.eventId().toString())
-                    .param("topic", event.type())
-                    .param("aggregateType", aggregateType)
-                    .param("aggregateId", event.aggregateId())
-                    .param("payload", objectMapper.writeValueAsString(event))
-                    .update();
-        } catch (JsonProcessingException ex) {
-            throw new IllegalStateException("Failed to serialize outbox payload", ex);
-        }
-    }
-
-    private void createModerationTask(Long postId, Long authorId, CreatePostRequest request) {
-        ModerationRisk risk = moderationRisk(request);
-        jdbcClient.sql("""
-                        INSERT INTO moderation_task(post_id, author_id, queue_name, machine_result, risk_level, risk_score, reason, status, review_level, sla_deadline)
-                        VALUES (:postId, :authorId, :queueName, :machineResult, :riskLevel, :riskScore, :reason,
-                                'PENDING', :reviewLevel, TIMESTAMPADD(HOUR, :slaHours, CURRENT_TIMESTAMP))
-                        """)
-                .param("postId", postId)
-                .param("authorId", authorId)
-                .param("queueName", risk.queueName())
-                .param("machineResult", risk.machineResult())
-                .param("riskLevel", risk.riskLevel())
-                .param("riskScore", risk.score())
-                .param("reason", risk.reason())
-                .param("reviewLevel", risk.reviewLevel())
-                .param("slaHours", risk.slaHours())
-                .update();
-        if (risk.score() >= 40) {
-            jdbcClient.sql("""
-                            INSERT INTO content_risk_signal(user_id, post_id, signal_type, risk_score, description)
-                            VALUES (:userId, :postId, :signalType, :riskScore, :description)
-                            """)
-                    .param("userId", authorId)
-                    .param("postId", postId)
-                    .param("signalType", risk.signalType())
-                    .param("riskScore", risk.score())
-                    .param("description", risk.reason())
-                    .update();
-            jdbcClient.sql("""
-                            INSERT INTO user_risk_profile(user_id, status, risk_score, reason)
-                            VALUES (:userId, :status, :riskScore, :reason)
-                            AS incoming
-                            ON DUPLICATE KEY UPDATE risk_score = GREATEST(risk_score, incoming.risk_score), status = incoming.status, reason = incoming.reason
-                            """)
-                    .param("userId", authorId)
-                    .param("status", risk.score() >= 80 ? "RESTRICTED" : "WATCH")
-                    .param("riskScore", risk.score())
-                    .param("reason", risk.reason())
-                    .update();
-            writeOutbox(EventTopics.RISK_SIGNAL_CREATED, "RISK_SIGNAL", postId.toString(), Map.of("postId", postId, "userId", authorId, "riskScore", risk.score(), "riskLevel", risk.riskLevel()));
-        }
-    }
-
-    private ModerationRisk moderationRisk(CreatePostRequest request) {
-        String title = request.title() == null ? "" : request.title();
-        String content = request.content() == null ? "" : request.content();
-        List<String> tags = safeTags(request.tags());
-        boolean sensitive = tags.stream().anyMatch(tag -> List.of("禁区", "血腥", "攻击", "外挂").contains(tag));
-        boolean duplicateLike = title.length() > 4 && content.contains(title);
-        boolean video = "VIDEO".equalsIgnoreCase(request.type());
-        double score = 15 + (sensitive ? 60 : 0) + (duplicateLike ? 15 : 0) + (video ? 10 : 0) + (content.length() < 30 ? 20 : 0);
-        String level = score >= 80 ? "HIGH" : score >= 45 ? "MEDIUM" : "LOW";
-        String queue = "HIGH".equals(level) ? "senior-review" : "MEDIUM".equals(level) ? "manual-review" : "fast-lane";
-        String reason = sensitive ? "命中敏感标签或高风险主题" : duplicateLike ? "标题与正文高度重复" : video ? "视频内容需要人工抽检" : "常规机审通过后等待人工抽样";
-        String machineResult = score >= 80 ? "BLOCK_SUSPECTED" : score >= 45 ? "REVIEW_REQUIRED" : "PASS_LOW_RISK";
-        String reviewLevel = "HIGH".equals(level) ? "ESCALATED" : "NORMAL";
-        int sla = "HIGH".equals(level) ? 2 : "MEDIUM".equals(level) ? 8 : 24;
-        String signalType = sensitive ? "SENSITIVE_TAG" : duplicateLike ? "DUPLICATE_CONTENT" : "CONTENT_RISK";
-        return new ModerationRisk(queue, machineResult, level, score, reason, reviewLevel, sla, signalType);
-    }
-
     private String json(Object value) {
         try {
             return objectMapper.writeValueAsString(value == null ? List.of() : value);
@@ -1215,9 +1138,6 @@ public class PostRepository {
 
     private String safeText(String value) {
         return value == null ? "" : value;
-    }
-
-    private record ModerationRisk(String queueName, String machineResult, String riskLevel, double score, String reason, String reviewLevel, int slaHours, String signalType) {
     }
 
 }
