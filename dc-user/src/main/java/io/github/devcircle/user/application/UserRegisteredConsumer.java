@@ -6,7 +6,6 @@ import io.github.devcircle.common.event.EventEnvelopeValidator;
 import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.user.infrastructure.UserGraphRepository;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
@@ -14,7 +13,6 @@ import java.util.Map;
 import java.util.Set;
 
 @Component
-@ConditionalOnBean(name = "kafkaListenerContainerFactory")
 class UserRegisteredConsumer {
     private static final Map<String, Set<String>> EVENT_CONTRACT =
             Map.of(EventTopics.USER_REGISTERED, Set.of("dc-auth"));

@@ -60,6 +60,8 @@ class AccessTokenFilterTest {
             "/api/posts/7/comments",
             "/api/posts/summaries",
             "/api/search/posts",
+            "/api/users/7",
+            "/api/users/batch",
             "/api/files/access",
             "/api/files/7/access"
     })
@@ -78,6 +80,8 @@ class AccessTokenFilterTest {
             "/api/posts/drafts/7",
             "/api/posts/drafts/7/audits",
             "/api/posts/7/interaction-state",
+            "/api/users/7/follow-state",
+            "/api/users/7/recommendations",
             "/api/search/admin/reindex",
             "/api/files/private/7/access"
     })

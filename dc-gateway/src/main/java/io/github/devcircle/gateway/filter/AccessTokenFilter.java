@@ -29,6 +29,8 @@ public class AccessTokenFilter implements GlobalFilter, Ordered {
             "^/api/posts(?:/?|/summaries/?|/\\d+(?:/?|/related/?|/comments/?))$");
     private static final Pattern PUBLIC_FILE_READ_PATH = Pattern.compile(
             "^/api/files(?:/access|/\\d+/access)/?$");
+    private static final Pattern PUBLIC_USER_READ_PATH = Pattern.compile(
+            "^/api/users(?:/batch/?|/\\d+/?)$");
     private final SecretKey jwtKey;
     private final Set<String> bannedUserIds;
     private final Set<String> noPostUserIds;
@@ -143,6 +145,7 @@ public class AccessTokenFilter implements GlobalFilter, Ordered {
             return false;
         }
         return PUBLIC_POST_READ_PATH.matcher(path).matches()
+                || PUBLIC_USER_READ_PATH.matcher(path).matches()
                 || path.equals("/api/search/posts")
                 || PUBLIC_FILE_READ_PATH.matcher(path).matches()
                 || path.equals("/api/recommend/feed")
