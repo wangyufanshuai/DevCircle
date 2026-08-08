@@ -1,6 +1,6 @@
 package io.github.devcircle.content.application;
 
-import io.github.devcircle.common.seed.ThemeContentLibrary;
+import io.github.devcircle.seed.ThemeContentLibrary;
 import io.github.devcircle.content.infrastructure.PostRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

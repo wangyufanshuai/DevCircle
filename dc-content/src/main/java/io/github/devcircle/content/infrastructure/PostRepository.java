@@ -2,8 +2,8 @@ package io.github.devcircle.content.infrastructure;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.devcircle.common.seed.ThemeContentLibrary;
-import io.github.devcircle.common.seed.ThemeSeedPost;
+import io.github.devcircle.seed.ThemeContentLibrary;
+import io.github.devcircle.seed.ThemeSeedPost;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.event.EventTopics;

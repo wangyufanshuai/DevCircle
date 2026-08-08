@@ -3,7 +3,7 @@ package io.github.devcircle.content.application;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.model.PostSummary;
-import io.github.devcircle.common.seed.ThemeContentLibrary;
+import io.github.devcircle.seed.ThemeContentLibrary;
 import io.github.devcircle.content.infrastructure.PostRepository;
 import io.github.devcircle.content.infrastructure.ReadingProgressRepository;
 import org.junit.jupiter.api.BeforeEach;

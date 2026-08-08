@@ -13,6 +13,7 @@
 
     <modules>
         <module>dc-common</module>
+        <module>dc-seed-data</module>
         <module>dc-gateway</module>
         <module>dc-identity</module>
         <module>dc-content-deployment</module>

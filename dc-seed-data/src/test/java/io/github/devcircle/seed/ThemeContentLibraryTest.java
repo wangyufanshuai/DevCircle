@@ -1,4 +1,4 @@
-package io.github.devcircle.common.seed;
+package io.github.devcircle.seed;
 
 import org.junit.jupiter.api.Test;
 

@@ -1,4 +1,4 @@
-package io.github.devcircle.common.seed;
+package io.github.devcircle.seed;
 
 import io.github.devcircle.common.model.MediaAssetView;
 import io.github.devcircle.common.model.PostSummary;
