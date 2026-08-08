@@ -271,6 +271,8 @@ select { color-scheme: dark; }
 .draft-rail a.current, .draft-rail a:hover { color: var(--gold-bright); background: rgba(226,183,95,.07); }
 .draft-rail small { color: var(--muted); }
 .form-error { margin: 13px 0; padding: 10px 12px; border-left: 2px solid var(--danger); color: #ffc5bb; background: rgba(146,48,38,.12); }
+.local-error { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 13px 0; padding: 12px 14px; border-left: 2px solid var(--danger); color: #ffc5bb; background: rgba(146,48,38,.12); }
+.local-error p { margin: 0; color: inherit; }
 
 .notification-list { border-top: 1px solid var(--line-soft); }
 .notification-intro { max-width: none; display: flex; align-items: end; justify-content: space-between; gap: 20px; }

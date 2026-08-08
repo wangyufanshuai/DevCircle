@@ -79,6 +79,31 @@ test('formal post route opens case and submits deduction', async ({ page }) => {
   await expect(page.getByRole('status')).toContainText('推理成立')
 })
 
+test('comment outage keeps the case readable and can recover locally', async ({ page }) => {
+  const root = { id: 60, postId: 1001, authorId: 8, author: '沈岚', content: '评论服务恢复后的线索', status: 'VISIBLE', likes: 0, createdAt: '2026-07-30T01:00:00Z' }
+  let commentRequests = 0
+  await page.route('**/api/posts/1001/comments?*', route => {
+    commentRequests += 1
+    if (commentRequests === 1) {
+      return route.fulfill({ status: 503, json: { code: 'DEPENDENCY_UNAVAILABLE', message: 'dc-comment connection refused', data: null } })
+    }
+    return route.fulfill({ json: { code: 'OK', message: 'success', data: [{ root, replies: [] }], meta: { nextCursor: '', hasMore: false } } })
+  })
+
+  await page.goto('/posts/1001')
+
+  await expect(page.getByRole('heading', { name: post.title, exact: true })).toBeVisible()
+  await expect(page.getByLabel('推理结论')).toBeVisible()
+  await expect(page.getByRole('alert').filter({ hasText: '评论暂时无法加载，请重试。' })).toBeVisible()
+  await expect(page.getByText('案件暂时无法打开')).toHaveCount(0)
+  await expect(page.getByText('dc-comment connection refused')).toHaveCount(0)
+
+  await page.getByRole('button', { name: '重试加载评论' }).click()
+  await expect(page.locator('[data-comment-id="60"]')).toContainText('评论服务恢复后的线索')
+  await expect(page.getByText('评论暂时无法加载，请重试。')).toHaveCount(0)
+  expect(commentRequests).toBe(2)
+})
+
 test('authenticated mutating requests forward the readable csrf cookie', async ({ page }) => {
   await authenticate(page)
   let csrfHeader = ''

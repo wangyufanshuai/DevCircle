@@ -23,6 +23,7 @@ const replyTarget = ref<number | null>(null)
 const replyText = ref('')
 const commentCursor = ref('')
 const commentHasMore = ref(false)
+const loadingComments = ref(false)
 const loadingMoreComments = ref(false)
 const moderationTarget = ref<number | null>(null)
 const moderationReason = ref('')
@@ -32,6 +33,8 @@ const loading = ref(false)
 const error = ref('')
 const feedback = ref('')
 const commentError = ref('')
+const commentLoadError = ref('')
+const relatedError = ref('')
 const following = ref(false)
 const savingProgress = ref(false)
 const readingContent = ref<HTMLElement | null>(null)
@@ -60,18 +63,17 @@ const standaloneMedia = computed(() => { if (!post.value) return []; const place
 async function load() {
   loading.value = true
   error.value = ''
+  post.value = null
+  related.value = []
+  relatedError.value = ''
+  threads.value = []
+  commentCursor.value = ''
+  commentHasMore.value = false
+  commentLoadError.value = ''
   userProfiles.clear()
   try {
-    const [detail, relatedPosts, commentPage] = await Promise.all([
-      fetchPost(id.value), fetchRelated(id.value), fetchComments(id.value)
-    ])
+    const detail = await fetchPost(id.value)
     post.value = detail
-    const initialComments = commentPage.records.flatMap(thread => [thread.root, ...thread.replies])
-    await loadUserProfiles(initialComments.map(item => item.authorId))
-    related.value = relatedPosts
-    threads.value = await enrichCommentAuthors(commentPage.records)
-    commentCursor.value = commentPage.nextCursor
-    commentHasMore.value = commentPage.hasMore
     following.value = detail.author.followedByViewer === true
     lastSavedProgress = detail.viewerState.readingProgress
     lastSavedAnchor = detail.viewerState.readingAnchor ?? null
@@ -85,10 +87,41 @@ async function load() {
     restoreReadingPosition(detail.viewerState)
     queuedProgress = measureProgress()
     void persistProgress(true)
+    loading.value = false
+    await Promise.all([loadRelatedPosts(), loadInitialComments()])
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '案件暂时无法打开'
   } finally {
     loading.value = false
+  }
+}
+
+async function loadRelatedPosts() {
+  relatedError.value = ''
+  try {
+    related.value = await fetchRelated(id.value)
+  } catch {
+    related.value = []
+    relatedError.value = '相关推荐暂时无法加载，请稍后重试。'
+  }
+}
+
+async function loadInitialComments() {
+  if (loadingComments.value) return
+  loadingComments.value = true
+  commentLoadError.value = ''
+  try {
+    const page = await fetchComments(id.value)
+    threads.value = await enrichCommentAuthors(page.records)
+    commentCursor.value = page.nextCursor
+    commentHasMore.value = page.hasMore
+  } catch {
+    threads.value = []
+    commentCursor.value = ''
+    commentHasMore.value = false
+    commentLoadError.value = '评论暂时无法加载，请重试。'
+  } finally {
+    loadingComments.value = false
   }
 }
 
@@ -437,6 +470,12 @@ onBeforeUnmount(() => {
             <div class="section-heading"><div><span class="eyebrow">COMMUNITY NOTES</span><h2>读者讨论</h2></div><span class="muted"><MessageCircle :size="14" /> 已加载 {{ threads.length }} 个讨论串</span></div>
             <form v-if="session" class="comment-form" @submit.prevent="submitComment()"><label class="sr-only" for="comment">写评论</label><textarea id="comment" v-model="comment" rows="2" maxlength="2000" placeholder="留下你的观察…" /><button class="button button-primary" type="submit">发表评论</button></form>
             <div v-else class="comment-login"><p>登录后才能参与讨论、回复其他读者。</p><RouterLink class="button button-quiet" :to="{ path: '/auth', query: { redirect: route.fullPath } }">登录参与讨论</RouterLink></div>
+            <div v-if="commentLoadError" class="local-error" role="alert">
+              <p>{{ commentLoadError }}</p>
+              <button class="button button-quiet" type="button" :disabled="loadingComments" @click="loadInitialComments">
+                <LoaderCircle v-if="loadingComments" :size="16" />{{ loadingComments ? '正在重试…' : '重试加载评论' }}
+              </button>
+            </div>
             <p v-if="commentError" class="form-error" role="alert">{{ commentError }}</p>
             <div v-if="threads.length" class="comment-list">
               <article v-for="thread in threads" :key="thread.root.id" class="comment-thread" :data-comment-id="thread.root.id">
@@ -449,13 +488,14 @@ onBeforeUnmount(() => {
                 </template>
               </article>
             </div>
-            <p v-else class="muted empty-copy">还没有讨论，成为第一个留下线索的人。</p>
+            <p v-else-if="!commentLoadError && !loadingComments" class="muted empty-copy">还没有讨论，成为第一个留下线索的人。</p>
             <button v-if="commentHasMore" class="button button-quiet load-more" type="button" :disabled="loadingMoreComments" @click="loadMoreComments"><LoaderCircle v-if="loadingMoreComments" :size="16" />{{ loadingMoreComments ? '正在加载…' : '加载更多讨论' }}</button>
           </section>
         </div>
         <aside class="detail-aside">
           <div class="aside-card"><span class="eyebrow">CASE STATUS</span><strong>{{ post.status }}</strong><p>线索 {{ post.clues?.length ?? 0 }} 条 · 已有 {{ post.solvedCount }} 人参与</p><div v-if="session" class="progress-meter"><span :style="{ width: `${post.viewerState.readingProgress}%` }" /><small>阅读进度 {{ post.viewerState.readingProgress }}%</small><p class="progress-sync" :class="`is-${progressSyncState}`" :role="progressSyncState === 'error' ? 'alert' : undefined" aria-live="polite"><template v-if="progressSyncState === 'saving'">正在保存阅读进度…</template><template v-else-if="progressSyncState === 'saved'">阅读进度已同步</template><template v-else-if="progressSyncState === 'error'">{{ progressSyncError }} <button type="button" class="text-button" @click="retryProgressSave">重试</button></template><template v-else>滚动后会自动保存</template></p></div></div>
           <div v-if="related.length" class="related-list"><div class="section-heading"><h2>相邻轨道</h2></div><PostCard v-for="item in related" :key="item.id" :post="item" /></div>
+          <div v-else-if="relatedError" class="aside-card local-error" role="status"><p>{{ relatedError }}</p><button class="text-button" type="button" @click="loadRelatedPosts">重试</button></div>
         </aside>
       </section>
     </article>
