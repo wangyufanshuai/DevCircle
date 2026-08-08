@@ -56,7 +56,7 @@ services:
 
   kafka:
     image: apache/kafka:4.1.1
-    profiles: ["community"]
+    profiles: ["community", "performance"]
     restart: "no"
     environment:
       KAFKA_NODE_ID: 1
@@ -78,6 +78,22 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.2.2
+    profiles: ["performance"]
+    restart: "no"
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms384m -Xmx384m
+    networks: [e2e]
+    mem_limit: 768m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 36
 
   dc-auth:
     <<: *app-defaults
@@ -105,7 +121,7 @@ services:
 
   dc-content:
     <<: *app-defaults
-    profiles: ["content", "review", "community"]
+    profiles: ["content", "review", "community", "performance"]
     build:
       <<: *service-build
       args: { JAR_FILE: dc-content/target/dc-content-0.1.0-SNAPSHOT.jar }
@@ -116,6 +132,7 @@ services:
       MYSQL_USER: devcircle
       MYSQL_PASSWORD: e2e-database-password
       DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
+      DEVCIRCLE_THEME_CONTENT_SEED_ENABLED: ${REAL_E2E_ENABLE_THEME_SEED:-false}
       DEVCIRCLE_KAFKA_TOPICS_ENABLED: "false"
       DEVCIRCLE_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
       SPRING_KAFKA_LISTENER_AUTO_STARTUP: "false"
@@ -175,7 +192,7 @@ services:
 
   dc-recommend:
     <<: *app-defaults
-    profiles: ["community"]
+    profiles: ["community", "performance"]
     build:
       <<: *service-build
       args: { JAR_FILE: dc-recommend/target/dc-recommend-0.1.0-SNAPSHOT.jar }
@@ -185,6 +202,7 @@ services:
       MYSQL_PORT: 3306
       MYSQL_USER: devcircle
       MYSQL_PASSWORD: e2e-database-password
+      DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
       DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
     mem_limit: 256m
     depends_on:
@@ -195,6 +213,57 @@ services:
       interval: 5s
       timeout: 5s
       retries: 24
+
+  dc-interaction:
+    <<: *app-defaults
+    profiles: ["performance"]
+    build:
+      <<: *service-build
+      args: { JAR_FILE: dc-interaction/target/dc-interaction-0.1.0-SNAPSHOT.jar }
+    environment:
+      <<: *app-env
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: devcircle
+      MYSQL_PASSWORD: e2e-database-password
+      DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
+    mem_limit: 256m
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      dc-content: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8105/actuator/health/readiness"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  dc-search:
+    <<: *app-defaults
+    profiles: ["performance"]
+    build:
+      <<: *service-build
+      args: { JAR_FILE: dc-search/target/dc-search-0.1.0-SNAPSHOT.jar }
+    environment:
+      <<: *app-env
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: devcircle
+      MYSQL_PASSWORD: e2e-database-password
+      ELASTICSEARCH_URIS: http://elasticsearch:9200
+      DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
+      DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
+    mem_limit: 384m
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      elasticsearch: { condition: service_healthy }
+      dc-content: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8106/actuator/health/readiness"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
 
   dc-admin:
     <<: *app-defaults
@@ -228,6 +297,8 @@ services:
       DC_AUTH_URI: http://dc-auth:8101
       DC_USER_URI: http://dc-user:8102
       DC_CONTENT_URI: http://dc-content:8103
+      DC_INTERACTION_URI: http://dc-interaction:8105
+      DC_SEARCH_URI: http://dc-search:8106
       DC_RECOMMEND_URI: http://dc-recommend:8107
       DC_NOTIFICATION_URI: http://dc-notification:8108
       DC_ADMIN_URI: http://dc-admin:8110
@@ -238,6 +309,8 @@ services:
       dc-admin: { condition: service_healthy, required: false }
       dc-content: { condition: service_healthy, required: false }
       dc-user: { condition: service_healthy, required: false }
+      dc-interaction: { condition: service_healthy, required: false }
+      dc-search: { condition: service_healthy, required: false }
       dc-recommend: { condition: service_healthy, required: false }
       dc-notification: { condition: service_healthy, required: false }
       redis: { condition: service_healthy }

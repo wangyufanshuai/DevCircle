@@ -67,7 +67,11 @@ export const options = {
 
 function authorizationHeaders(vu = __VU) {
   const token = tokens[Math.max(0, vu - 1) % tokens.length]
-  return { Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}` }
+  const clientOctet = (Math.max(1, vu) - 1) % 200 + 1
+  return {
+    Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}`,
+    'X-Forwarded-For': `198.51.100.${clientOctet}`
+  }
 }
 
 function verify(response, name, failureRate) {
@@ -110,7 +114,7 @@ export function readFlow() {
     headers,
     tags: { kind: 'read', operation: 'detail' }
   }), 'detail', readFailures)
-  sleep(0.5)
+  sleep(1)
 }
 
 export function writeFlow() {
@@ -128,5 +132,5 @@ export function writeFlow() {
     headers: { ...headers, 'Content-Type': 'application/json', 'Idempotency-Key': `k6-answer-${requestId}` },
     tags: { kind: 'write', operation: 'answer' }
   }), 'answer', writeFailures)
-  sleep(1)
+  sleep(3)
 }
