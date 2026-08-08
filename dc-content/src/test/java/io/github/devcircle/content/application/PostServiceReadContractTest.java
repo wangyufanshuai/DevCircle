@@ -5,6 +5,7 @@ import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.model.PostSummary;
 import io.github.devcircle.common.seed.ThemeContentLibrary;
 import io.github.devcircle.content.infrastructure.PostRepository;
+import io.github.devcircle.content.infrastructure.ReadingProgressRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -25,7 +26,7 @@ class PostServiceReadContractTest {
     @BeforeEach
     void setUp() {
         repository = mock(PostRepository.class);
-        service = new PostService(repository);
+        service = new PostService(repository, mock(ReadingProgressRepository.class));
     }
 
     @Test

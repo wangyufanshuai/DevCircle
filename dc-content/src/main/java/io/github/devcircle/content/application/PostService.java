@@ -16,6 +16,7 @@ import io.github.devcircle.content.api.ReadingProgressRequest;
 import io.github.devcircle.content.api.ReadingProgressView;
 import io.github.devcircle.content.api.SaveDraftRequest;
 import io.github.devcircle.content.infrastructure.PostRepository;
+import io.github.devcircle.content.infrastructure.ReadingProgressRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
@@ -28,13 +29,15 @@ import java.util.function.Supplier;
 @Service
 public class PostService {
     private final PostRepository postRepository;
+    private final ReadingProgressRepository readingProgressRepository;
     private final List<PostSummary> seedPosts = ThemeContentLibrary.summaries();
 
     @Value("${devcircle.content.read-fallback-enabled:false}")
     private boolean readFallbackEnabled;
 
-    public PostService(PostRepository postRepository) {
+    public PostService(PostRepository postRepository, ReadingProgressRepository readingProgressRepository) {
         this.postRepository = postRepository;
+        this.readingProgressRepository = readingProgressRepository;
     }
 
     public PageResponse<PostSummary> list(int page, int size, String type) {
@@ -89,7 +92,7 @@ public class PostService {
     public ReadingProgressView saveReadingProgress(Long userId, Long postId, ReadingProgressRequest request,
                                                    String idempotencyKey) {
         requireWriteHeaders(userId, idempotencyKey);
-        return database(() -> postRepository.saveReadingProgress(userId, postId, request, idempotencyKey));
+        return database(() -> readingProgressRepository.save(userId, postId, request, idempotencyKey));
     }
 
     public List<PostSummary> related(Long id, int size) {

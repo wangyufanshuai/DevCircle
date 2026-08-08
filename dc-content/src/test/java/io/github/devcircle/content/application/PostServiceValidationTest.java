@@ -6,6 +6,7 @@ import io.github.devcircle.content.api.CreatePostRequest;
 import io.github.devcircle.content.api.DraftMediaInput;
 import io.github.devcircle.content.api.SaveDraftRequest;
 import io.github.devcircle.content.infrastructure.PostRepository;
+import io.github.devcircle.content.infrastructure.ReadingProgressRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -26,7 +27,7 @@ class PostServiceValidationTest {
     @BeforeEach
     void setUp() {
         repository = mock(PostRepository.class);
-        service = new PostService(repository);
+        service = new PostService(repository, mock(ReadingProgressRepository.class));
     }
 
     @Test

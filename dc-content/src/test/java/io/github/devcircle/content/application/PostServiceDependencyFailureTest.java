@@ -6,6 +6,7 @@ import io.github.devcircle.content.api.CreatePostRequest;
 import io.github.devcircle.content.api.ReadingProgressRequest;
 import io.github.devcircle.content.api.SaveDraftRequest;
 import io.github.devcircle.content.infrastructure.PostRepository;
+import io.github.devcircle.content.infrastructure.ReadingProgressRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -24,13 +25,15 @@ import static org.mockito.Mockito.when;
 
 class PostServiceDependencyFailureTest {
     private PostRepository repository;
+    private ReadingProgressRepository readingProgressRepository;
     private PostService service;
     private DataAccessResourceFailureException outage;
 
     @BeforeEach
     void setUp() {
         repository = mock(PostRepository.class);
-        service = new PostService(repository);
+        readingProgressRepository = mock(ReadingProgressRepository.class);
+        service = new PostService(repository, readingProgressRepository);
         outage = new DataAccessResourceFailureException(
                 "jdbc:mysql://10.0.0.12:3306/dc_content refused the connection");
     }
@@ -65,7 +68,7 @@ class PostServiceDependencyFailureTest {
         CreatePostRequest post = new CreatePostRequest("钟楼", "正文", List.of("推理"));
         SaveDraftRequest draft = draft(0L);
         ReadingProgressRequest progress = new ReadingProgressRequest(45, "reading-section-2", false);
-        when(repository.saveReadingProgress(7L, 11L, progress, "progress-key")).thenThrow(outage);
+        when(readingProgressRepository.save(7L, 11L, progress, "progress-key")).thenThrow(outage);
         when(repository.create(7L, post, "post-key")).thenThrow(outage);
         when(repository.listDrafts(7L, 20)).thenThrow(outage);
         when(repository.getDraft(7L, 11L)).thenThrow(outage);

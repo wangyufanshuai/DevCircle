@@ -42,6 +42,8 @@ class PostRepositoryStateTest {
     @Qualifier("failingRepository")
     private PostRepository failingRepository;
     @Autowired
+    private ReadingProgressRepository readingProgressRepository;
+    @Autowired
     private JdbcClient jdbcClient;
 
     @BeforeEach
@@ -386,14 +388,14 @@ class PostRepositoryStateTest {
     void readingProgressIsMonotonicAndRequestKeyCannotCrossReaders() {
         long postId = post(7L, "阅读中的档案", "PUBLISHED");
 
-        var first = repository.saveReadingProgress(11L, postId,
+        var first = readingProgressRepository.save(11L, postId,
                 new ReadingProgressRequest(25, "reading-section-1", false), "progress-key");
-        var replay = repository.saveReadingProgress(11L, postId,
+        var replay = readingProgressRepository.save(11L, postId,
                 new ReadingProgressRequest(25, "reading-section-1", false), "progress-key");
-        assertCode(() -> repository.saveReadingProgress(11L, postId,
+        assertCode(() -> readingProgressRepository.save(11L, postId,
                 new ReadingProgressRequest(80, "reading-section-8", false), "progress-key"),
                 ErrorCode.DUPLICATE_OPERATION);
-        var regression = repository.saveReadingProgress(11L, postId,
+        var regression = readingProgressRepository.save(11L, postId,
                 new ReadingProgressRequest(10, "reading-section-0", false), "progress-regression");
 
         assertThat(first.progressPercent()).isEqualTo(25);
@@ -407,15 +409,15 @@ class PostRepositoryStateTest {
                         WHERE idempotency_key = 'progress-key'
                         """)
                 .param("legacy", "0".repeat(64)).update();
-        var legacyReplay = repository.saveReadingProgress(11L, postId,
+        var legacyReplay = readingProgressRepository.save(11L, postId,
                 new ReadingProgressRequest(80, "reading-section-8", false), "progress-key");
         assertThat(legacyReplay.progressPercent()).isEqualTo(25);
         assertThat(legacyReplay.anchor()).isEqualTo("reading-section-1");
-        assertCode(() -> repository.saveReadingProgress(12L, postId,
+        assertCode(() -> readingProgressRepository.save(12L, postId,
                 new ReadingProgressRequest(30, null, false), "progress-key"), ErrorCode.DUPLICATE_OPERATION);
 
         long unavailable = post(7L, "未发布档案", "PENDING");
-        assertCode(() -> repository.saveReadingProgress(11L, unavailable,
+        assertCode(() -> readingProgressRepository.save(11L, unavailable,
                 new ReadingProgressRequest(30, null, false), "unavailable-key"), ErrorCode.RESOURCE_NOT_FOUND);
         assertThat(progressIdempotencyCount("unavailable-key")).isZero();
     }
@@ -616,6 +618,11 @@ class PostRepositoryStateTest {
                 }
             };
             return new PostRepository(jdbcTemplate, failingMapper);
+        }
+
+        @Bean
+        ReadingProgressRepository readingProgressRepository(JdbcTemplate jdbcTemplate) {
+            return new ReadingProgressRepository(jdbcTemplate);
         }
 
         @Bean

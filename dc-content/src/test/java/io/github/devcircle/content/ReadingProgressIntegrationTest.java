@@ -4,6 +4,7 @@ import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.content.api.ReadingProgressRequest;
 import io.github.devcircle.content.infrastructure.PostRepository;
+import io.github.devcircle.content.infrastructure.ReadingProgressRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,6 +52,9 @@ class ReadingProgressIntegrationTest {
     PostRepository repository;
 
     @Autowired
+    ReadingProgressRepository readingProgressRepository;
+
+    @Autowired
     JdbcClient jdbcClient;
 
     @BeforeEach
@@ -73,17 +77,17 @@ class ReadingProgressIntegrationTest {
 
     @Test
     void progressIsMonotonicIdempotentAndIncludedInPostDetail() {
-        var first = repository.saveReadingProgress(USER_ID, 93001L,
+        var first = readingProgressRepository.save(USER_ID, 93001L,
                 new ReadingProgressRequest(18, "reading-section-1", false), "progress-first");
-        var replay = repository.saveReadingProgress(USER_ID, 93001L,
+        var replay = readingProgressRepository.save(USER_ID, 93001L,
                 new ReadingProgressRequest(18, "reading-section-1", false), "progress-first");
-        assertThatThrownBy(() -> repository.saveReadingProgress(USER_ID, 93001L,
+        assertThatThrownBy(() -> readingProgressRepository.save(USER_ID, 93001L,
                 new ReadingProgressRequest(81, "reading-section-9", false), "progress-first"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         error -> assertThat(error.code()).isEqualTo(ErrorCode.DUPLICATE_OPERATION));
-        var regressed = repository.saveReadingProgress(USER_ID, 93001L,
+        var regressed = readingProgressRepository.save(USER_ID, 93001L,
                 new ReadingProgressRequest(9, "reading-section-0", false), "progress-regression");
-        var completed = repository.saveReadingProgress(USER_ID, 93001L,
+        var completed = readingProgressRepository.save(USER_ID, 93001L,
                 new ReadingProgressRequest(97, "reading-section-3", true), "progress-complete");
 
         assertThat(first.progressPercent()).isEqualTo(18);
@@ -98,7 +102,7 @@ class ReadingProgressIntegrationTest {
         assertThat(viewerState.readingAnchor()).isEqualTo("reading-section-3");
         assertThat(viewerState.readingCompleted()).isTrue();
 
-        assertThatThrownBy(() -> repository.saveReadingProgress(USER_ID + 1, 93001L,
+        assertThatThrownBy(() -> readingProgressRepository.save(USER_ID + 1, 93001L,
                 new ReadingProgressRequest(20, "reading-section-1", false), "progress-first"))
                 .isInstanceOfSatisfying(BusinessException.class,
                         error -> assertThat(error.code()).isEqualTo(ErrorCode.DUPLICATE_OPERATION));
@@ -114,8 +118,8 @@ class ReadingProgressIntegrationTest {
         deduction(93003, true, false, 20);
         deduction(93004, false, true, 0);
 
-        Map<Long, io.github.devcircle.content.api.ReadingProgressSummary> tracks = repository
-                .listReadingProgress(USER_ID, 12).stream()
+        Map<Long, io.github.devcircle.content.api.ReadingProgressSummary> tracks = readingProgressRepository
+                .list(USER_ID, 12).stream()
                 .collect(Collectors.toMap(io.github.devcircle.content.api.ReadingProgressSummary::postId,
                         Function.identity()));
 

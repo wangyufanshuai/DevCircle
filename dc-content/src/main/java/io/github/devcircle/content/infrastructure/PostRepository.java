@@ -17,7 +17,6 @@ import io.github.devcircle.content.api.DraftView;
 import io.github.devcircle.content.api.FavoritePostView;
 import io.github.devcircle.content.api.PostDetailView;
 import io.github.devcircle.content.api.PostCursorPage;
-import io.github.devcircle.content.api.ReadingProgressRequest;
 import io.github.devcircle.content.api.ReadingProgressView;
 import io.github.devcircle.content.api.SaveDraftRequest;
 import io.github.devcircle.content.domain.DraftSubmissionValidator;
@@ -30,8 +29,6 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -39,7 +36,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,7 +44,6 @@ import java.util.UUID;
 
 @Repository
 public class PostRepository {
-    private static final String LEGACY_REQUEST_FINGERPRINT = "0".repeat(64);
     private final JdbcTemplate jdbcTemplate;
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
@@ -239,109 +234,6 @@ public class PostRepository {
                 .list();
     }
 
-    @Transactional
-    public ReadingProgressView saveReadingProgress(Long userId, Long postId, ReadingProgressRequest request,
-                                                   String idempotencyKey) {
-        Integer published = jdbcClient.sql("SELECT COUNT(*) FROM post WHERE id = :postId AND status = 'PUBLISHED'")
-                .param("postId", postId).query(Integer.class).single();
-        if (published == null || published == 0) {
-            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "内容不存在或尚未发布");
-        }
-        int progress = request.completed() ? 100 : Math.max(0, Math.min(request.progressPercent(), 99));
-        String normalizedAnchor = request.anchor() == null || request.anchor().isBlank()
-                ? null : request.anchor().trim();
-        String requestFingerprint = requestFingerprint(
-                "reading-progress-v1", progress, normalizedAnchor, request.completed());
-        int claimed = jdbcClient.sql("""
-                        INSERT IGNORE INTO reading_progress_idempotency(
-                            idempotency_key, user_id, post_id, request_fingerprint)
-                        VALUES (:key, :userId, :postId, :requestFingerprint)
-                        """)
-                .param("key", idempotencyKey).param("userId", userId).param("postId", postId)
-                .param("requestFingerprint", requestFingerprint).update();
-        if (claimed == 0) {
-            ProgressIdempotency existing = jdbcClient.sql("""
-                            SELECT user_id, post_id, request_fingerprint
-                            FROM reading_progress_idempotency WHERE idempotency_key = :key
-                            """)
-                    .param("key", idempotencyKey)
-                    .query((rs, rowNum) -> new ProgressIdempotency(
-                            rs.getLong("user_id"), rs.getLong("post_id"), rs.getString("request_fingerprint")))
-                    .single();
-            boolean legacyRecord = LEGACY_REQUEST_FINGERPRINT.equals(existing.requestFingerprint());
-            if (!existing.userId().equals(userId) || !existing.postId().equals(postId)
-                    || (!legacyRecord && !existing.requestFingerprint().equals(requestFingerprint))) {
-                throw new BusinessException(ErrorCode.DUPLICATE_OPERATION,
-                        "Idempotency-Key 已用于其他阅读进度请求或载荷");
-            }
-            return getReadingProgress(userId, postId);
-        }
-        jdbcClient.sql("""
-                        INSERT IGNORE INTO reading_progress(user_id, post_id, progress_percent, anchor, completed)
-                        VALUES (:userId, :postId, :progress, :anchor, :completed)
-                        """)
-                .param("userId", userId).param("postId", postId).param("progress", progress)
-                .param("anchor", normalizedAnchor).param("completed", request.completed()).update();
-        jdbcClient.sql("""
-                        UPDATE reading_progress
-                        SET anchor = CASE WHEN :progress >= progress_percent THEN :anchor ELSE anchor END,
-                            progress_percent = GREATEST(progress_percent, :progress),
-                            completed = completed OR :completed,
-                            last_read_at = CURRENT_TIMESTAMP
-                        WHERE user_id = :userId AND post_id = :postId
-                        """)
-                .param("userId", userId).param("postId", postId).param("progress", progress)
-                .param("anchor", normalizedAnchor).param("completed", request.completed()).update();
-        return getReadingProgress(userId, postId);
-    }
-
-    public ReadingProgressView getReadingProgress(Long userId, Long postId) {
-        return jdbcClient.sql("""
-                        SELECT post_id, progress_percent, anchor, completed, last_read_at
-                        FROM reading_progress WHERE user_id = :userId AND post_id = :postId
-                        """)
-                .param("userId", userId).param("postId", postId)
-                .query((rs, rowNum) -> new ReadingProgressView(rs.getLong("post_id"),
-                        rs.getInt("progress_percent"), rs.getString("anchor"), rs.getBoolean("completed"),
-                        rs.getTimestamp("last_read_at").toInstant()))
-                .optional()
-                .orElse(new ReadingProgressView(postId, 0, null, false, null));
-    }
-
-    public List<io.github.devcircle.content.api.ReadingProgressSummary> listReadingProgress(Long userId, int size) {
-        return jdbcClient.sql("""
-                        SELECT rp.post_id,
-                               CASE WHEN p.id IS NULL OR p.status <> 'PUBLISHED' THEN '内容已不可用' ELSE p.title END AS title,
-                               CASE WHEN p.status = 'PUBLISHED' THEN p.theme ELSE NULL END AS theme,
-                               rp.progress_percent, rp.completed, rp.last_read_at,
-                               CASE WHEN p.status = 'PUBLISHED' THEN TRUE ELSE FALSE END AS available,
-                               CASE
-                                 WHEN p.id IS NULL OR p.status <> 'PUBLISHED' THEN 'UNAVAILABLE'
-                                 WHEN COALESCE(da.revealed, FALSE) THEN 'REVEALED'
-                                 WHEN COALESCE(da.correct, FALSE) THEN 'SOLVED'
-                                 WHEN rp.completed THEN 'COMPLETED'
-                                 ELSE 'IN_PROGRESS'
-                               END AS track_state
-                        FROM reading_progress rp
-                        LEFT JOIN post p ON p.id = rp.post_id
-                        LEFT JOIN deduction_attempt da ON da.user_id = rp.user_id AND da.post_id = rp.post_id
-                        WHERE rp.user_id = :userId
-                        ORDER BY CASE
-                                   WHEN p.status = 'PUBLISHED' AND NOT rp.completed
-                                        AND NOT COALESCE(da.correct, FALSE) AND NOT COALESCE(da.revealed, FALSE)
-                                   THEN 0 ELSE 1
-                                 END,
-                                 rp.last_read_at DESC
-                        LIMIT :size
-                        """)
-                .param("userId", userId).param("size", Math.max(1, Math.min(size, 50)))
-                .query((rs, rowNum) -> new io.github.devcircle.content.api.ReadingProgressSummary(
-                        rs.getLong("post_id"), rs.getString("title"), rs.getString("theme"),
-                        rs.getInt("progress_percent"), rs.getBoolean("completed"), rs.getTimestamp("last_read_at").toInstant(),
-                        rs.getBoolean("available"), rs.getString("track_state")))
-                .list();
-    }
-
     public PostCursorPage listCursor(String cursor, int size, String type, String theme, String contentKind, String difficulty) {
         CursorValue value = decodeCursor(cursor);
         List<PostSummary> rows = jdbcClient.sql("""
@@ -472,7 +364,7 @@ public class PostRepository {
     @Transactional
     public PostSummary create(Long authorId, CreatePostRequest request, String idempotencyKey) {
         Long existingId = claimIdempotency(authorId, "CREATE_POST", idempotencyKey,
-                requestFingerprint("create-post-v1", request.title(), request.content(), request.tags(), request.type(),
+                IdempotencyFingerprint.of("create-post-v1", request.title(), request.content(), request.tags(), request.type(),
                         request.mediaIds(), request.theme(), request.contentKind(), request.difficulty(),
                         request.solvable(), request.clues(), request.solution()));
         if (existingId != null) {
@@ -623,7 +515,7 @@ public class PostRepository {
     @Transactional
     public DraftView submitDraft(Long authorId, Long draftId, long version, String idempotencyKey) {
         Long duplicateId = claimIdempotency(authorId, "SUBMIT_DRAFT:" + draftId, idempotencyKey,
-                requestFingerprint("submit-draft-v1", draftId, version));
+                IdempotencyFingerprint.of("submit-draft-v1", draftId, version));
         if (duplicateId != null) {
             return getDraft(authorId, duplicateId);
         }
@@ -721,7 +613,7 @@ public class PostRepository {
     @Transactional
     public Map<String, Object> createAppeal(Long userId, Long postId, String reason, String idempotencyKey) {
         Long existingId = claimIdempotency(userId, "CREATE_APPEAL:" + postId, idempotencyKey,
-                requestFingerprint("create-appeal-v1", postId, reason));
+                IdempotencyFingerprint.of("create-appeal-v1", postId, reason));
         if (existingId != null) {
             AppealState existing = jdbcClient.sql("SELECT post_id, status FROM appeal_record WHERE id = :appealId")
                     .param("appealId", existingId)
@@ -1027,7 +919,7 @@ public class PostRepository {
                         rs.getLong("user_id"), rs.getString("operation"), rs.getString("request_fingerprint"),
                         (Long) rs.getObject("resource_id")))
                 .single();
-        boolean legacyRecord = LEGACY_REQUEST_FINGERPRINT.equals(existing.requestFingerprint());
+        boolean legacyRecord = IdempotencyFingerprint.LEGACY.equals(existing.requestFingerprint());
         if (!existing.userId().equals(userId) || !existing.operation().equals(operation)
                 || (!legacyRecord && !existing.requestFingerprint().equals(requestFingerprint))) {
             throw new BusinessException(ErrorCode.DUPLICATE_OPERATION,
@@ -1047,29 +939,10 @@ public class PostRepository {
     }
 
     private String draftFingerprint(SaveDraftRequest request) {
-        return requestFingerprint("draft-v1", request.title(), request.content(), request.tags(), request.type(),
+        return IdempotencyFingerprint.of("draft-v1", request.title(), request.content(), request.tags(), request.type(),
                 request.mediaIds(), request.media(), request.theme(), request.contentKind(), request.difficulty(),
                 request.solvable(), request.clues(), request.suspects(), request.timeline(), request.question(),
                 request.answerKeywords(), request.solution(), request.version());
-    }
-
-    private String requestFingerprint(Object... values) {
-        StringBuilder canonical = new StringBuilder();
-        for (Object value : values) {
-            if (value == null) {
-                canonical.append("-1:|");
-            } else {
-                String text = String.valueOf(value);
-                canonical.append(text.length()).append(':').append(text).append('|');
-            }
-        }
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest);
-        } catch (NoSuchAlgorithmException ex) {
-            throw new IllegalStateException("SHA-256 is unavailable", ex);
-        }
     }
 
     private void assertDraftWritable(Long authorId, Long draftId) {
@@ -1285,9 +1158,6 @@ public class PostRepository {
         static DeductionSnapshot empty() {
             return new DeductionSnapshot(false, false, false, 0);
         }
-    }
-
-    private record ProgressIdempotency(Long userId, Long postId, String requestFingerprint) {
     }
 
     private String normalizeType(String type) {
