@@ -24,7 +24,10 @@ class PostRepositoryConnectionPoolTest {
                     VALUES (11, 'published/cover.webp', '/media/11', 'image/webp', 1024, 'APPROVED')
                     """);
             jdbc.update("INSERT INTO post_media(post_id, media_id, sort_order) VALUES (1, 11, 0)");
-            PostRepository repository = new PostRepository(jdbc, new ObjectMapper().findAndRegisterModules());
+            PostRepository repository = new PostRepository(
+                    jdbc,
+                    new ObjectMapper().findAndRegisterModules(),
+                    new DraftMediaRepository(jdbc));
 
             var posts = assertTimeoutPreemptively(Duration.ofSeconds(2), () -> repository.list(1, 20));
 
