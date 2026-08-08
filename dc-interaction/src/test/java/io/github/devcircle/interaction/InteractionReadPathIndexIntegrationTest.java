@@ -30,11 +30,14 @@ class InteractionReadPathIndexIntegrationTest {
                 .migrate();
         jdbc = new JdbcTemplate(new DriverManagerDataSource(
                 mysql.getJdbcUrl(), mysql.getUsername(), mysql.getPassword()));
-        jdbc.execute("SET SESSION cte_max_recursion_depth = 12000");
         jdbc.update("""
                 INSERT INTO favorite_record(user_id, post_id, created_at)
-                WITH RECURSIVE seq(n) AS (
-                    SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 10000
+                WITH RECURSIVE high(n) AS (
+                    SELECT 0 UNION ALL SELECT n + 1 FROM high WHERE n < 99
+                ), low(n) AS (
+                    SELECT 0 UNION ALL SELECT n + 1 FROM low WHERE n < 99
+                ), seq(n) AS (
+                    SELECT high.n * 100 + low.n + 1 FROM high CROSS JOIN low
                 )
                 SELECT 42, n, TIMESTAMPADD(SECOND, n, '2026-01-01')
                 FROM seq
