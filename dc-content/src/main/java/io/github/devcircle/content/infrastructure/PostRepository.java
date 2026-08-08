@@ -65,7 +65,7 @@ public class PostRepository {
 
     public List<PostSummary> list(int page, int size, String theme, String contentKind, String difficulty) {
         int offset = Math.max(page - 1, 0) * size;
-        return jdbcClient.sql("""
+        List<PostSummary> rows = jdbcClient.sql("""
                         SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
                                p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
                                p.like_count, p.comment_count, p.view_count, p.created_at,
@@ -101,7 +101,7 @@ public class PostRepository {
                         "user-" + rs.getLong("author_id"),
                         rs.getLong("author_id"),
                         splitTags(rs.getString("tags")),
-                        mediaAssets(rs.getLong("id")),
+                        List.of(),
                         rs.getLong("like_count"),
                         rs.getLong("comment_count"),
                         rs.getLong("view_count"),
@@ -109,6 +109,7 @@ public class PostRepository {
                         rs.getTimestamp("created_at").toInstant()
                 ))
                 .list();
+        return attachMediaAssets(rows);
     }
 
     public long count() {
@@ -117,7 +118,7 @@ public class PostRepository {
     }
 
     public PostSummary detail(Long id) {
-        return jdbcClient.sql("""
+        PostSummary row = jdbcClient.sql("""
                         SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
                                p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
                                p.like_count, p.comment_count, p.view_count, p.created_at,
@@ -148,7 +149,7 @@ public class PostRepository {
                         "user-" + rs.getLong("author_id"),
                         rs.getLong("author_id"),
                         splitTags(rs.getString("tags")),
-                        mediaAssets(rs.getLong("id")),
+                        List.of(),
                         rs.getLong("like_count"),
                         rs.getLong("comment_count"),
                         rs.getLong("view_count"),
@@ -165,12 +166,13 @@ public class PostRepository {
                         readLongList(rs.getString("related_post_ids"))
                 ))
                 .single();
+        return attachMediaAssets(List.of(row)).getFirst();
     }
 
     public PostDetailView publicDetail(Long id, Long viewerId) {
         DeductionSnapshot deduction = deductionSnapshot(viewerId, id);
         ReadingProgressView progress = readingProgress(viewerId, id);
-        return jdbcClient.sql("""
+        PostDetailView detail = jdbcClient.sql("""
                         SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
                                p.title, pc.markdown, pc.solution, p.author_id, p.status,
                                p.like_count, p.comment_count, p.view_count, p.created_at,
@@ -199,7 +201,7 @@ public class PostRepository {
                             rs.getBoolean("solvable"), rs.getLong("solved_count"),
                             rs.getString("title"), excerpt(markdown), markdown,
                             new PostDetailView.AuthorView(authorId, "user-" + authorId, null, null, null, null),
-                            splitTags(rs.getString("tags")), publicMediaAssets(rs.getLong("id")),
+                            splitTags(rs.getString("tags")), List.of(),
                             rs.getLong("like_count"), rs.getLong("comment_count"), rs.getLong("view_count"),
                             rs.getString("status"), rs.getTimestamp("created_at").toInstant(),
                             readStringList(rs.getString("clues")), readStringList(rs.getString("suspects")),
@@ -215,6 +217,7 @@ public class PostRepository {
                 })
                 .optional()
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "内容不存在或尚未发布"));
+        return withPublicMedia(detail, publicMediaAssets(detail.id()));
     }
 
     public List<FavoritePostView> publicSummaries(List<Long> postIds) {
@@ -374,10 +377,11 @@ public class PostRepository {
                         rs.getLong("id"), rs.getString("type"), rs.getString("theme"), rs.getString("content_kind"),
                         rs.getString("difficulty"), rs.getBoolean("solvable"), rs.getLong("solved_count"),
                         rs.getString("title"), rs.getString("excerpt"), "user-" + rs.getLong("author_id"),
-                        rs.getLong("author_id"), splitTags(rs.getString("tags")), mediaAssets(rs.getLong("id")), rs.getLong("like_count"),
+                        rs.getLong("author_id"), splitTags(rs.getString("tags")), List.of(), rs.getLong("like_count"),
                         rs.getLong("comment_count"), rs.getLong("view_count"), rs.getString("status"),
                         rs.getTimestamp("created_at").toInstant()))
                 .list();
+        rows = attachMediaAssets(rows);
         boolean hasMore = rows.size() > size;
         List<PostSummary> page = hasMore ? rows.subList(0, size) : rows;
         String next = page.isEmpty() || !hasMore ? "" : encodeCursor(page.getLast().createdAt(), page.getLast().id());
@@ -418,7 +422,7 @@ public class PostRepository {
 
     public List<PostSummary> related(Long id, int size) {
         PostSummary current = detail(id);
-        return jdbcClient.sql("""
+        List<PostSummary> rows = jdbcClient.sql("""
                         SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
                                p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
                                p.like_count, p.comment_count, p.view_count, p.created_at,
@@ -449,7 +453,7 @@ public class PostRepository {
                         "user-" + rs.getLong("author_id"),
                         rs.getLong("author_id"),
                         splitTags(rs.getString("tags")),
-                        mediaAssets(rs.getLong("id")),
+                        List.of(),
                         rs.getLong("like_count"),
                         rs.getLong("comment_count"),
                         rs.getLong("view_count"),
@@ -457,6 +461,7 @@ public class PostRepository {
                         rs.getTimestamp("created_at").toInstant()
                 ))
                 .list();
+        return attachMediaAssets(rows);
     }
 
     @Transactional
@@ -1138,6 +1143,69 @@ public class PostRepository {
             return List.of();
         }
         return Arrays.asList(tags.split(","));
+    }
+
+    private List<PostSummary> attachMediaAssets(List<PostSummary> posts) {
+        if (posts.isEmpty()) {
+            return posts;
+        }
+        Map<Long, List<MediaAssetView>> mediaByPostId = mediaAssetsByPostId(
+                posts.stream().map(PostSummary::id).distinct().toList());
+        return posts.stream()
+                .map(post -> withMedia(post, mediaByPostId.getOrDefault(post.id(), List.of())))
+                .toList();
+    }
+
+    private Map<Long, List<MediaAssetView>> mediaAssetsByPostId(List<Long> postIds) {
+        List<PostMediaAsset> rows = jdbcClient.sql("""
+                        SELECT pm.post_id, m.id, m.object_key, m.url, m.content_type, m.size_bytes,
+                               m.width, m.height, m.duration_seconds, m.status
+                        FROM post_media pm
+                        JOIN media_asset m ON m.id = pm.media_id
+                        WHERE pm.post_id IN (:postIds)
+                        ORDER BY pm.post_id, pm.sort_order, m.id
+                        """)
+                .param("postIds", postIds)
+                .query((rs, rowNum) -> new PostMediaAsset(
+                        rs.getLong("post_id"),
+                        new MediaAssetView(
+                                rs.getLong("id"),
+                                rs.getString("object_key"),
+                                rs.getString("url"),
+                                rs.getString("content_type"),
+                                rs.getLong("size_bytes"),
+                                (Integer) rs.getObject("width"),
+                                (Integer) rs.getObject("height"),
+                                (Integer) rs.getObject("duration_seconds"),
+                                rs.getString("status"))))
+                .list();
+        Map<Long, List<MediaAssetView>> result = new LinkedHashMap<>();
+        for (PostMediaAsset row : rows) {
+            result.computeIfAbsent(row.postId(), ignored -> new ArrayList<>()).add(row.media());
+        }
+        return result;
+    }
+
+    private PostSummary withMedia(PostSummary post, List<MediaAssetView> media) {
+        return new PostSummary(
+                post.id(), post.type(), post.theme(), post.contentKind(), post.difficulty(), post.solvable(),
+                post.solvedCount(), post.title(), post.excerpt(), post.author(), post.authorId(), post.tags(), media,
+                post.likes(), post.comments(), post.views(), post.status(), post.createdAt(), post.clues(),
+                post.suspects(), post.timeline(), post.question(), post.answerKeywords(), post.explanation(),
+                post.worldbuilding(), post.cosmicFacts(), post.relatedPostIds());
+    }
+
+    private PostDetailView withPublicMedia(PostDetailView detail, List<io.github.devcircle.content.api.PostMediaView> media) {
+        return new PostDetailView(
+                detail.id(), detail.type(), detail.theme(), detail.contentKind(), detail.difficulty(),
+                detail.solvable(), detail.solvedCount(), detail.title(), detail.excerpt(), detail.markdown(),
+                detail.author(), detail.tags(), media, detail.likes(), detail.comments(), detail.views(),
+                detail.status(), detail.createdAt(), detail.clues(), detail.suspects(), detail.timeline(),
+                detail.question(), detail.worldbuilding(), detail.cosmicFacts(), detail.relatedPostIds(),
+                detail.viewerState(), detail.deductionState(), detail.solution());
+    }
+
+    private record PostMediaAsset(Long postId, MediaAssetView media) {
     }
 
     private List<MediaAssetView> mediaAssets(Long postId) {
