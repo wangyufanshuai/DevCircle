@@ -2,6 +2,7 @@ package io.github.devcircle.admin.api;
 
 import io.github.devcircle.common.api.ApiResponse;
 import io.github.devcircle.admin.application.AdminService;
+import io.github.devcircle.admin.application.DltReplayService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -19,9 +20,11 @@ import java.util.Map;
 @RequestMapping("/api/admin")
 class AdminController {
     private final AdminService adminService;
+    private final DltReplayService dltReplayService;
 
-    AdminController(AdminService adminService) {
+    AdminController(AdminService adminService, DltReplayService dltReplayService) {
         this.adminService = adminService;
+        this.dltReplayService = dltReplayService;
     }
 
     @GetMapping("/audits/posts")
@@ -231,6 +234,14 @@ class AdminController {
                                                 @RequestHeader("Idempotency-Key") String idempotencyKey,
                                                 @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
         return ApiResponse.ok(adminService.replayOutbox(topic, batchSize, userId, traceId, idempotencyKey));
+    }
+
+    @PostMapping("/ops/dlt/replay")
+    ApiResponse<AdminActionResult> replayDlt(@RequestHeader("X-User-Id") Long userId,
+                                             @RequestHeader("Idempotency-Key") String idempotencyKey,
+                                             @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
+                                             @Valid @RequestBody DltReplayRequest request) {
+        return ApiResponse.ok(dltReplayService.replay(request, userId, traceId, idempotencyKey));
     }
 
     @GetMapping("/ops/degradation")

@@ -1,6 +1,7 @@
 package io.github.devcircle.admin.api;
 
 import io.github.devcircle.admin.application.AdminService;
+import io.github.devcircle.admin.application.DltReplayService;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -11,7 +12,8 @@ import static org.mockito.Mockito.when;
 
 class AdminControllerTest {
     private final AdminService service = mock(AdminService.class);
-    private final AdminController controller = new AdminController(service);
+    private final DltReplayService dltReplayService = mock(DltReplayService.class);
+    private final AdminController controller = new AdminController(service, dltReplayService);
 
     @Test
     void governanceDecisionsForwardIdentityReasonsAndIdempotencyKeys() {
@@ -33,6 +35,10 @@ class AdminControllerTest {
                 .thenReturn(new AdminActionResult("UPDATE_RECOMMEND_EXPERIMENT", Map.of()));
         when(service.replayOutbox("post.submitted", 25, 9L, "trace-8", "outbox-replay"))
                 .thenReturn(new AdminActionResult("REPLAY_OUTBOX", Map.of()));
+        DltReplayRequest dltReplay = new DltReplayRequest("audit.completed", 0, 7,
+                "Elasticsearch has recovered and the event is safe to replay.");
+        when(dltReplayService.replay(dltReplay, 9L, "trace-dlt", "dlt-replay"))
+                .thenReturn(new AdminActionResult("REPLAY_KAFKA_DLT", Map.of()));
         CreateTagRequest tag = new CreateTagRequest("轨道档案");
         when(service.createTag(tag.name(), 9L, "trace-9", "tag-create"))
                 .thenReturn(new AdminActionResult("CREATE_TAG", Map.of()));
@@ -45,6 +51,7 @@ class AdminControllerTest {
         controller.createExperiment(9L, "experiment-create", "trace-6", experiment);
         controller.activateExperiment("exp-home-a", 9L, "experiment-active", "trace-7");
         controller.replayOutbox("post.submitted", 25, 9L, "outbox-replay", "trace-8");
+        controller.replayDlt(9L, "dlt-replay", "trace-dlt", dltReplay);
         controller.createTag(9L, "tag-create", "trace-9", tag);
 
         verify(service).requireChanges(7L, 9L, "trace-1", request.reason(), "moderate-7");
@@ -55,6 +62,7 @@ class AdminControllerTest {
         verify(service).createExperiment(experiment, 9L, "trace-6", "experiment-create");
         verify(service).updateExperimentStatus("exp-home-a", "ACTIVE", 9L, "trace-7", "experiment-active");
         verify(service).replayOutbox("post.submitted", 25, 9L, "trace-8", "outbox-replay");
+        verify(dltReplayService).replay(dltReplay, 9L, "trace-dlt", "dlt-replay");
         verify(service).createTag(tag.name(), 9L, "trace-9", "tag-create");
     }
 }

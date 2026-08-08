@@ -3,7 +3,17 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="${ROOT_DIR}/docker-compose.e2e.yml"
-PROJECT_NAME="${REAL_E2E_PROJECT_NAME:-devcircle-real-search-recovery-e2e}"
+RECOVERY_MODE="${REAL_E2E_SEARCH_RECOVERY_MODE:-retry}"
+if [[ "${RECOVERY_MODE}" == "dlt" ]]; then
+  DEFAULT_PROJECT_NAME="devcircle-real-search-dlt-e2e"
+  DEFAULT_RETRY_INTERVAL_MS=500
+  DEFAULT_RETRY_ATTEMPTS=1
+else
+  DEFAULT_PROJECT_NAME="devcircle-real-search-recovery-e2e"
+  DEFAULT_RETRY_INTERVAL_MS=2000
+  DEFAULT_RETRY_ATTEMPTS=60
+fi
+PROJECT_NAME="${REAL_E2E_PROJECT_NAME:-${DEFAULT_PROJECT_NAME}}"
 BASE_URL="${REAL_E2E_BASE_URL:-http://127.0.0.1:28080}"
 WAIT_TIMEOUT="${REAL_E2E_WAIT_TIMEOUT:-240}"
 WAIT_ATTEMPTS="${REAL_E2E_RECOVERY_WAIT_ATTEMPTS:-180}"
@@ -11,10 +21,10 @@ PULL_POLICY="${REAL_E2E_PULL_POLICY:-missing}"
 BUILD_MODE="${REAL_E2E_BUILD:-true}"
 KEEP_ON_FAILURE="${REAL_E2E_KEEP_ON_FAILURE:-false}"
 export REAL_E2E_ENABLE_OUTBOX=true
-export REAL_E2E_SEARCH_RETRY_INITIAL_INTERVAL_MS="${REAL_E2E_SEARCH_RETRY_INITIAL_INTERVAL_MS:-2000}"
+export REAL_E2E_SEARCH_RETRY_INITIAL_INTERVAL_MS="${REAL_E2E_SEARCH_RETRY_INITIAL_INTERVAL_MS:-${DEFAULT_RETRY_INTERVAL_MS}}"
 export REAL_E2E_SEARCH_RETRY_MULTIPLIER="${REAL_E2E_SEARCH_RETRY_MULTIPLIER:-1.0}"
-export REAL_E2E_SEARCH_RETRY_MAX_INTERVAL_MS="${REAL_E2E_SEARCH_RETRY_MAX_INTERVAL_MS:-2000}"
-export REAL_E2E_SEARCH_RETRY_MAX_ATTEMPTS="${REAL_E2E_SEARCH_RETRY_MAX_ATTEMPTS:-60}"
+export REAL_E2E_SEARCH_RETRY_MAX_INTERVAL_MS="${REAL_E2E_SEARCH_RETRY_MAX_INTERVAL_MS:-${DEFAULT_RETRY_INTERVAL_MS}}"
+export REAL_E2E_SEARCH_RETRY_MAX_ATTEMPTS="${REAL_E2E_SEARCH_RETRY_MAX_ATTEMPTS:-${DEFAULT_RETRY_ATTEMPTS}}"
 export REAL_E2E_MIN_DOCKER_MEMORY_BYTES="${REAL_E2E_MIN_DOCKER_MEMORY_BYTES:-4294967296}"
 ADMIN_EMAIL="real-search-admin@example.test"
 ADMIN_PASSWORD="OrbitAdmin2026!"
@@ -108,6 +118,10 @@ command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 2; }
 command -v node >/dev/null 2>&1 || { echo "node is required" >&2; exit 2; }
 [[ "${KEEP_ON_FAILURE}" == "true" || "${KEEP_ON_FAILURE}" == "false" ]] || {
   echo "REAL_E2E_KEEP_ON_FAILURE must be true or false" >&2
+  exit 2
+}
+[[ "${RECOVERY_MODE}" == "retry" || "${RECOVERY_MODE}" == "dlt" ]] || {
+  echo "REAL_E2E_SEARCH_RECOVERY_MODE must be retry or dlt" >&2
   exit 2
 }
 require_real_e2e_docker "search recovery E2E"
@@ -235,17 +249,58 @@ done
   echo "Search event did not reach PUBLISHED/FAILED split state while Elasticsearch was down" >&2
   exit 1
 }
-echo "Elasticsearch outage observed: outbox=PUBLISHED consumer=FAILED event=${event_id}"
+echo "Elasticsearch outage observed: outbox=PUBLISHED consumer=FAILED event=${event_id} mode=${RECOVERY_MODE}"
 
-[[ "$(topic_end_offset 'audit.completed.DLT')" == "0" ]] || {
-  echo "Search event reached the DLT before Elasticsearch recovery" >&2
-  exit 1
-}
+if [[ "${RECOVERY_MODE}" == "retry" ]]; then
+  [[ "$(topic_end_offset 'audit.completed.DLT')" == "0" ]] || {
+    echo "Search event reached the DLT before Elasticsearch recovery" >&2
+    exit 1
+  }
+else
+  dlt_ready=false
+  for _ in $(seq 1 "${WAIT_ATTEMPTS}"); do
+    dlt_offset_end="$(topic_end_offset 'audit.completed.DLT')"
+    if [[ "${dlt_offset_end}" == "1" ]]; then
+      dlt_ready=true
+      break
+    fi
+    [[ "${dlt_offset_end}" =~ ^[0-9]+$ ]] && (( dlt_offset_end < 2 )) || {
+      echo "Unexpected audit.completed DLT offset: ${dlt_offset_end}" >&2
+      exit 1
+    }
+    sleep 1
+  done
+  [[ "${dlt_ready}" == "true" ]] || { echo "Failed search event did not reach the DLT" >&2; exit 1; }
+  source_offset_before_replay="$(topic_end_offset 'audit.completed')"
+  [[ "${source_offset_before_replay}" == "1" ]] || {
+    echo "Unexpected source topic offset before DLT replay: ${source_offset_before_replay}" >&2
+    exit 1
+  }
+  echo "Search event exhausted retries and reached DLT offset 0"
+fi
 
 "${COMPOSE[@]}" start elasticsearch >/dev/null
 wait_for_elasticsearch
 wait_for_search_readiness
 echo "Elasticsearch and search readiness recovered"
+
+if [[ "${RECOVERY_MODE}" == "dlt" ]]; then
+  dlt_replay_key="search-dlt-replay-${unique}"
+  dlt_replay_url="${BASE_URL}/api/admin/ops/dlt/replay"
+  dlt_replay_result="$(curl -sS -X POST "${dlt_replay_url}" \
+    -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer ${admin_token}" \
+    -H "Idempotency-Key: ${dlt_replay_key}" \
+    --data '{"sourceTopic":"audit.completed","partition":0,"offset":0,"reason":"Elasticsearch recovered; replay the failed search projection."}' \
+    --write-out $'\n%{http_code}')"
+  dlt_replay_status="${dlt_replay_result##*$'\n'}"
+  dlt_replay_response="${dlt_replay_result%$'\n'*}"
+  [[ "${dlt_replay_status}" == "200" ]] || {
+    echo "DLT replay API failed with HTTP ${dlt_replay_status}: ${dlt_replay_response}" >&2
+    exit 1
+  }
+  node -e "const body=JSON.parse(process.argv[1]); const eventId=process.argv[2]; const data=body.data; if(data?.action!=='REPLAY_KAFKA_DLT' || data?.attributes?.eventId!==eventId || data?.attributes?.duplicateRequest!==false) process.exit(2)" "${dlt_replay_response}" "${event_id}"
+fi
 
 recovered=false
 attempts=0
@@ -265,6 +320,31 @@ if [[ "${recovered}" != "true" || ! "${attempts}" =~ ^[0-9]+$ ]] || (( attempts 
   exit 1
 fi
 echo "Search projection recovered: event=${event_id} attempts=${attempts}"
+
+if [[ "${RECOVERY_MODE}" == "dlt" ]]; then
+  source_offset_after_replay="$(topic_end_offset 'audit.completed')"
+  [[ "${source_offset_after_replay}" == "2" ]] || {
+    echo "DLT replay did not append exactly one source event: ${source_offset_after_replay}" >&2
+    exit 1
+  }
+  dlt_replay_duplicate="$(curl -fsS -X POST "${dlt_replay_url}" \
+    -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer ${admin_token}" \
+    -H "Idempotency-Key: ${dlt_replay_key}" \
+    --data '{"sourceTopic":"audit.completed","partition":0,"offset":0,"reason":"Elasticsearch recovered; replay the failed search projection."}')"
+  node -e "const body=JSON.parse(process.argv[1]); if(body.data?.attributes?.duplicateRequest!==true) process.exit(2)" "${dlt_replay_duplicate}"
+  [[ "$(topic_end_offset 'audit.completed')" == "2" ]] || {
+    echo "Idempotent DLT replay appended a duplicate source event" >&2
+    exit 1
+  }
+  dlt_replay_rows="$(sql dc_content "SELECT COUNT(*) FROM kafka_dlt_replay WHERE event_id = '${event_id}' AND source_topic = 'audit.completed';")"
+  dlt_replay_audits="$(sql dc_content "SELECT COUNT(*) FROM audit_log WHERE action = 'REPLAY_KAFKA_DLT' AND target_id = '0:0';")"
+  [[ "${dlt_replay_rows}" == "1" && "${dlt_replay_audits}" == "1" ]] || {
+    echo "DLT replay persistence or audit is incomplete: rows=${dlt_replay_rows} audits=${dlt_replay_audits}" >&2
+    exit 1
+  }
+  echo "Operator DLT replay recovered and remained idempotent"
+fi
 
 watermark_event="$(sql dc_search "SELECT last_event_id FROM search_event_watermark WHERE post_id = ${post_id};")"
 watermark_action="$(sql dc_search "SELECT last_action FROM search_event_watermark WHERE post_id = ${post_id};")"
@@ -307,9 +387,11 @@ event_count="$(sql dc_content "SELECT COUNT(*) FROM outbox_event WHERE event_id 
   echo "Idempotent approval replay duplicated the event or search projection" >&2
   exit 1
 }
-[[ "$(topic_end_offset 'audit.completed.DLT')" == "0" && "$(topic_end_offset 'content.rejected.DLT')" == "0" ]] || {
+expected_audit_dlt_offset=0
+[[ "${RECOVERY_MODE}" == "retry" ]] || expected_audit_dlt_offset=1
+[[ "$(topic_end_offset 'audit.completed.DLT')" == "${expected_audit_dlt_offset}" && "$(topic_end_offset 'content.rejected.DLT')" == "0" ]] || {
   echo "A successfully recovered or stale event was written to a search DLT" >&2
   exit 1
 }
 
-echo "Search recovery verified post=${post_id} event=${event_id}: FAILED -> COMPLETED in ${attempts} attempts; stale event ignored"
+echo "Search recovery verified mode=${RECOVERY_MODE} post=${post_id} event=${event_id}: FAILED -> COMPLETED in ${attempts} attempts; stale event ignored"

@@ -47,6 +47,7 @@ Copy-Item .env.example .env
 - `GET /api/admin/ops/health`
 - `GET /api/admin/ops/outbox?status=&topic=&page=&size=`
 - `POST /api/admin/ops/outbox/replay?topic=&batchSize=`
+- `POST /api/admin/ops/dlt/replay`（要求 ADMIN、`Idempotency-Key`、原始 topic、partition、offset 和操作理由）
 - `GET /api/admin/ops/degradation`
 
 ## 开发环境显式降级
@@ -71,3 +72,4 @@ Copy-Item .env.example .env
 - 前端请求失败：检查 `VITE_API_BASE_URL` 是否指向 Gateway；不要通过增加本地 mock 绕过错误。
 - 管理端 403：确认真实 JWT 中包含 `ADMIN`。
 - Outbox 积压：查看 `/api/admin/ops/outbox`，必要时调用 replay 接口。
+- DLT 积压：先修复消费者依赖并定位 DLT 的 partition/offset，再调用 `/api/admin/ops/dlt/replay`；重试必须保持完全相同的参数和 `Idempotency-Key`，不得通过换键重复发布同一位置。

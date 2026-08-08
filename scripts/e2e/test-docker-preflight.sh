@@ -111,6 +111,9 @@ grep -q 'FAILED' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
 grep -q 'COMPLETED' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
 grep -q '2020-01-01T00:00:00Z' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
 grep -q 'Unable to read Kafka offsets' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
+grep -q 'REAL_E2E_SEARCH_RECOVERY_MODE' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
+grep -q 'REPLAY_KAFKA_DLT' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
+grep -q 'kafka_dlt_replay' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
 if grep -q 'exec -T kafka /opt/kafka/bin' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"; then
   echo "Kafka container paths must be protected from Git Bash path conversion with sh -c" >&2
   exit 1

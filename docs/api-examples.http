@@ -288,6 +288,19 @@ Authorization: {{adminToken}}
 POST {{baseUrl}}/api/admin/ops/outbox/replay?topic=post.created&batchSize=100
 Authorization: {{adminToken}}
 
+### v1.3 精确重放 Kafka DLT 记录
+POST {{baseUrl}}/api/admin/ops/dlt/replay
+Authorization: {{adminToken}}
+Idempotency-Key: dlt-audit-completed-0-42
+Content-Type: application/json
+
+{
+  "sourceTopic": "audit.completed",
+  "partition": 0,
+  "offset": 42,
+  "reason": "Elasticsearch 已恢复；经 OPS-2026-0812 批准重放。"
+}
+
 ### v1.2 降级状态概览
 GET {{baseUrl}}/api/admin/ops/degradation
 Authorization: {{adminToken}}

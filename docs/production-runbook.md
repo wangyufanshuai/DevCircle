@@ -78,6 +78,25 @@ PREVIOUS_IMAGE_TAG=<previous-sha> scripts/ops/rollback.sh /srv/backups/devcircle
 
 若新迁移仍向前兼容，可只回滚镜像；只有发生不兼容数据写入时才恢复数据库和媒体备份。
 
+## Kafka DLT 人工重放
+
+只有在消费者依赖已经恢复、失败原因已经确认且自动重试无法继续时，才允许人工重放。先从告警或 Kafka 工具确定 DLT 记录的位置，并保留原始 topic（请求中不填写 `.DLT` 后缀）、partition、offset、事件 ID、故障原因和工单引用。当前仅允许服务端白名单内的版本化领域事件；接口还会校验 Spring Kafka 原始 topic header、事件生产者与事件信封。
+
+```bash
+curl -fsS -X POST https://<domain>/api/admin/ops/dlt/replay \
+  -H 'Authorization: Bearer <admin-access-token>' \
+  -H 'Idempotency-Key: dlt-audit-completed-0-42' \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "sourceTopic": "audit.completed",
+    "partition": 0,
+    "offset": 42,
+    "reason": "Elasticsearch 已恢复；变更单 OPS-2026-0812 批准重放。"
+  }'
+```
+
+成功后必须同时核对：源 topic 只新增一条消息、目标消费者状态转为 `COMPLETED`、业务投影只生效一次、`kafka_dlt_replay` 有唯一位置记录、`audit_log` 存在 `REPLAY_KAFKA_DLT`。响应中的 `duplicateRequest=true` 表示同键安全重试，没有再次发布。Kafka 发布失败会回滚重放记录并写入 `REPLAY_KAFKA_DLT_FAILED`；依赖恢复后使用完全相同的参数和幂等键重试。禁止换键绕过失败或重复处理同一 DLT 位置。
+
 ## 日常检查
 
 - `docker compose ... ps`：所有健康检查通过且无重启循环。
