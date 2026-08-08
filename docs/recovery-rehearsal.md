@@ -1,5 +1,19 @@
 # 本地备份恢复演练记录
 
+## 2026-08-08 · 180 条内容真实恢复演练
+
+本次使用独立 Compose project `devcircle-recovery-drill`，只启动生产 Compose 中的 MySQL 8.4.6、MinIO 和按需维护容器；项目网络、`mysql-data` 与 `minio-data` 卷均为本次演练新建，结束后已销毁。演练使用提交 `92280f106b22153ce84244a4a33359807f911be4` 和一次性伪生产配置，不接触现有数据。
+
+在 `dc_content` 中写入 180 条互不重复的已发布内容及正文、线索和解析后，真实执行 `backup.sh`。备份耗时约 8.2 秒，Manifest 记录 `postCount=180`、`publishedPostCount=180` 和内容哈希 `3011126d2b145a7e94ec8cb777d8d126d85573f38cb9abc8c1680912091ae600`。随后故意修改第 1 条标题并删除第 180 条内容，再以 `RESTORE_MANAGE_APPLICATIONS=false` 执行 `restore.sh`：
+
+- `mysql.sql.gz`、`minio-data.tar.gz`、`backup-manifest.json` 三项 SHA-256 校验通过；
+- 恢复命令耗时约 6.1 秒；
+- 恢复后总数与公开数均为 180，第 1 条标题从篡改值恢复为 `drill-post-1`；
+- 恢复脚本在返回成功前重新计算并匹配 Manifest 的数量与内容哈希；
+- 演练容器、网络、卷、备份产物和一次性配置均已清理。
+
+这是对 180 条主题内容规模下 MySQL 与 MinIO 数据链的真实恢复证据，但仍不是目标 Linux 主机的正式 RTO：本次没有启动全部应用，也没有包含 Elasticsearch 全量重建、Kafka 追平、媒体人工抽查和公网健康探测。
+
 ## 2026-07-30 · 隔离 Docker 演练
 
 本次演练使用独立 Compose project `devcircle-ops-rehearsal` 和独立数据卷，只启动生产配置中的 MySQL 8.4.6、MinIO 与按需维护容器。现有开发环境、容器和数据卷未参与演练。
@@ -31,4 +45,4 @@
 - Elasticsearch 校验原先只打印异常数量；现在非零数量或无法解析响应都会阻断切换。
 - 迁移校验原先只检查 ES 中非公开文档数量，空索引可能被误判为通过；现在使用实际索引名 `devcircle-posts`，同时要求数据库 `PUBLISHED` 数量与 ES 总文档数一致，并保留非公开文档为零的约束。
 
-尚需在目标 Linux 主机完成一次包含 180 条内容、Elasticsearch 重建和全部应用服务的正式恢复演练，并记录实际 RTO、磁盘吞吐和服务恢复时间。
+尚需在目标 Linux 主机完成包含 Elasticsearch 重建、Kafka 追平和全部应用服务的正式恢复演练，并记录实际 RTO、磁盘吞吐和服务恢复时间。
