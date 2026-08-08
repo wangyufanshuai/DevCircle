@@ -1,6 +1,6 @@
 package io.github.devcircle.content.api;
 
-import io.github.devcircle.common.model.PostSummary;
+import io.github.devcircle.content.contract.PostSummary;
 
 import java.util.List;
 

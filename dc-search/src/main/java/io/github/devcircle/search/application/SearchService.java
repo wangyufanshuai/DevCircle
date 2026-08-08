@@ -11,7 +11,7 @@ import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.event.EventEnvelopeValidator;
 import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.common.event.ValidatedEvent;
-import io.github.devcircle.common.model.PostSummary;
+import io.github.devcircle.content.contract.PostSummary;
 import io.github.devcircle.seed.ThemeContentLibrary;
 import io.github.devcircle.common.http.BoundedRestClientFactory;
 import io.github.devcircle.search.infrastructure.PostSearchDocument;

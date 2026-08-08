@@ -2,7 +2,7 @@ package io.github.devcircle.recommend.application;
 
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
-import io.github.devcircle.common.model.PostSummary;
+import io.github.devcircle.content.contract.PostSummary;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.HashOperations;

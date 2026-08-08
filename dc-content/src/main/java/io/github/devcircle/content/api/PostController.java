@@ -2,7 +2,7 @@ package io.github.devcircle.content.api;
 
 import io.github.devcircle.common.api.ApiResponse;
 import io.github.devcircle.common.api.PageResponse;
-import io.github.devcircle.common.model.PostSummary;
+import io.github.devcircle.content.contract.PostSummary;
 import io.github.devcircle.content.application.PostService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;

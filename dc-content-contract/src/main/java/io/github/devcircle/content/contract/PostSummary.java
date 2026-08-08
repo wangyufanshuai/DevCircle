@@ -1,4 +1,4 @@
-package io.github.devcircle.common.model;
+package io.github.devcircle.content.contract;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import java.time.Instant;

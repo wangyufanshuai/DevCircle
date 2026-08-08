@@ -1,6 +1,6 @@
 package io.github.devcircle.recommend.application;
 
-import io.github.devcircle.common.model.PostSummary;
+import io.github.devcircle.content.contract.PostSummary;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;

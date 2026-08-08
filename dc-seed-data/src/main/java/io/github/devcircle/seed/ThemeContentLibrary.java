@@ -1,7 +1,7 @@
 package io.github.devcircle.seed;
 
-import io.github.devcircle.common.model.MediaAssetView;
-import io.github.devcircle.common.model.PostSummary;
+import io.github.devcircle.content.contract.MediaAssetView;
+import io.github.devcircle.content.contract.PostSummary;
 
 import java.time.Instant;
 import java.util.ArrayList;

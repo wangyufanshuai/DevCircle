@@ -1,6 +1,6 @@
 package io.github.devcircle.recommend.application;
 
-import io.github.devcircle.common.model.PostSummary;
+import io.github.devcircle.content.contract.PostSummary;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;

@@ -14,7 +14,7 @@
     <dependencies>
         <dependency>
             <groupId>io.github.devcircle</groupId>
-            <artifactId>dc-common</artifactId>
+            <artifactId>dc-content-contract</artifactId>
             <version>${project.version}</version>
         </dependency>
     </dependencies>
