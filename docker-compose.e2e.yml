@@ -57,7 +57,7 @@ services:
 
   kafka:
     image: apache/kafka:4.1.1
-    profiles: ["community", "performance"]
+    profiles: ["community", "performance", "search-recovery"]
     restart: "no"
     environment:
       KAFKA_NODE_ID: 1
@@ -82,7 +82,7 @@ services:
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:9.2.2
-    profiles: ["performance"]
+    profiles: ["performance", "search-recovery"]
     restart: "no"
     environment:
       discovery.type: single-node
@@ -122,7 +122,7 @@ services:
 
   dc-content:
     <<: *app-defaults
-    profiles: ["content", "review", "community", "performance"]
+    profiles: ["content", "review", "community", "performance", "search-recovery"]
     build:
       <<: *service-build
       args: { JAR_FILE: dc-content/target/dc-content-0.1.0-SNAPSHOT.jar }
@@ -241,7 +241,7 @@ services:
 
   dc-search:
     <<: *app-defaults
-    profiles: ["performance"]
+    profiles: ["performance", "search-recovery"]
     build:
       <<: *service-build
       args: { JAR_FILE: dc-search/target/dc-search-0.1.0-SNAPSHOT.jar }
@@ -254,6 +254,10 @@ services:
       ELASTICSEARCH_URIS: http://elasticsearch:9200
       DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
       DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
+      DEVCIRCLE_KAFKA_RETRY_INITIAL_INTERVAL_MS: ${REAL_E2E_SEARCH_RETRY_INITIAL_INTERVAL_MS:-1000}
+      DEVCIRCLE_KAFKA_RETRY_MULTIPLIER: ${REAL_E2E_SEARCH_RETRY_MULTIPLIER:-2.0}
+      DEVCIRCLE_KAFKA_RETRY_MAX_INTERVAL_MS: ${REAL_E2E_SEARCH_RETRY_MAX_INTERVAL_MS:-10000}
+      DEVCIRCLE_KAFKA_RETRY_MAX_ATTEMPTS: ${REAL_E2E_SEARCH_RETRY_MAX_ATTEMPTS:-4}
     mem_limit: 384m
     depends_on:
       mysql: { condition: service_healthy }
@@ -268,7 +272,7 @@ services:
 
   dc-admin:
     <<: *app-defaults
-    profiles: ["review"]
+    profiles: ["review", "search-recovery"]
     build:
       <<: *service-build
       args: { JAR_FILE: dc-admin/target/dc-admin-0.1.0-SNAPSHOT.jar }
@@ -282,6 +286,7 @@ services:
     mem_limit: 256m
     depends_on:
       dc-content: { condition: service_healthy }
+      kafka: { condition: service_healthy, required: false }
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8110/actuator/health/readiness"]
       interval: 5s

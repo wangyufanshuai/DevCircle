@@ -71,6 +71,7 @@ assert_profile_outbox_mode() {
 
 assert_profile_outbox_mode review false
 assert_profile_outbox_mode community true
+assert_profile_outbox_mode search-recovery true
 
 timeout_config="$(REAL_E2E_OUTBOX_SEND_TIMEOUT_MS=2345 docker compose \
   -f "${ROOT_DIR}/docker-compose.e2e.yml" --profile community config)"
@@ -85,5 +86,34 @@ grep -q 'stop -t 10 kafka' "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recov
 grep -q 'FAILED' "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
 grep -q 'PUBLISHED' "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
 grep -q 'verify-community-kafka-recovery.sh' "${ROOT_DIR}/scripts/e2e/run-real-community.sh"
+
+search_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
+  --profile search-recovery config --services | sort)"
+expected_search_services="$(printf '%s\n' dc-admin dc-auth dc-content dc-gateway dc-search \
+  elasticsearch kafka mysql redis | sort)"
+[[ "${search_services}" == "${expected_search_services}" ]] || {
+  echo "Unexpected search-recovery services: ${search_services}" >&2
+  exit 1
+}
+
+search_retry_config="$(REAL_E2E_SEARCH_RETRY_INITIAL_INTERVAL_MS=1234 \
+  REAL_E2E_SEARCH_RETRY_MULTIPLIER=1.5 REAL_E2E_SEARCH_RETRY_MAX_INTERVAL_MS=5678 \
+  REAL_E2E_SEARCH_RETRY_MAX_ATTEMPTS=42 docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
+  --profile search-recovery config)"
+grep -q 'DEVCIRCLE_KAFKA_RETRY_INITIAL_INTERVAL_MS: "1234"' <<<"${search_retry_config}"
+grep -q 'DEVCIRCLE_KAFKA_RETRY_MULTIPLIER: "1.5"' <<<"${search_retry_config}"
+grep -q 'DEVCIRCLE_KAFKA_RETRY_MAX_INTERVAL_MS: "5678"' <<<"${search_retry_config}"
+grep -q 'DEVCIRCLE_KAFKA_RETRY_MAX_ATTEMPTS: "42"' <<<"${search_retry_config}"
+
+bash -n "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
+grep -q 'stop -t 10 elasticsearch' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
+grep -q 'FAILED' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
+grep -q 'COMPLETED' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
+grep -q '2020-01-01T00:00:00Z' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
+grep -q 'Unable to read Kafka offsets' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
+if grep -q 'exec -T kafka /opt/kafka/bin' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"; then
+  echo "Kafka container paths must be protected from Git Bash path conversion with sh -c" >&2
+  exit 1
+fi
 
 echo "Docker preflight tests passed"
