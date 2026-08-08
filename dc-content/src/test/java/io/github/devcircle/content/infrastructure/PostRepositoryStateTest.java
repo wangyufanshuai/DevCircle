@@ -605,24 +605,32 @@ class PostRepositoryStateTest {
         }
 
         @Bean("normalRepository")
-        PostRepository postRepository(JdbcTemplate jdbcTemplate, DraftMediaRepository draftMediaRepository) {
-            return new PostRepository(jdbcTemplate, new ObjectMapper().findAndRegisterModules(), draftMediaRepository);
+        PostRepository postRepository(JdbcTemplate jdbcTemplate, DraftMediaRepository draftMediaRepository,
+                                      ContentIdempotencyStore idempotencyStore) {
+            return new PostRepository(jdbcTemplate, new ObjectMapper().findAndRegisterModules(),
+                    draftMediaRepository, idempotencyStore);
         }
 
         @Bean("failingRepository")
-        PostRepository failingRepository(JdbcTemplate jdbcTemplate, DraftMediaRepository draftMediaRepository) {
+        PostRepository failingRepository(JdbcTemplate jdbcTemplate, DraftMediaRepository draftMediaRepository,
+                                         ContentIdempotencyStore idempotencyStore) {
             ObjectMapper failingMapper = new ObjectMapper() {
                 @Override
                 public String writeValueAsString(Object value) throws JsonProcessingException {
                     throw new JsonProcessingException("structured content serializer unavailable") { };
                 }
             };
-            return new PostRepository(jdbcTemplate, failingMapper, draftMediaRepository);
+            return new PostRepository(jdbcTemplate, failingMapper, draftMediaRepository, idempotencyStore);
         }
 
         @Bean
         DraftMediaRepository draftMediaRepository(JdbcTemplate jdbcTemplate) {
             return new DraftMediaRepository(jdbcTemplate);
+        }
+
+        @Bean
+        ContentIdempotencyStore contentIdempotencyStore(JdbcTemplate jdbcTemplate) {
+            return new ContentIdempotencyStore(jdbcTemplate);
         }
 
         @Bean

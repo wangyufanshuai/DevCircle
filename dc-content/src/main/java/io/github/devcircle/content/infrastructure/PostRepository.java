@@ -47,13 +47,16 @@ public class PostRepository {
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
     private final DraftMediaRepository draftMediaRepository;
+    private final ContentIdempotencyStore idempotencyStore;
 
     public PostRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper,
-                          DraftMediaRepository draftMediaRepository) {
+                          DraftMediaRepository draftMediaRepository,
+                          ContentIdempotencyStore idempotencyStore) {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.objectMapper = objectMapper;
         this.draftMediaRepository = draftMediaRepository;
+        this.idempotencyStore = idempotencyStore;
     }
 
     public List<PostSummary> list(int page, int size) {
@@ -365,7 +368,7 @@ public class PostRepository {
 
     @Transactional
     public PostSummary create(Long authorId, CreatePostRequest request, String idempotencyKey) {
-        Long existingId = claimIdempotency(authorId, "CREATE_POST", idempotencyKey,
+        Long existingId = idempotencyStore.claim(authorId, "CREATE_POST", idempotencyKey,
                 IdempotencyFingerprint.of("create-post-v1", request.title(), request.content(), request.tags(), request.type(),
                         request.mediaIds(), request.theme(), request.contentKind(), request.difficulty(),
                         request.solvable(), request.clues(), request.solution()));
@@ -417,7 +420,7 @@ public class PostRepository {
         }
         createModerationTask(postId, authorId, request);
         writeOutbox(postId, authorId, request);
-        attachIdempotencyResource(idempotencyKey, postId);
+        idempotencyStore.attachResource(idempotencyKey, postId);
         return new PostSummary(postId, normalizeType(request.type()), normalizeTheme(request.theme()), normalizeContentKind(request.contentKind()),
                 normalizeDifficulty(request.difficulty()), Boolean.TRUE.equals(request.solvable()), 0,
                 request.title(), excerpt(request.content()), "user-" + authorId, authorId,
@@ -426,7 +429,7 @@ public class PostRepository {
 
     @Transactional
     public DraftView createDraft(Long authorId, SaveDraftRequest request, String idempotencyKey) {
-        Long existingId = claimIdempotency(authorId, "CREATE_DRAFT", idempotencyKey,
+        Long existingId = idempotencyStore.claim(authorId, "CREATE_DRAFT", idempotencyKey,
                 draftFingerprint(request));
         if (existingId != null) {
             return getDraft(authorId, existingId);
@@ -453,7 +456,7 @@ public class PostRepository {
         Long draftId = key.longValue();
         insertDraftContent(draftId, request);
         replaceDraftRelations(draftId, authorId, request.tags(), request.mediaIds(), request.media());
-        attachIdempotencyResource(idempotencyKey, draftId);
+        idempotencyStore.attachResource(idempotencyKey, draftId);
         return getDraft(authorId, draftId);
     }
 
@@ -481,7 +484,7 @@ public class PostRepository {
 
     @Transactional
     public DraftView updateDraft(Long authorId, Long draftId, SaveDraftRequest request, String idempotencyKey) {
-        Long duplicateId = claimIdempotency(authorId, "UPDATE_DRAFT:" + draftId, idempotencyKey,
+        Long duplicateId = idempotencyStore.claim(authorId, "UPDATE_DRAFT:" + draftId, idempotencyKey,
                 draftFingerprint(request));
         if (duplicateId != null) {
             return getDraft(authorId, duplicateId);
@@ -510,13 +513,13 @@ public class PostRepository {
         }
         updateDraftContent(draftId, request);
         replaceDraftRelations(draftId, authorId, request.tags(), request.mediaIds(), request.media());
-        attachIdempotencyResource(idempotencyKey, draftId);
+        idempotencyStore.attachResource(idempotencyKey, draftId);
         return getDraft(authorId, draftId);
     }
 
     @Transactional
     public DraftView submitDraft(Long authorId, Long draftId, long version, String idempotencyKey) {
-        Long duplicateId = claimIdempotency(authorId, "SUBMIT_DRAFT:" + draftId, idempotencyKey,
+        Long duplicateId = idempotencyStore.claim(authorId, "SUBMIT_DRAFT:" + draftId, idempotencyKey,
                 IdempotencyFingerprint.of("submit-draft-v1", draftId, version));
         if (duplicateId != null) {
             return getDraft(authorId, duplicateId);
@@ -551,7 +554,7 @@ public class PostRepository {
         writeOutbox(EventTopics.POST_SUBMITTED, "POST", draftId.toString(), Map.of(
                 "postId", draftId, "authorId", authorId, "title", draft.title(),
                 "theme", draft.theme(), "contentKind", draft.contentKind()));
-        attachIdempotencyResource(idempotencyKey, draftId);
+        idempotencyStore.attachResource(idempotencyKey, draftId);
         return getDraft(authorId, draftId);
     }
 
@@ -614,7 +617,7 @@ public class PostRepository {
 
     @Transactional
     public Map<String, Object> createAppeal(Long userId, Long postId, String reason, String idempotencyKey) {
-        Long existingId = claimIdempotency(userId, "CREATE_APPEAL:" + postId, idempotencyKey,
+        Long existingId = idempotencyStore.claim(userId, "CREATE_APPEAL:" + postId, idempotencyKey,
                 IdempotencyFingerprint.of("create-appeal-v1", postId, reason));
         if (existingId != null) {
             AppealState existing = jdbcClient.sql("SELECT post_id, status FROM appeal_record WHERE id = :appealId")
@@ -654,7 +657,7 @@ public class PostRepository {
                 .param("reason", reason.trim())
                 .update();
         writeOutbox(EventTopics.APPEAL_CREATED, "APPEAL", appealId.toString(), Map.of("appealId", appealId, "postId", postId, "userId", userId));
-        attachIdempotencyResource(idempotencyKey, appealId);
+        idempotencyStore.attachResource(idempotencyKey, appealId);
         return Map.of("appealId", appealId, "postId", postId, "status", "PENDING");
     }
 
@@ -770,49 +773,6 @@ public class PostRepository {
     }
 
     private record AppealState(long postId, String status) {
-    }
-
-    private Long claimIdempotency(Long userId, String operation, String idempotencyKey,
-                                  String requestFingerprint) {
-        int inserted = jdbcClient.sql("""
-                        INSERT IGNORE INTO content_idempotency_record(
-                            idempotency_key, user_id, operation, request_fingerprint)
-                        VALUES (:key, :userId, :operation, :requestFingerprint)
-                        """)
-                .param("key", idempotencyKey)
-                .param("userId", userId)
-                .param("operation", operation)
-                .param("requestFingerprint", requestFingerprint)
-                .update();
-        if (inserted == 1) {
-            return null;
-        }
-        IdempotencyRecord existing = jdbcClient.sql("""
-                        SELECT user_id, operation, request_fingerprint, resource_id
-                        FROM content_idempotency_record WHERE idempotency_key = :key
-                        """)
-                .param("key", idempotencyKey)
-                .query((rs, rowNum) -> new IdempotencyRecord(
-                        rs.getLong("user_id"), rs.getString("operation"), rs.getString("request_fingerprint"),
-                        (Long) rs.getObject("resource_id")))
-                .single();
-        boolean legacyRecord = IdempotencyFingerprint.LEGACY.equals(existing.requestFingerprint());
-        if (!existing.userId().equals(userId) || !existing.operation().equals(operation)
-                || (!legacyRecord && !existing.requestFingerprint().equals(requestFingerprint))) {
-            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION,
-                    "Idempotency-Key 已被其他写操作或请求载荷使用");
-        }
-        if (existing.resourceId() == null) {
-            throw new BusinessException(ErrorCode.DUPLICATE_OPERATION, "相同请求正在处理中");
-        }
-        return existing.resourceId();
-    }
-
-    private void attachIdempotencyResource(String idempotencyKey, Long resourceId) {
-        jdbcClient.sql("UPDATE content_idempotency_record SET resource_id = :resourceId WHERE idempotency_key = :key")
-                .param("resourceId", resourceId)
-                .param("key", idempotencyKey)
-                .update();
     }
 
     private String draftFingerprint(SaveDraftRequest request) {
@@ -1260,6 +1220,4 @@ public class PostRepository {
     private record ModerationRisk(String queueName, String machineResult, String riskLevel, double score, String reason, String reviewLevel, int slaHours, String signalType) {
     }
 
-    private record IdempotencyRecord(Long userId, String operation, String requestFingerprint, Long resourceId) {
-    }
 }

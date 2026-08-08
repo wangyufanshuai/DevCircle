@@ -27,7 +27,8 @@ class PostRepositoryConnectionPoolTest {
             PostRepository repository = new PostRepository(
                     jdbc,
                     new ObjectMapper().findAndRegisterModules(),
-                    new DraftMediaRepository(jdbc));
+                    new DraftMediaRepository(jdbc),
+                    new ContentIdempotencyStore(jdbc));
 
             var posts = assertTimeoutPreemptively(Duration.ofSeconds(2), () -> repository.list(1, 20));
 
