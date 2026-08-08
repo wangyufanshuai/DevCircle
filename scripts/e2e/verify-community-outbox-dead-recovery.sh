@@ -10,11 +10,18 @@ COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" --profile comm
 MYSQL=("${COMPOSE[@]}" exec -T mysql mysql -uroot -pe2e-root-password --skip-column-names --batch)
 kafka_stopped=false
 
+report_failure() {
+  local status=$?
+  echo "Community DEAD recovery failed at line ${BASH_LINENO[0]}: ${BASH_COMMAND} (exit ${status})" >&2
+  return "${status}"
+}
+
 restore_kafka() {
   if [[ "${kafka_stopped}" == "true" ]]; then
     "${COMPOSE[@]}" start kafka >/dev/null 2>&1 || true
   fi
 }
+trap report_failure ERR
 trap restore_kafka EXIT
 
 sql() {
@@ -45,6 +52,20 @@ wait_for_kafka() {
     sleep 1
   done
   echo "Kafka did not become healthy after restart" >&2
+  return 1
+}
+
+wait_for_service() {
+  local service="$1"
+  local port="$2"
+  for _ in $(seq 1 "${WAIT_ATTEMPTS}"); do
+    if "${COMPOSE[@]}" exec -T "${service}" curl -fsS \
+      "http://localhost:${port}/actuator/health/readiness" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "${service} did not recover readiness" >&2
   return 1
 }
 
@@ -84,6 +105,22 @@ admin_login="$(curl -fsS -X POST "${BASE_URL}/api/auth/login" \
   -H "Idempotency-Key: dead-admin-login-${unique}" \
   --data "{\"email\":\"${admin_email}\",\"password\":\"OrbitReader2026!\"}")"
 admin_token="$(node -e "const body=JSON.parse(process.argv[1]); if(!body.data?.user?.roles?.includes('ADMIN')) process.exit(2); process.stdout.write(body.data.accessToken)" "${admin_login}")"
+
+unauthorized_internal="$("${COMPOSE[@]}" exec -T dc-user curl -sS -o /dev/null -w '%{http_code}' \
+  'http://localhost:8102/internal/ops/outbox/status')"
+[[ "${unauthorized_internal}" == "403" ]] || {
+  echo "Internal Outbox endpoint was not protected: HTTP ${unauthorized_internal}" >&2
+  exit 1
+}
+for source in dc-auth:8101 dc-user:8102 dc-content:8103 dc-comment:8104 dc-interaction:8105; do
+  service="${source%%:*}"
+  port="${source##*:}"
+  authorized_internal="$("${COMPOSE[@]}" exec -T "${service}" curl -fsS \
+    -H 'X-Internal-Ops-Key: E2e-Internal-Ops-Key-2026-Only-For-Isolated-Compose' \
+    "http://localhost:${port}/internal/ops/outbox/status")"
+  node -e "const body=JSON.parse(process.argv[1]); if(body.service!==process.argv[2]) process.exit(2)" \
+    "${authorized_internal}" "${service}"
+done
 
 title="outbox-dead-${unique}"
 draft_response="$(curl -fsS -X POST "${BASE_URL}/api/posts/drafts" \
@@ -151,8 +188,19 @@ done
   exit 1
 }
 
-health="$(curl -fsS "${BASE_URL}/api/admin/ops/health" -H "Authorization: Bearer ${admin_token}")"
-node -e "const body=JSON.parse(process.argv[1]); const h=body.data; if(h?.degraded!==true || h?.degradationReason!=='OUTBOX_DEAD' || h?.outboxDead<1 || h?.outboxBlockedByDead<1 || h?.outboxScope!=='CONTENT_DB') process.exit(2)" "${health}"
+fleet_dead_observed=false
+for _ in $(seq 1 "${WAIT_ATTEMPTS}"); do
+  health="$(curl -fsS "${BASE_URL}/api/admin/ops/health" -H "Authorization: Bearer ${admin_token}")"
+  if node -e "const body=JSON.parse(process.argv[1]); const h=body.data; if(h?.degraded!==true || h?.degradationReason!=='OUTBOX_DEAD' || h?.outboxDead<2 || h?.outboxBlockedByDead<1 || h?.outboxScope!=='FLEET' || h?.outboxComplete!==true || h?.outboxSources?.length!==5) process.exit(2)" "${health}"; then
+    fleet_dead_observed=true
+    break
+  fi
+  sleep 1
+done
+[[ "${fleet_dead_observed}" == "true" ]] || {
+  echo "Fleet did not converge on complete DEAD health: ${health}" >&2
+  exit 1
+}
 dead_list="$(curl -fsS --get "${BASE_URL}/api/admin/ops/outbox" \
   -H "Authorization: Bearer ${admin_token}" --data-urlencode 'status=DEAD' --data-urlencode 'topic=post.submitted')"
 node -e "const body=JSON.parse(process.argv[1]); const id=process.argv[2]; const event=body.data?.find(item=>item.eventId===id); if(!event || event.attempts!==2 || !event.lastError) process.exit(2)" "${dead_list}" "${submitted_event}"
@@ -212,8 +260,24 @@ sleep 2
 }
 
 healthy="$(curl -fsS "${BASE_URL}/api/admin/ops/health" -H "Authorization: Bearer ${admin_token}")"
-node -e "const body=JSON.parse(process.argv[1]); const h=body.data; if(h?.degraded!==false || h?.outboxDead!==0 || h?.outboxBlockedByDead!==0 || h?.outboxBacklog!==0) process.exit(2)" "${healthy}"
+node -e "const body=JSON.parse(process.argv[1]); const h=body.data; if(h?.degraded!==false || h?.outboxDead!==0 || h?.outboxBlockedByDead!==0 || h?.outboxBacklog!==0 || h?.outboxScope!=='FLEET' || h?.outboxComplete!==true) process.exit(2)" "${healthy}"
 replay_audit="$(sql dc_content "SELECT COUNT(*) FROM audit_log WHERE action = 'REPLAY_OUTBOX' AND user_id = ${admin[0]};")"
 [[ "${replay_audit}" == "1" ]] || { echo "Expected one audited Outbox replay, got ${replay_audit}" >&2; exit 1; }
 
-echo "Outbox DEAD recovery verified post=${post_id}: DEAD/NEW -> PUBLISHED/PUBLISHED, health degraded -> healthy"
+"${COMPOSE[@]}" stop -t 10 dc-user >/dev/null
+partial="$(curl -fsS "${BASE_URL}/api/admin/ops/health" -H "Authorization: Bearer ${admin_token}")"
+node -e "const body=JSON.parse(process.argv[1]); const h=body.data; if(h?.degraded!==true || h?.degradationReason!=='OUTBOX_SOURCE_UNAVAILABLE' || h?.outboxComplete!==false || !h?.unavailableOutboxSources?.includes('dc-user')) process.exit(2)" "${partial}"
+"${COMPOSE[@]}" start dc-user >/dev/null
+wait_for_service dc-user 8102
+complete_again=false
+for _ in $(seq 1 "${WAIT_ATTEMPTS}"); do
+  recovered_health="$(curl -fsS "${BASE_URL}/api/admin/ops/health" -H "Authorization: Bearer ${admin_token}")"
+  if node -e "const body=JSON.parse(process.argv[1]); const h=body.data; if(h?.degraded!==false || h?.outboxComplete!==true || h?.unavailableOutboxSources?.length!==0) process.exit(2)" "${recovered_health}"; then
+    complete_again=true
+    break
+  fi
+  sleep 1
+done
+[[ "${complete_again}" == "true" ]] || { echo "Fleet health did not recover after dc-user restart" >&2; exit 1; }
+
+echo "Outbox fleet recovery verified post=${post_id}: DEAD/NEW -> PUBLISHED/PUBLISHED, five domains complete -> partial -> complete"

@@ -30,3 +30,11 @@ management:
 logging:
   pattern:
     level: "%5p traceId=%X{traceId:-} userId=%X{userId:-}"
+devcircle:
+  internal:
+    auth-uri: ${DC_AUTH_URI:http://localhost:8101}
+    user-uri: ${DC_USER_URI:http://localhost:8102}
+    content-uri: ${DC_CONTENT_URI:http://localhost:8103}
+    comment-uri: ${DC_COMMENT_URI:http://localhost:8104}
+    interaction-uri: ${DC_INTERACTION_URI:http://localhost:8105}
+    ops-key: ${DEVCIRCLE_INTERNAL_OPS_KEY:local-development-internal-ops-key}

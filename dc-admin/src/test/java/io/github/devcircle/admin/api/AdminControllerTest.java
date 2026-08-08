@@ -2,6 +2,7 @@ package io.github.devcircle.admin.api;
 
 import io.github.devcircle.admin.application.AdminService;
 import io.github.devcircle.admin.application.DltReplayService;
+import io.github.devcircle.admin.application.OutboxFleetHealthService;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -13,7 +14,8 @@ import static org.mockito.Mockito.when;
 class AdminControllerTest {
     private final AdminService service = mock(AdminService.class);
     private final DltReplayService dltReplayService = mock(DltReplayService.class);
-    private final AdminController controller = new AdminController(service, dltReplayService);
+    private final OutboxFleetHealthService fleetHealthService = mock(OutboxFleetHealthService.class);
+    private final AdminController controller = new AdminController(service, dltReplayService, fleetHealthService);
 
     @Test
     void governanceDecisionsForwardIdentityReasonsAndIdempotencyKeys() {
@@ -64,5 +66,22 @@ class AdminControllerTest {
         verify(service).replayOutbox("post.submitted", 25, 9L, "trace-8", "outbox-replay");
         verify(dltReplayService).replay(dltReplay, 9L, "trace-dlt", "dlt-replay");
         verify(service).createTag(tag.name(), 9L, "trace-9", "tag-create");
+    }
+
+    @Test
+    void operationsEndpointsReturnFleetEnrichedHealth() {
+        Map<String, Object> localHealth = Map.of("database", "UP", "degraded", false);
+        Map<String, Object> fleetHealth = Map.of("database", "UP", "degraded", true,
+                "outboxScope", "FLEET", "outboxComplete", false);
+        Map<String, Object> localDegradation = Map.of("source", "DB", "degraded", false);
+        Map<String, Object> fleetDegradation = Map.of("source", "DB", "degraded", true,
+                "outboxScope", "FLEET", "outboxComplete", false);
+        when(service.opsHealth()).thenReturn(localHealth);
+        when(service.degradation()).thenReturn(localDegradation);
+        when(fleetHealthService.enrich(localHealth, "degradationReason")).thenReturn(fleetHealth);
+        when(fleetHealthService.enrich(localDegradation, "reason")).thenReturn(fleetDegradation);
+
+        org.assertj.core.api.Assertions.assertThat(controller.opsHealth().data()).isEqualTo(fleetHealth);
+        org.assertj.core.api.Assertions.assertThat(controller.degradation().data()).isEqualTo(fleetDegradation);
     }
 }

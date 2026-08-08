@@ -64,8 +64,13 @@ const emit = defineEmits<{
       <h2>工程状态</h2>
       <div class="rank-row">
         <span>数据库 {{ opsHealth?.database ?? 'UNKNOWN' }} / 来源 {{ opsHealth?.source ?? '-' }}</span>
-        <strong>Outbox {{ opsHealth?.outboxBacklog ?? 0 }} / DEAD {{ opsHealth?.outboxDead ?? 0 }}</strong>
-        <small>可重试 {{ opsHealth?.outboxRetryable ?? 0 }} / 被 DEAD 阻塞 {{ opsHealth?.outboxBlockedByDead ?? 0 }} / 范围 {{ opsHealth?.outboxScope ?? '-' }}</small>
+        <strong>Outbox {{ opsHealth?.outboxComplete === false ? '已知 ' : '' }}{{ opsHealth?.outboxBacklog ?? 0 }} / DEAD {{ opsHealth?.outboxDead ?? 0 }}</strong>
+        <small>可重试 {{ opsHealth?.outboxRetryable ?? 0 }} / 被 DEAD 阻塞 {{ opsHealth?.outboxBlockedByDead ?? 0 }} / {{ opsHealth?.outboxComplete === false ? '覆盖不完整' : '五域完整' }}</small>
+      </div>
+      <div class="rank-row">
+        <span>事件生产域 {{ opsHealth?.outboxSources?.filter(item => item.status === 'UP').length ?? 0 }} / {{ opsHealth?.outboxSources?.length ?? 5 }}</span>
+        <strong>{{ opsHealth?.outboxScope ?? '-' }}</strong>
+        <small>{{ opsHealth?.unavailableOutboxSources?.length ? `不可用：${opsHealth.unavailableOutboxSources.join('、')}` : 'Auth / User / Content / Comment / Interaction 均已响应' }}</small>
       </div>
       <div class="rank-row">
         <span>推荐降级 {{ degradationOverview?.degraded ? '是' : '否' }} / {{ degradationOverview?.source ?? '-' }}</span>

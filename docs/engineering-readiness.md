@@ -51,7 +51,7 @@ Copy-Item .env.example .env
 - `POST /api/admin/ops/dlt/replay`（要求 ADMIN、`Idempotency-Key`、原始 topic、partition、offset 和操作理由）
 - `GET /api/admin/ops/degradation`
 
-`ops/health` 和 `ops/degradation` 会同时返回 `outboxBacklog`、`outboxRetryable`、`outboxDead`、`outboxBlockedByDead` 与 `outboxScope`。当前 Admin 直接连接内容库，因此作用域明确为 `CONTENT_DB`；不得把它误读为所有领域库的全局 Outbox 总量。
+`ops/health` 和 `ops/degradation` 会聚合 `dc-auth`、`dc-user`、`dc-content`、`dc-comment` 与 `dc-interaction` 五个生产域，返回 `outboxScope=FLEET`、`outboxComplete`、总 backlog/重试/DEAD/阻塞数、逐来源状态和不可用来源。任一来源超时或失败时必须返回 `outboxComplete=false` 与 `OUTBOX_SOURCE_UNAVAILABLE`，不能以缺失来源的零值伪造全局健康。内部状态端点不经 Gateway 暴露，只允许 Docker 网络内携带 `X-Internal-Ops-Key` 调用。
 
 ## 开发环境显式降级
 

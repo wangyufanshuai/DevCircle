@@ -8,6 +8,7 @@ WAIT_TIMEOUT="${REAL_E2E_WAIT_TIMEOUT:-240}"
 PULL_POLICY="${REAL_E2E_PULL_POLICY:-missing}"
 BUILD_MODE="${REAL_E2E_BUILD:-true}"
 RECOVERY_MODE="${REAL_E2E_COMMUNITY_RECOVERY_MODE:-retry}"
+WAIT_ATTEMPTS="${REAL_E2E_RECOVERY_WAIT_ATTEMPTS:-120}"
 export REAL_E2E_ENABLE_OUTBOX=true
 export REAL_E2E_OUTBOX_SEND_TIMEOUT_MS="${REAL_E2E_OUTBOX_SEND_TIMEOUT_MS:-2000}"
 if [[ "${RECOVERY_MODE}" == "dead" ]]; then
@@ -37,7 +38,7 @@ require_real_e2e_docker "community E2E"
   exit 2
 }
 
-MODULES="dc-auth,dc-user,dc-content,dc-recommend,dc-notification,dc-admin,dc-gateway"
+MODULES="dc-auth,dc-user,dc-content,dc-comment,dc-interaction,dc-recommend,dc-notification,dc-admin,dc-gateway"
 if command -v java >/dev/null 2>&1; then
   "${ROOT_DIR}/mvnw" -q -pl "${MODULES}" -am -DskipTests package
 elif command -v cmd.exe >/dev/null 2>&1; then
@@ -61,19 +62,23 @@ trap cleanup EXIT
 
 (cd "${ROOT_DIR}/web" && npx playwright test -c playwright.real.config.ts tests-real/community.spec.ts)
 
-projection="$(${COMPOSE[@]} exec -T mysql mysql -uroot -pe2e-root-password --database=dc_content --skip-column-names --batch \
-  --execute="SELECT CONCAT(COUNT(*), ':', COALESCE(SUM(followed), 0)) FROM recommend_follow_projection;")"
-notifications="$(${COMPOSE[@]} exec -T mysql mysql -uroot -pe2e-root-password --database=dc_notification --skip-column-names --batch \
-  --execute="SELECT COUNT(*) FROM notification WHERE type = 'FOLLOW';")"
-dedup="$(${COMPOSE[@]} exec -T mysql mysql -uroot -pe2e-root-password --database=dc_notification --skip-column-names --batch \
-  --execute="SELECT COUNT(*) FROM consumer_dedup WHERE topic = 'follow.changed';")"
-recommend_dedup="$(${COMPOSE[@]} exec -T mysql mysql -uroot -pe2e-root-password --database=dc_content --skip-column-names --batch \
-  --execute="SELECT COUNT(*) FROM recommend_consumer_dedup WHERE topic = 'follow.changed' AND status = 'COMPLETED';")"
+community_projection_state=""
+for _ in $(seq 1 "${WAIT_ATTEMPTS}"); do
+  community_projection_state="$(${COMPOSE[@]} exec -T mysql mysql -uroot -pe2e-root-password --skip-column-names --batch \
+    --execute="SELECT CONCAT(
+      (SELECT CONCAT(COUNT(*), ':', COALESCE(SUM(followed), 0)) FROM dc_content.recommend_follow_projection), '|',
+      (SELECT COUNT(*) FROM dc_notification.notification WHERE type = 'FOLLOW'), '|',
+      (SELECT COUNT(*) FROM dc_notification.consumer_dedup WHERE topic = 'follow.changed'), '|',
+      (SELECT COUNT(*) FROM dc_content.recommend_consumer_dedup WHERE topic = 'follow.changed' AND status = 'COMPLETED')
+    );")"
+  [[ "${community_projection_state}" == "1:0|1|2|2" ]] && break
+  sleep 1
+done
 
-[[ "${projection}" == "1:0" ]] || { echo "unexpected follow projection state: ${projection}" >&2; exit 1; }
-[[ "${notifications}" == "1" ]] || { echo "expected one follow notification, got ${notifications}" >&2; exit 1; }
-[[ "${dedup}" == "2" ]] || { echo "expected followed and unfollowed events to be deduplicated, got ${dedup}" >&2; exit 1; }
-[[ "${recommend_dedup}" == "2" ]] || { echo "expected two completed recommendation projections, got ${recommend_dedup}" >&2; exit 1; }
+if [[ "${community_projection_state}" != "1:0|1|2|2" ]]; then
+  echo "Community projections did not converge after ${WAIT_ATTEMPTS}s: expected follow_projection|notifications|notification_dedup|recommend_dedup=1:0|1|2|2, got ${community_projection_state}" >&2
+  exit 1
+fi
 
 if [[ "${RECOVERY_MODE}" == "dead" ]]; then
   REAL_E2E_PROJECT_NAME="${PROJECT_NAME}" REAL_E2E_COMPOSE_FILE="${COMPOSE_FILE}" \

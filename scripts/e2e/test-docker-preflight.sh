@@ -86,6 +86,13 @@ retry_config="$(REAL_E2E_OUTBOX_BATCH_SIZE=23 REAL_E2E_OUTBOX_MAX_ATTEMPTS=3 doc
 grep -q 'DEVCIRCLE_OUTBOX_BATCH_SIZE: "23"' <<<"${retry_config}"
 grep -q 'DEVCIRCLE_OUTBOX_MAX_ATTEMPTS: "3"' <<<"${retry_config}"
 
+pool_config="$(REAL_E2E_DB_POOL_MAX_SIZE=3 REAL_E2E_DB_POOL_MIN_IDLE=0 \
+  REAL_E2E_DB_CONNECTION_TIMEOUT_MS=2345 docker compose \
+  -f "${ROOT_DIR}/docker-compose.e2e.yml" --profile community config)"
+grep -q 'SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "3"' <<<"${pool_config}"
+grep -q 'SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: "0"' <<<"${pool_config}"
+grep -q 'SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: "2345"' <<<"${pool_config}"
+
 bash -n "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
 bash -n "${ROOT_DIR}/scripts/e2e/verify-community-outbox-dead-recovery.sh"
 bash -n "${ROOT_DIR}/scripts/e2e/run-real-community.sh"
@@ -100,8 +107,8 @@ grep -q 'outboxBlockedByDead' "${ROOT_DIR}/scripts/e2e/verify-community-outbox-d
 
 community_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
   --profile community config --services | sort)"
-expected_community_services="$(printf '%s\n' dc-admin dc-auth dc-content dc-gateway dc-notification \
-  dc-recommend dc-user kafka mysql redis | sort)"
+expected_community_services="$(printf '%s\n' dc-admin dc-auth dc-comment dc-content dc-gateway dc-interaction \
+  dc-notification dc-recommend dc-user kafka mysql redis | sort)"
 [[ "${community_services}" == "${expected_community_services}" ]] || {
   echo "Unexpected community services: ${community_services}" >&2
   exit 1

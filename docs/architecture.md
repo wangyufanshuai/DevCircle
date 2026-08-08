@@ -24,6 +24,8 @@ DevCircle 使用按业务域拆分、兼容聚合的微服务结构。Gateway �
 
 Outbox 批量大小、最大尝试次数和发送等待分别受 `DEVCIRCLE_OUTBOX_BATCH_SIZE`（默认 50）、`DEVCIRCLE_OUTBOX_MAX_ATTEMPTS`（默认 8）和 `DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS`（默认 15 秒）控制。Kafka Future 超时会释放租约、记录失败并按指数退避重试；耗尽尝试后进入 `DEAD`，同一 `(topic, aggregateId)` 的后续事件保持等待，不能越过失败前序。
 
+Admin 不再以自身连接的内容库代表全局 Outbox。Auth、User、Content、Comment、Interaction 通过 Docker 内网精确暴露 `GET /internal/ops/outbox/status`，使用共享内部运维密钥并做常量时间比较；Gateway 不路由 `/internal/**`。Admin 以虚拟线程并行、1 秒连接与 2 秒读取超时汇总五域，返回 `outboxScope=FLEET`。任何来源缺失都会显式产生 `outboxComplete=false` 和 `OUTBOX_SOURCE_UNAVAILABLE`；只有 Admin 自身数据库不可用时，数据库故障原因才优先于 fleet 原因。
+
 生产 `aggregate` Gateway 将内容、评论、媒体和审核请求统一路由到 `dc-content-aggregate`；旧领域服务只作为聚合门面内部依赖，不允许被外部 Gateway 路由直接绕过。
 
 ## 关键索引

@@ -28,6 +28,7 @@ def app_environment() -> dict[str, str]:
         "DEVCIRCLE_THEME_CONTENT_SEED_ENABLED": "false",
         "SPRINGDOC_API_DOCS_ENABLED": "false",
         "SPRINGDOC_SWAGGER_UI_ENABLED": "false",
+        "DEVCIRCLE_INTERNAL_OPS_KEY": "Ops-4w-N8-kR2-sV7-xM5-qL9-cD1-pT6-yH",
     }
 
 
@@ -90,6 +91,12 @@ class ProductionResourceBudgetTest(unittest.TestCase):
 
         self.assertEqual(21, service_count)
         self.assertLessEqual(total_memory, 15 * budgets.GIB)
+
+    def test_rejects_missing_internal_operations_key(self) -> None:
+        del self.compose["services"]["dc-auth"]["environment"]["DEVCIRCLE_INTERNAL_OPS_KEY"]
+
+        with self.assertRaisesRegex(ValueError, "DEVCIRCLE_INTERNAL_OPS_KEY"):
+            budgets.validate(self.compose)
 
     def test_rejects_a_missing_memory_limit(self) -> None:
         del self.compose["services"]["dc-auth"]["mem_limit"]

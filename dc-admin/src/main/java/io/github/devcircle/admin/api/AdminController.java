@@ -3,6 +3,7 @@ package io.github.devcircle.admin.api;
 import io.github.devcircle.common.api.ApiResponse;
 import io.github.devcircle.admin.application.AdminService;
 import io.github.devcircle.admin.application.DltReplayService;
+import io.github.devcircle.admin.application.OutboxFleetHealthService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,10 +22,13 @@ import java.util.Map;
 class AdminController {
     private final AdminService adminService;
     private final DltReplayService dltReplayService;
+    private final OutboxFleetHealthService outboxFleetHealthService;
 
-    AdminController(AdminService adminService, DltReplayService dltReplayService) {
+    AdminController(AdminService adminService, DltReplayService dltReplayService,
+                    OutboxFleetHealthService outboxFleetHealthService) {
         this.adminService = adminService;
         this.dltReplayService = dltReplayService;
+        this.outboxFleetHealthService = outboxFleetHealthService;
     }
 
     @GetMapping("/audits/posts")
@@ -216,7 +220,7 @@ class AdminController {
 
     @GetMapping("/ops/health")
     ApiResponse<Map<String, Object>> opsHealth() {
-        return ApiResponse.ok(adminService.opsHealth());
+        return ApiResponse.ok(outboxFleetHealthService.enrich(adminService.opsHealth(), "degradationReason"));
     }
 
     @GetMapping("/ops/outbox")
@@ -246,6 +250,6 @@ class AdminController {
 
     @GetMapping("/ops/degradation")
     ApiResponse<Map<String, Object>> degradation() {
-        return ApiResponse.ok(adminService.degradation());
+        return ApiResponse.ok(outboxFleetHealthService.enrich(adminService.degradation(), "reason"));
     }
 }

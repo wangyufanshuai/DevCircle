@@ -7,12 +7,17 @@ x-app-defaults: &app-defaults
   environment: &app-env
     DEVCIRCLE_PRODUCTION_MODE: "true"
     DEVCIRCLE_JWT_SECRET: Aa1!Bb2@Cc3#Dd4~Ee5%Ff6^Gg7&Hh8*Ii9(Jj0)Kk1_Ll2+Mm3-Nn4=Oo5?Pp6Qq7~
+    DEVCIRCLE_INTERNAL_OPS_KEY: E2e-Internal-Ops-Key-2026-Only-For-Isolated-Compose
     REDIS_HOST: redis
     REDIS_PORT: 6379
     KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     DEVCIRCLE_OUTBOX_BATCH_SIZE: ${REAL_E2E_OUTBOX_BATCH_SIZE:-50}
     DEVCIRCLE_OUTBOX_MAX_ATTEMPTS: ${REAL_E2E_OUTBOX_MAX_ATTEMPTS:-8}
     DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS: ${REAL_E2E_OUTBOX_SEND_TIMEOUT_MS:-15000}
+    # Keep the combined application pool ceiling below MySQL's 60-connection E2E cap.
+    SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${REAL_E2E_DB_POOL_MAX_SIZE:-4}
+    SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: ${REAL_E2E_DB_POOL_MIN_IDLE:-1}
+    SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: ${REAL_E2E_DB_CONNECTION_TIMEOUT_MS:-3000}
     SPRINGDOC_API_DOCS_ENABLED: "false"
     SPRINGDOC_SWAGGER_UI_ENABLED: "false"
     JAVA_TOOL_OPTIONS: -Xms32m -Xmx128m -XX:MaxMetaspaceSize=96m -XX:ReservedCodeCacheSize=32m -XX:+UseSerialGC
@@ -148,6 +153,31 @@ services:
       timeout: 5s
       retries: 24
 
+  dc-comment:
+    <<: *app-defaults
+    profiles: ["community"]
+    build:
+      <<: *service-build
+      args: { JAR_FILE: dc-comment/target/dc-comment-0.1.0-SNAPSHOT.jar }
+    environment:
+      <<: *app-env
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: devcircle
+      MYSQL_PASSWORD: e2e-database-password
+      DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
+      DEVCIRCLE_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
+    mem_limit: 256m
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      dc-content: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8104/actuator/health/readiness"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
   dc-user:
     <<: *app-defaults
     profiles: ["community"]
@@ -219,7 +249,7 @@ services:
 
   dc-interaction:
     <<: *app-defaults
-    profiles: ["performance"]
+    profiles: ["community", "performance"]
     build:
       <<: *service-build
       args: { JAR_FILE: dc-interaction/target/dc-interaction-0.1.0-SNAPSHOT.jar }
@@ -230,6 +260,7 @@ services:
       MYSQL_USER: devcircle
       MYSQL_PASSWORD: e2e-database-password
       DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
+      DEVCIRCLE_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
     mem_limit: 256m
     depends_on:
       mysql: { condition: service_healthy }
@@ -285,6 +316,11 @@ services:
       MYSQL_USER: devcircle
       MYSQL_PASSWORD: e2e-database-password
       DEVCIRCLE_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
+      DC_AUTH_URI: http://dc-auth:8101
+      DC_USER_URI: http://dc-user:8102
+      DC_CONTENT_URI: http://dc-content:8103
+      DC_COMMENT_URI: http://dc-comment:8104
+      DC_INTERACTION_URI: http://dc-interaction:8105
     mem_limit: 256m
     depends_on:
       dc-content: { condition: service_healthy }

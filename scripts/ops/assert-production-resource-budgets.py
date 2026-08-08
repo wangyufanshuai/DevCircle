@@ -121,6 +121,9 @@ def validate(data: dict) -> tuple[int, int]:
         for key, expected in PRODUCTION_ENVIRONMENT.items():
             if str(environment.get(key, "")).lower() != expected:
                 fail(f"{name} must set {key}={expected}")
+        internal_ops_key = str(environment.get("DEVCIRCLE_INTERNAL_OPS_KEY", ""))
+        if len(internal_ops_key) < 32:
+            fail(f"{name} must receive DEVCIRCLE_INTERNAL_OPS_KEY")
         java_options = environment.get("JAVA_TOOL_OPTIONS", "")
         for option in ("-XX:MaxRAMPercentage=", "-XX:+ExitOnOutOfMemoryError"):
             if option not in java_options:

@@ -22,6 +22,7 @@ fail() { errors+=("$1"); }
 required=(
   IMAGE_TAG DOMAIN PUBLIC_ORIGIN TLS_EMAIL MYSQL_USER MYSQL_PASSWORD MYSQL_ROOT_PASSWORD
   REDIS_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD DEVCIRCLE_JWT_SECRET
+  DEVCIRCLE_INTERNAL_OPS_KEY
 )
 for key in "${required[@]}"; do
   [[ -n "${values[${key}]:-}" ]] || fail "${key} is required"
@@ -53,6 +54,7 @@ secret_quality MYSQL_ROOT_PASSWORD 24 10
 secret_quality REDIS_PASSWORD 24 10
 secret_quality MINIO_ROOT_PASSWORD 24 10
 secret_quality DEVCIRCLE_JWT_SECRET 64 16
+secret_quality DEVCIRCLE_INTERNAL_OPS_KEY 32 12
 
 image_tag="${values[IMAGE_TAG]:-}"
 if [[ ! "${image_tag}" =~ ^[0-9a-f]{40}$ || "${image_tag}" == "0123456789abcdef0123456789abcdef01234567" ]]; then

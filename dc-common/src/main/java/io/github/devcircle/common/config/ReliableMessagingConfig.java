@@ -1,6 +1,8 @@
 package io.github.devcircle.common.config;
 
 import io.github.devcircle.common.event.ReliableOutboxWorker;
+import io.github.devcircle.common.event.OutboxInternalController;
+import io.github.devcircle.common.event.OutboxStatusService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -28,6 +30,20 @@ public class ReliableMessagingConfig {
                                                @Value("${devcircle.outbox.max-attempts:8}") int maxAttempts,
                                                @Value("${devcircle.outbox.send-timeout-ms:15000}") long sendTimeoutMs) {
         return new ReliableOutboxWorker(jdbcClient, kafkaTemplate, batchSize, maxAttempts, sendTimeoutMs);
+    }
+
+    @Bean
+    OutboxStatusService outboxStatusService(
+            JdbcClient jdbcClient,
+            @Value("${spring.application.name:unknown-service}") String serviceName) {
+        return new OutboxStatusService(jdbcClient, serviceName);
+    }
+
+    @Bean
+    OutboxInternalController outboxInternalController(
+            OutboxStatusService statusService,
+            @Value("${devcircle.internal.ops-key:local-development-internal-ops-key}") String internalOpsKey) {
+        return new OutboxInternalController(statusService, internalOpsKey);
     }
 
 }
