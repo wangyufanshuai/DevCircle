@@ -10,6 +10,7 @@ x-app-defaults: &app-defaults
     REDIS_HOST: redis
     REDIS_PORT: 6379
     KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS: ${REAL_E2E_OUTBOX_SEND_TIMEOUT_MS:-15000}
     SPRINGDOC_API_DOCS_ENABLED: "false"
     SPRINGDOC_SWAGGER_UI_ENABLED: "false"
     JAVA_TOOL_OPTIONS: -Xms32m -Xmx128m -XX:MaxMetaspaceSize=96m -XX:ReservedCodeCacheSize=32m -XX:+UseSerialGC

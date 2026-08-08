@@ -72,4 +72,18 @@ assert_profile_outbox_mode() {
 assert_profile_outbox_mode review false
 assert_profile_outbox_mode community true
 
+timeout_config="$(REAL_E2E_OUTBOX_SEND_TIMEOUT_MS=2345 docker compose \
+  -f "${ROOT_DIR}/docker-compose.e2e.yml" --profile community config)"
+timeout_values="$(grep -E '^      DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS:' <<<"${timeout_config}" | sort -u)"
+[[ "${timeout_values}" == '      DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS: "2345"' ]] || {
+  echo "Community E2E Outbox send timeout was not propagated: ${timeout_values}" >&2
+  exit 1
+}
+
+bash -n "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
+grep -q 'stop -t 10 kafka' "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
+grep -q 'FAILED' "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
+grep -q 'PUBLISHED' "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
+grep -q 'verify-community-kafka-recovery.sh' "${ROOT_DIR}/scripts/e2e/run-real-community.sh"
+
 echo "Docker preflight tests passed"

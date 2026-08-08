@@ -6,16 +6,18 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 ### 2026-08-08 可执行基线
 
-Docker Desktop 的 WSL 配额已从 2GB 调整为 6GB，Testcontainers 实测可用内存约 5930MB。当前工作树执行 `./mvnw.cmd -B clean verify -Pcoverage` 后，16/16 个 Maven 模块成功，110 个测试套件共 465 个测试，0 failures、0 errors、0 skipped；MySQL 8.4、Redis、Kafka、Elasticsearch 和 MinIO 容器均实际启动。聚合 JaCoCo 行覆盖率为 84.38%、分支覆盖率为 75.86%，14 个关键状态类全部通过 85% 分支门禁，Flyway 迁移版本门禁通过。
+Docker Desktop 的 WSL 配额已从 2GB 调整为 6GB，Testcontainers 实测可用内存约 5930MB。当前工作树执行 `./mvnw.cmd -B clean verify -Pcoverage` 后，16/16 个 Maven 模块成功，111 个测试套件共 467 个测试，0 failures、0 errors、0 skipped；MySQL 8.4、Redis、Kafka、Elasticsearch 和 MinIO 容器均实际启动。聚合 JaCoCo 行覆盖率为 84.93%、分支覆盖率为 75.75%，14 个关键状态类全部通过 85% 分支门禁，Flyway 迁移版本门禁通过。
 
 四条真实 Compose E2E 均使用本地固定镜像并通过：
 
 - Auth：注册、刷新轮换、退出撤销、重复注册冲突和再次登录。
 - Content：真实内容写入和公开读取；同时验证关闭 Outbox 的精简 profile 可以正常启动。
 - Review：投稿、管理员审核、公开详情、答案保护、正确答题及幂等重放。Review profile 不启动评论服务时，正文与解题仍可用，评论区显示局部错误并可重试。
-- Community：注册事件创建公开资料、同键关注只生效一次、Kafka 通知去重、取消关注以及推荐投影追平；脚本后的四项数据库断言全部通过。
+- Community：注册事件创建公开资料、同键关注只生效一次、Kafka 通知去重、取消关注以及推荐投影追平；正常链路后的四项数据库断言全部通过。随后脚本会停止 Kafka，在 broker 离线时执行真实关注写入，验证业务状态与 Outbox 同事务持久化、Outbox 进入 `FAILED` 且消费者投影保持为空；Kafka 重启后要求同一事件自动变为 `PUBLISHED`，通知和推荐投影各恰好生效一次。
 
 Community 首轮执行实际发现并修复了两项生产缺陷：Gateway 现仅对匿名读者开放精确的 `/api/users/{id}` 与 `/api/users/batch` GET 路径，关注状态等私有路径继续受保护；`dc-user` 的注册事件消费者不再因过早的 `@ConditionalOnBean` 判定而被静默排除。前端 `npm run build` 通过，四个 Playwright project 共 120/120 通过。
+
+2026-08-08 最新 Community 故障注入在完整 Compose 网络中通过：Kafka 容器被确认停止后，关注接口仍返回真实成功且可立即读到关注状态；对应 `follow.changed` Outbox 事件在 2 秒有界发送超时后进入 `FAILED`，通知表和推荐关注投影均保持 0。Kafka 原容器重启后，应用进程无需重启，Outbox 自动重试并转为 `PUBLISHED`；通知消费者去重记录、推荐消费者 `COMPLETED` 记录、单条通知和单条关注投影全部到位。同一 `Idempotency-Key` 再次请求返回重复标记，事件与通知数量仍为 1。该证据覆盖 Kafka 短时停机与恢复追平，不等同于长时间积压、跨主机 Kafka 数据恢复或 DLT 人工重放演练。
 
 提交 `ccfa310`（包含 `f2254fd`）后的完整 `./mvnw.cmd -B verify -Pcoverage` 已通过：16 个 Maven 模块、442 个测试，0 failures、0 errors、0 skipped；聚合 JaCoCo 行覆盖率 84.03%、分支覆盖率 75.40%，关键状态机分支门禁全部通过 85%。本轮还验证了 Flyway 迁移版本、生产 Compose 配置和生产环境变量门禁，并确认 aggregate Gateway 不再将评论请求旁路到旧评论服务。Outbox Kafka 发送现在受 `DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS`（默认 15 秒）约束，Future 超时会进入 FAILED 并按退避重试。
 
@@ -66,7 +68,7 @@ bash scripts/e2e/run-real-auth.sh
 bash scripts/e2e/run-real-community.sh
 ```
 
-该脚本启动 Kafka、Auth、User、Content、Notification、Recommend 和 Gateway，验证两名新用户的资料同步、关注幂等、通知去重、取消关注静默以及推荐投影回退为未关注状态。
+该脚本启动 Kafka、Auth、User、Content、Notification、Recommend 和 Gateway，先验证正常资料同步、关注幂等、通知去重、取消关注静默以及推荐投影；随后停止并重启 Kafka，验证 Outbox `FAILED → PUBLISHED`、消费者自动重连、投影追平和恢复后的幂等重放。
 
 四条真实 E2E 均限制 Docker 资源并在打包 JAR 前执行统一预检。独占 Docker 时至少分配 2 GiB；如果同一 Docker Engine 还运行其他项目，应分配 4 GiB 以上或先由操作者自行停止无关容器。Docker API 返回 500/502、容器退出码 137 或 `context deadline exceeded` 都属于环境失败，不能记为业务链路通过。
 

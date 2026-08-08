@@ -8,6 +8,7 @@ WAIT_TIMEOUT="${REAL_E2E_WAIT_TIMEOUT:-240}"
 PULL_POLICY="${REAL_E2E_PULL_POLICY:-missing}"
 BUILD_MODE="${REAL_E2E_BUILD:-true}"
 export REAL_E2E_ENABLE_OUTBOX=true
+export REAL_E2E_OUTBOX_SEND_TIMEOUT_MS="${REAL_E2E_OUTBOX_SEND_TIMEOUT_MS:-2000}"
 COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" --profile community)
 # shellcheck source=docker-preflight.sh
 source "${ROOT_DIR}/scripts/e2e/docker-preflight.sh"
@@ -62,3 +63,6 @@ recommend_dedup="$(${COMPOSE[@]} exec -T mysql mysql -uroot -pe2e-root-password 
 [[ "${notifications}" == "1" ]] || { echo "expected one follow notification, got ${notifications}" >&2; exit 1; }
 [[ "${dedup}" == "2" ]] || { echo "expected followed and unfollowed events to be deduplicated, got ${dedup}" >&2; exit 1; }
 [[ "${recommend_dedup}" == "2" ]] || { echo "expected two completed recommendation projections, got ${recommend_dedup}" >&2; exit 1; }
+
+REAL_E2E_PROJECT_NAME="${PROJECT_NAME}" REAL_E2E_COMPOSE_FILE="${COMPOSE_FILE}" \
+  bash "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
