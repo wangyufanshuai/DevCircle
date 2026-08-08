@@ -1,6 +1,6 @@
 package io.github.devcircle.recommend.application;
 
-import io.github.devcircle.common.model.ExposureRequest;
+import io.github.devcircle.recommend.model.ExposureRequest;
 import io.github.devcircle.common.model.PostSummary;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

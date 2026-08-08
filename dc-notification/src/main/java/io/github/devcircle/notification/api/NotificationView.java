@@ -1,4 +1,4 @@
-package io.github.devcircle.common.model;
+package io.github.devcircle.notification.api;
 
 import java.time.Instant;
 

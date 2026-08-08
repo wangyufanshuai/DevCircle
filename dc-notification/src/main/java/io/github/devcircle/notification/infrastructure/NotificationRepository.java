@@ -1,6 +1,6 @@
 package io.github.devcircle.notification.infrastructure;
 
-import io.github.devcircle.common.model.NotificationView;
+import io.github.devcircle.notification.api.NotificationView;
 import io.github.devcircle.common.event.EventFingerprint;
 import io.github.devcircle.common.event.ValidatedEvent;
 import org.springframework.jdbc.core.simple.JdbcClient;

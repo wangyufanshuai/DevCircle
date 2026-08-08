@@ -2,9 +2,9 @@ package io.github.devcircle.recommend.api;
 
 import io.github.devcircle.common.api.ApiResponse;
 import io.github.devcircle.common.api.CursorPage;
-import io.github.devcircle.common.model.ExposureRequest;
-import io.github.devcircle.common.model.FeedItem;
 import io.github.devcircle.recommend.application.FeedService;
+import io.github.devcircle.recommend.model.ExposureRequest;
+import io.github.devcircle.recommend.model.FeedItem;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.GetMapping;

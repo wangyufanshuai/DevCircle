@@ -3,7 +3,6 @@ package io.github.devcircle.notification.api;
 import io.github.devcircle.common.api.ApiResponse;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
-import io.github.devcircle.common.model.NotificationView;
 import io.github.devcircle.notification.infrastructure.NotificationRepository;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;

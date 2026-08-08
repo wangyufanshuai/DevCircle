@@ -6,7 +6,7 @@ import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.common.event.EventEnvelope;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
-import io.github.devcircle.common.model.FeedItem;
+import io.github.devcircle.recommend.model.FeedItem;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
