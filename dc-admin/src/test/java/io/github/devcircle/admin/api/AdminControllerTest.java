@@ -1,11 +1,16 @@
 package io.github.devcircle.admin.api;
 
+import io.github.devcircle.admin.application.AdminOpsQueryService;
+import io.github.devcircle.admin.application.query.DegradationView;
+import io.github.devcircle.admin.application.query.OpsHealthView;
+import io.github.devcircle.admin.application.query.OutboxEventView;
+import io.github.devcircle.admin.application.query.OutboxSourceView;
 import io.github.devcircle.admin.application.AdminService;
 import io.github.devcircle.admin.application.DltReplayService;
-import io.github.devcircle.admin.application.OutboxFleetHealthService;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
+import java.util.List;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -14,8 +19,8 @@ import static org.mockito.Mockito.when;
 class AdminControllerTest {
     private final AdminService service = mock(AdminService.class);
     private final DltReplayService dltReplayService = mock(DltReplayService.class);
-    private final OutboxFleetHealthService fleetHealthService = mock(OutboxFleetHealthService.class);
-    private final AdminController controller = new AdminController(service, dltReplayService, fleetHealthService);
+    private final AdminOpsQueryService opsQueryService = mock(AdminOpsQueryService.class);
+    private final AdminController controller = new AdminController(service, dltReplayService, opsQueryService);
 
     @Test
     void governanceDecisionsForwardIdentityReasonsAndIdempotencyKeys() {
@@ -69,19 +74,24 @@ class AdminControllerTest {
     }
 
     @Test
-    void operationsEndpointsReturnFleetEnrichedHealth() {
-        Map<String, Object> localHealth = Map.of("database", "UP", "degraded", false);
-        Map<String, Object> fleetHealth = Map.of("database", "UP", "degraded", true,
-                "outboxScope", "FLEET", "outboxComplete", false);
-        Map<String, Object> localDegradation = Map.of("source", "DB", "degraded", false);
-        Map<String, Object> fleetDegradation = Map.of("source", "DB", "degraded", true,
-                "outboxScope", "FLEET", "outboxComplete", false);
-        when(service.opsHealth()).thenReturn(localHealth);
-        when(service.degradation()).thenReturn(localDegradation);
-        when(fleetHealthService.enrich(localHealth, "degradationReason")).thenReturn(fleetHealth);
-        when(fleetHealthService.enrich(localDegradation, "reason")).thenReturn(fleetDegradation);
+    void operationsEndpointsReturnStronglyTypedFleetHealth() {
+        OpsHealthView health = new OpsHealthView("UP", 3, 2, 1, 1, "FLEET", false,
+                List.of(OutboxSourceView.unavailable("dc-user")), List.of("dc-user"),
+                2L, 1L, 180L, "DB", true, "OUTBOX_SOURCE_UNAVAILABLE",
+                "OUTBOX_SOURCE_UNAVAILABLE");
+        DegradationView degradation = new DegradationView(true, "DB", "OUTBOX_SOURCE_UNAVAILABLE",
+                3, 2, 1, 1, "FLEET", false,
+                List.of(OutboxSourceView.unavailable("dc-user")), List.of("dc-user"),
+                10L, 12L, 2L, "OUTBOX_SOURCE_UNAVAILABLE");
+        OutboxEventView event = new OutboxEventView(7, "event-7", "post.submitted", "POST",
+                "42", "DEAD", 3, null, null, "previous failure", null, null);
+        when(opsQueryService.health()).thenReturn(health);
+        when(opsQueryService.degradation()).thenReturn(degradation);
+        when(opsQueryService.outboxEvents("DEAD", "post.submitted", 1, 20)).thenReturn(List.of(event));
 
-        org.assertj.core.api.Assertions.assertThat(controller.opsHealth().data()).isEqualTo(fleetHealth);
-        org.assertj.core.api.Assertions.assertThat(controller.degradation().data()).isEqualTo(fleetDegradation);
+        org.assertj.core.api.Assertions.assertThat(controller.opsHealth().data()).isEqualTo(health);
+        org.assertj.core.api.Assertions.assertThat(controller.degradation().data()).isEqualTo(degradation);
+        org.assertj.core.api.Assertions.assertThat(controller.outboxEvents("DEAD", "post.submitted", 1, 20).data())
+                .containsExactly(event);
     }
 }

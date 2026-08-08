@@ -1,9 +1,12 @@
 package io.github.devcircle.admin.api;
 
 import io.github.devcircle.common.api.ApiResponse;
+import io.github.devcircle.admin.application.AdminOpsQueryService;
 import io.github.devcircle.admin.application.AdminService;
 import io.github.devcircle.admin.application.DltReplayService;
-import io.github.devcircle.admin.application.OutboxFleetHealthService;
+import io.github.devcircle.admin.application.query.DegradationView;
+import io.github.devcircle.admin.application.query.OpsHealthView;
+import io.github.devcircle.admin.application.query.OutboxEventView;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -22,13 +25,13 @@ import java.util.Map;
 class AdminController {
     private final AdminService adminService;
     private final DltReplayService dltReplayService;
-    private final OutboxFleetHealthService outboxFleetHealthService;
+    private final AdminOpsQueryService adminOpsQueryService;
 
     AdminController(AdminService adminService, DltReplayService dltReplayService,
-                    OutboxFleetHealthService outboxFleetHealthService) {
+                    AdminOpsQueryService adminOpsQueryService) {
         this.adminService = adminService;
         this.dltReplayService = dltReplayService;
-        this.outboxFleetHealthService = outboxFleetHealthService;
+        this.adminOpsQueryService = adminOpsQueryService;
     }
 
     @GetMapping("/audits/posts")
@@ -219,16 +222,16 @@ class AdminController {
     }
 
     @GetMapping("/ops/health")
-    ApiResponse<Map<String, Object>> opsHealth() {
-        return ApiResponse.ok(outboxFleetHealthService.enrich(adminService.opsHealth(), "degradationReason"));
+    ApiResponse<OpsHealthView> opsHealth() {
+        return ApiResponse.ok(adminOpsQueryService.health());
     }
 
     @GetMapping("/ops/outbox")
-    ApiResponse<List<Map<String, Object>>> outboxEvents(@RequestParam(required = false) String status,
-                                                        @RequestParam(required = false) String topic,
-                                                        @RequestParam(defaultValue = "1") int page,
-                                                        @RequestParam(defaultValue = "20") int size) {
-        return ApiResponse.ok(adminService.outboxEvents(status, topic, page, size));
+    ApiResponse<List<OutboxEventView>> outboxEvents(@RequestParam(required = false) String status,
+                                                    @RequestParam(required = false) String topic,
+                                                    @RequestParam(defaultValue = "1") int page,
+                                                    @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(adminOpsQueryService.outboxEvents(status, topic, page, size));
     }
 
     @PostMapping("/ops/outbox/replay")
@@ -249,7 +252,7 @@ class AdminController {
     }
 
     @GetMapping("/ops/degradation")
-    ApiResponse<Map<String, Object>> degradation() {
-        return ApiResponse.ok(outboxFleetHealthService.enrich(adminService.degradation(), "reason"));
+    ApiResponse<DegradationView> degradation() {
+        return ApiResponse.ok(adminOpsQueryService.degradation());
     }
 }

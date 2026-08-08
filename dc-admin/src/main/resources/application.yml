@@ -7,9 +7,15 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 30s
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${CONTENT_MYSQL_DATABASE:dc_content}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${CONTENT_MYSQL_DATABASE:dc_content}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&connectTimeout=1000&socketTimeout=3000
     username: ${MYSQL_USER:devcircle}
     password: ${MYSQL_PASSWORD:devcircle}
+    hikari:
+      connection-timeout: 1000
+      validation-timeout: 1000
+  jdbc:
+    template:
+      query-timeout: 2s
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
@@ -31,6 +37,10 @@ logging:
   pattern:
     level: "%5p traceId=%X{traceId:-} userId=%X{userId:-}"
 devcircle:
+  admin:
+    ops-query-timeout-ms: ${DEVCIRCLE_ADMIN_OPS_QUERY_TIMEOUT_MS:2500}
+    outbox-fleet-timeout-ms: ${DEVCIRCLE_ADMIN_OUTBOX_FLEET_TIMEOUT_MS:2000}
+    outbox-fleet-max-concurrent-snapshots: ${DEVCIRCLE_ADMIN_OUTBOX_FLEET_MAX_CONCURRENT_SNAPSHOTS:2}
   internal:
     auth-uri: ${DC_AUTH_URI:http://localhost:8101}
     user-uri: ${DC_USER_URI:http://localhost:8102}

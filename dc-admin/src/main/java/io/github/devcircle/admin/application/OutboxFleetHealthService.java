@@ -1,5 +1,7 @@
 package io.github.devcircle.admin.application;
 
+import io.github.devcircle.admin.application.query.OutboxFleetSnapshot;
+import io.github.devcircle.admin.application.query.OutboxSourceView;
 import io.github.devcircle.common.event.OutboxStatusView;
 import io.github.devcircle.common.http.BoundedRestClientFactory;
 import jakarta.annotation.PreDestroy;
@@ -18,15 +20,16 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
 @Service
 public class OutboxFleetHealthService {
     private static final Logger log = LoggerFactory.getLogger(OutboxFleetHealthService.class);
-    private static final long FLEET_TIMEOUT_MS = 2_500;
-
     private final Map<String, OutboxNodeClient> clients;
     private final ExecutorService executor;
+    private final long fleetTimeoutMillis;
+    private final Semaphore snapshotPermits;
 
     @Autowired
     public OutboxFleetHealthService(
@@ -35,7 +38,9 @@ public class OutboxFleetHealthService {
             @Value("${devcircle.internal.content-uri:http://localhost:8103}") String contentUri,
             @Value("${devcircle.internal.comment-uri:http://localhost:8104}") String commentUri,
             @Value("${devcircle.internal.interaction-uri:http://localhost:8105}") String interactionUri,
-            @Value("${devcircle.internal.ops-key:local-development-internal-ops-key}") String internalOpsKey) {
+            @Value("${devcircle.internal.ops-key:local-development-internal-ops-key}") String internalOpsKey,
+            @Value("${devcircle.admin.outbox-fleet-timeout-ms:2000}") long fleetTimeoutMillis,
+            @Value("${devcircle.admin.outbox-fleet-max-concurrent-snapshots:2}") int maxConcurrentSnapshots) {
         this.clients = new LinkedHashMap<>();
         clients.put("dc-auth", new HttpOutboxNodeClient(authUri, internalOpsKey));
         clients.put("dc-user", new HttpOutboxNodeClient(userUri, internalOpsKey));
@@ -43,38 +48,35 @@ public class OutboxFleetHealthService {
         clients.put("dc-comment", new HttpOutboxNodeClient(commentUri, internalOpsKey));
         clients.put("dc-interaction", new HttpOutboxNodeClient(interactionUri, internalOpsKey));
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
+        this.fleetTimeoutMillis = Math.max(100, fleetTimeoutMillis);
+        this.snapshotPermits = new Semaphore(Math.max(1, maxConcurrentSnapshots));
     }
 
     OutboxFleetHealthService(Map<String, OutboxNodeClient> clients, ExecutorService executor) {
+        this(clients, executor, 2_000, 2);
+    }
+
+    OutboxFleetHealthService(Map<String, OutboxNodeClient> clients, ExecutorService executor,
+                             long fleetTimeoutMillis, int maxConcurrentSnapshots) {
         this.clients = new LinkedHashMap<>(clients);
         this.executor = executor;
+        this.fleetTimeoutMillis = Math.max(1, fleetTimeoutMillis);
+        this.snapshotPermits = new Semaphore(Math.max(1, maxConcurrentSnapshots));
     }
 
-    public Map<String, Object> enrich(Map<String, Object> base, String reasonKey) {
-        Map<String, Object> result = new LinkedHashMap<>(base);
-        Map<String, Object> fleet = snapshot();
-        boolean baseDegraded = Boolean.TRUE.equals(base.get("degraded"));
-        boolean fleetDegraded = Boolean.TRUE.equals(fleet.get("degraded"));
-        Object existingReason = base.get(reasonKey);
-        boolean adminDatabaseUnavailable = "DOWN".equals(base.get("database"))
-                || "DATABASE_UNAVAILABLE".equals(existingReason)
-                || "ADMIN_DATABASE_UNAVAILABLE".equals(existingReason)
-                || (baseDegraded && "HEALTH_CHECK".equals(base.get("source")) && existingReason == null);
-        result.putAll(fleet);
-        result.put("degraded", baseDegraded || fleetDegraded);
-        if (adminDatabaseUnavailable) {
-            result.put(reasonKey, existingReason == null ? "ADMIN_DATABASE_UNAVAILABLE" : existingReason);
-        } else if (fleetDegraded) {
-            result.put(reasonKey, fleet.get("outboxDegradationReason"));
-        } else if (baseDegraded && existingReason != null) {
-            result.put(reasonKey, existingReason);
-        } else {
-            result.remove(reasonKey);
+    public OutboxFleetSnapshot snapshot() {
+        if (!snapshotPermits.tryAcquire()) {
+            log.warn("Outbox fleet bulkhead is full");
+            return unavailableSnapshot();
         }
-        return Map.copyOf(result);
+        try {
+            return collectSnapshot();
+        } finally {
+            snapshotPermits.release();
+        }
     }
 
-    Map<String, Object> snapshot() {
+    private OutboxFleetSnapshot collectSnapshot() {
         List<Map.Entry<String, OutboxNodeClient>> entries = new ArrayList<>(clients.entrySet());
         List<java.util.concurrent.Callable<OutboxStatusView>> calls = entries.stream()
                 .map(entry -> (java.util.concurrent.Callable<OutboxStatusView>) () -> {
@@ -87,13 +89,13 @@ public class OutboxFleetHealthService {
                 .toList();
         List<Future<OutboxStatusView>> futures;
         try {
-            futures = executor.invokeAll(calls, FLEET_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            futures = executor.invokeAll(calls, fleetTimeoutMillis, TimeUnit.MILLISECONDS);
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             futures = List.of();
         }
 
-        List<Map<String, Object>> sources = new ArrayList<>();
+        List<OutboxSourceView> sources = new ArrayList<>();
         List<String> unavailable = new ArrayList<>();
         long backlog = 0;
         long retryable = 0;
@@ -125,33 +127,31 @@ public class OutboxFleetHealthService {
         }
 
         boolean complete = unavailable.isEmpty();
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("outboxScope", "FLEET");
-        result.put("outboxComplete", complete);
-        result.put("outboxBacklog", backlog);
-        result.put("outboxRetryable", retryable);
-        result.put("outboxDead", dead);
-        result.put("outboxBlockedByDead", blocked);
-        result.put("outboxSources", List.copyOf(sources));
-        result.put("unavailableOutboxSources", List.copyOf(unavailable));
-        result.put("degraded", !complete || dead > 0);
-        if (!complete) result.put("outboxDegradationReason", "OUTBOX_SOURCE_UNAVAILABLE");
-        else if (dead > 0) result.put("outboxDegradationReason", "OUTBOX_DEAD");
-        return Map.copyOf(result);
+        String reason = !complete ? "OUTBOX_SOURCE_UNAVAILABLE" : dead > 0 ? "OUTBOX_DEAD" : null;
+        return new OutboxFleetSnapshot(
+                "FLEET",
+                complete,
+                backlog,
+                retryable,
+                dead,
+                blocked,
+                List.copyOf(sources),
+                List.copyOf(unavailable),
+                !complete || dead > 0,
+                reason);
     }
 
-    private Map<String, Object> source(OutboxStatusView status) {
-        return Map.of(
-                "service", status.service(),
-                "status", "UP",
-                "backlog", status.backlog(),
-                "retryable", status.retryable(),
-                "dead", status.dead(),
-                "blockedByDead", status.blockedByDead());
+    public OutboxFleetSnapshot unavailableSnapshot() {
+        return OutboxFleetSnapshot.unavailable(new ArrayList<>(clients.keySet()));
     }
 
-    private Map<String, Object> unavailableSource(String service) {
-        return Map.of("service", service, "status", "UNAVAILABLE");
+    private OutboxSourceView source(OutboxStatusView status) {
+        return OutboxSourceView.available(status.service(), status.backlog(), status.retryable(),
+                status.dead(), status.blockedByDead());
+    }
+
+    private OutboxSourceView unavailableSource(String service) {
+        return OutboxSourceView.unavailable(service);
     }
 
     @PreDestroy

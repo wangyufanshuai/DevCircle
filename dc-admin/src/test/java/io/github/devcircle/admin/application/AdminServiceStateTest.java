@@ -2,6 +2,9 @@ package io.github.devcircle.admin.application;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.devcircle.admin.application.query.OutboxFleetSnapshot;
+import io.github.devcircle.admin.application.query.OutboxSourceView;
+import io.github.devcircle.admin.infrastructure.JdbcAdminOpsReadRepository;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.event.EventEnvelopeValidator;
@@ -28,6 +31,8 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 @SpringJUnitConfig(AdminServiceStateTest.TestConfig.class)
 class AdminServiceStateTest {
@@ -39,6 +44,10 @@ class AdminServiceStateTest {
     private AdminService failingService;
     @Autowired
     private JdbcClient jdbcClient;
+    @Autowired
+    private AdminOpsQueryService opsQueryService;
+    @Autowired
+    private OutboxFleetHealthService fleetHealthService;
 
     @BeforeEach
     void setUp() {
@@ -181,30 +190,74 @@ class AdminServiceStateTest {
         outbox("post.submitted", "DEAD", null, 60);
         outbox("post.submitted", "NEW", null, 50);
         outbox("appeal.created", "FAILED", null, 40);
+        when(fleetHealthService.snapshot()).thenReturn(fleet(3, 2, 1, 1, true, "OUTBOX_DEAD"));
 
-        Map<String, Object> health = service.opsHealth();
-        Map<String, Object> degradation = service.degradation();
-        List<Map<String, Object>> deadEvents = service.outboxEvents("DEAD", "post.submitted", 1, 20);
+        var health = opsQueryService.health();
+        var degradation = opsQueryService.degradation();
+        var deadEvents = opsQueryService.outboxEvents("DEAD", "post.submitted", 1, 20);
 
-        assertThat(health)
-                .containsEntry("database", "UP")
-                .containsEntry("outboxBacklog", 3L)
-                .containsEntry("outboxRetryable", 2L)
-                .containsEntry("outboxDead", 1L)
-                .containsEntry("outboxBlockedByDead", 1L)
-                .containsEntry("outboxScope", "CONTENT_DB")
-                .containsEntry("degraded", true)
-                .containsEntry("degradationReason", "OUTBOX_DEAD");
-        assertThat(degradation)
-                .containsEntry("degraded", true)
-                .containsEntry("reason", "OUTBOX_DEAD")
-                .containsEntry("outboxBacklog", 3L)
-                .containsEntry("outboxDead", 1L)
-                .containsEntry("outboxBlockedByDead", 1L);
+        assertThat(health.database()).isEqualTo("UP");
+        assertThat(health.outboxBacklog()).isEqualTo(3);
+        assertThat(health.outboxRetryable()).isEqualTo(2);
+        assertThat(health.outboxDead()).isEqualTo(1);
+        assertThat(health.outboxBlockedByDead()).isEqualTo(1);
+        assertThat(health.outboxScope()).isEqualTo("FLEET");
+        assertThat(health.degraded()).isTrue();
+        assertThat(health.degradationReason()).isEqualTo("OUTBOX_DEAD");
+        assertThat(degradation.degraded()).isTrue();
+        assertThat(degradation.reason()).isEqualTo("OUTBOX_DEAD");
+        assertThat(degradation.outboxBacklog()).isEqualTo(3);
+        assertThat(degradation.outboxDead()).isEqualTo(1);
+        assertThat(degradation.outboxBlockedByDead()).isEqualTo(1);
         assertThat(deadEvents).singleElement().satisfies(event -> assertThat(event)
-                .containsEntry("status", "DEAD")
-                .containsEntry("attempts", 3)
-                .containsEntry("lastError", "previous failure"));
+                .hasFieldOrPropertyWithValue("status", "DEAD")
+                .hasFieldOrPropertyWithValue("attempts", 3)
+                .hasFieldOrPropertyWithValue("lastError", "previous failure"));
+    }
+
+    @Test
+    void operationsHealthKeepsAdminDatabaseFailureDistinctFromFleetFailure() {
+        jdbcClient.sql("DROP TABLE post").update();
+        jdbcClient.sql("DROP TABLE recommendation_impression").update();
+        when(fleetHealthService.snapshot()).thenReturn(fleet(1, 0, 1, 0, true, "OUTBOX_DEAD"));
+
+        var health = opsQueryService.health();
+        var degradation = opsQueryService.degradation();
+
+        assertThat(health.database()).isEqualTo("DOWN");
+        assertThat(health.source()).isEqualTo("HEALTH_CHECK");
+        assertThat(health.degraded()).isTrue();
+        assertThat(health.degradationReason()).isEqualTo("ADMIN_DATABASE_UNAVAILABLE");
+        assertThat(health.outboxDegradationReason()).isEqualTo("OUTBOX_DEAD");
+        assertThat(degradation.source()).isEqualTo("HEALTH_CHECK");
+        assertThat(degradation.reason()).isEqualTo("DATABASE_UNAVAILABLE");
+        assertThat(degradation.outboxDegradationReason()).isEqualTo("OUTBOX_DEAD");
+    }
+
+    @Test
+    void incompleteFleetTakesPrecedenceOverLocalDeadReason() {
+        outbox("post.submitted", "DEAD", null, 60);
+        when(fleetHealthService.snapshot()).thenReturn(new OutboxFleetSnapshot(
+                "FLEET", false, 1, 0, 1, 0,
+                List.of(
+                        OutboxSourceView.available("dc-content", 1, 0, 1, 0),
+                        OutboxSourceView.unavailable("dc-user")),
+                List.of("dc-user"), true, "OUTBOX_SOURCE_UNAVAILABLE"));
+
+        var health = opsQueryService.health();
+        var degradation = opsQueryService.degradation();
+
+        assertThat(health.outboxComplete()).isFalse();
+        assertThat(health.unavailableOutboxSources()).containsExactly("dc-user");
+        assertThat(health.degradationReason()).isEqualTo("OUTBOX_SOURCE_UNAVAILABLE");
+        assertThat(degradation.reason()).isEqualTo("OUTBOX_SOURCE_UNAVAILABLE");
+    }
+
+    private OutboxFleetSnapshot fleet(long backlog, long retryable, long dead, long blocked,
+                                       boolean degraded, String reason) {
+        return new OutboxFleetSnapshot("FLEET", true, backlog, retryable, dead, blocked,
+                List.of(OutboxSourceView.available("dc-content", backlog, retryable, dead, blocked)),
+                List.of(), degraded, reason);
     }
 
     @Test
@@ -940,6 +993,20 @@ class AdminServiceStateTest {
                 }
             };
             return new AdminService(jdbcClient, failingMapper);
+        }
+
+        @Bean
+        OutboxFleetHealthService outboxFleetHealthService() {
+            return mock(OutboxFleetHealthService.class);
+        }
+
+        @Bean
+        AdminOpsQueryService adminOpsQueryService(JdbcClient jdbcClient,
+                                                   OutboxFleetHealthService outboxFleetHealthService) {
+            return new AdminOpsQueryService(
+                    new JdbcAdminOpsReadRepository(jdbcClient),
+                    outboxFleetHealthService,
+                    2_500);
         }
 
         @Bean

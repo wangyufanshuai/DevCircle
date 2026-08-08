@@ -637,73 +637,6 @@ public class AdminService {
         }
     }
 
-    public Map<String, Object> opsHealth() {
-        if (jdbcClient == null) {
-            return Map.of("database", "DOWN", "source", "HEALTH_CHECK", "degraded", true);
-        }
-        try {
-            Long posts = oneLong("SELECT COUNT(*) FROM post");
-            OutboxSnapshot outbox = outboxSnapshot();
-            Long moderationPending = oneLong("SELECT COUNT(*) FROM moderation_task WHERE status = 'PENDING'");
-            Long riskUsers = oneLong("SELECT COUNT(*) FROM user_risk_profile WHERE status <> 'NORMAL'");
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("database", "UP");
-            result.put("outboxBacklog", outbox.backlog());
-            result.put("outboxRetryable", outbox.retryable());
-            result.put("outboxDead", outbox.dead());
-            result.put("outboxBlockedByDead", outbox.blockedByDead());
-            result.put("outboxScope", "CONTENT_DB");
-            result.put("pendingModeration", moderationPending);
-            result.put("riskUsers", riskUsers);
-            result.put("posts", posts);
-            result.put("source", "DB");
-            result.put("degraded", outbox.dead() > 0);
-            if (outbox.dead() > 0) result.put("degradationReason", "OUTBOX_DEAD");
-            return Map.copyOf(result);
-        } catch (DataAccessException ex) {
-            return Map.of("database", "DOWN", "source", "HEALTH_CHECK", "degraded", true);
-        }
-    }
-
-    public List<Map<String, Object>> outboxEvents(String status, String topic, int page, int size) {
-        requireDatabase();
-        int offset = Math.max(page - 1, 0) * size;
-        try {
-            return jdbcClient.sql("""
-                            SELECT id, event_id, topic, aggregate_type, aggregate_id, status, attempts,
-                                   next_attempt_at, locked_at, last_error, created_at, published_at
-                            FROM outbox_event
-                            WHERE (:status IS NULL OR status = :status)
-                              AND (:topic IS NULL OR topic = :topic)
-                            ORDER BY created_at DESC
-                            LIMIT :size OFFSET :offset
-                            """)
-                    .param("status", blankToNull(status))
-                    .param("topic", blankToNull(topic))
-                    .param("size", Math.max(1, Math.min(size, 200)))
-                    .param("offset", offset)
-                    .query((rs, rowNum) -> {
-                        Map<String, Object> row = new LinkedHashMap<>();
-                        row.put("id", rs.getLong("id"));
-                        row.put("eventId", rs.getString("event_id"));
-                        row.put("topic", rs.getString("topic"));
-                        row.put("aggregateType", rs.getString("aggregate_type"));
-                        row.put("aggregateId", rs.getString("aggregate_id"));
-                        row.put("status", rs.getString("status"));
-                        row.put("attempts", rs.getInt("attempts"));
-                        row.put("nextAttemptAt", rs.getTimestamp("next_attempt_at") == null ? null : rs.getTimestamp("next_attempt_at").toInstant());
-                        row.put("lockedAt", rs.getTimestamp("locked_at") == null ? null : rs.getTimestamp("locked_at").toInstant());
-                        row.put("lastError", rs.getString("last_error"));
-                        row.put("createdAt", rs.getTimestamp("created_at") == null ? null : rs.getTimestamp("created_at").toInstant());
-                        row.put("publishedAt", rs.getTimestamp("published_at") == null ? null : rs.getTimestamp("published_at").toInstant());
-                        return row;
-                    })
-                    .list();
-        } catch (DataAccessException ex) {
-            throw dependencyUnavailable();
-        }
-    }
-
     @Transactional
     public AdminActionResult replayOutbox(String topic, int batchSize, Long actorId, String traceId,
                                           String idempotencyKey) {
@@ -733,51 +666,6 @@ public class AdminService {
                     return new AdminActionResult("REPLAY_OUTBOX",
                             Map.of("affected", affected, "topic", auditTopic));
                 });
-    }
-
-    public Map<String, Object> degradation() {
-        if (jdbcClient == null) {
-            return Map.of("degraded", true, "source", "HEALTH_CHECK", "reason", "DATABASE_UNAVAILABLE");
-        }
-        try {
-            OutboxSnapshot outbox = outboxSnapshot();
-            Long impressions = oneLong("SELECT COUNT(*) FROM recommendation_impression");
-            Long events = oneLong("SELECT COUNT(*) FROM recommend_event_log");
-            Long moderationPending = oneLong("SELECT COUNT(*) FROM moderation_task WHERE status = 'PENDING'");
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("degraded", outbox.dead() > 0);
-            result.put("source", "DB");
-            result.put("outboxBacklog", outbox.backlog());
-            result.put("outboxRetryable", outbox.retryable());
-            result.put("outboxDead", outbox.dead());
-            result.put("outboxBlockedByDead", outbox.blockedByDead());
-            result.put("outboxScope", "CONTENT_DB");
-            result.put("recommendImpressions", impressions);
-            result.put("recommendEvents", events);
-            result.put("pendingModeration", moderationPending);
-            if (outbox.dead() > 0) result.put("reason", "OUTBOX_DEAD");
-            return Map.copyOf(result);
-        } catch (DataAccessException ex) {
-            return Map.of("degraded", true, "source", "HEALTH_CHECK", "reason", "DATABASE_UNAVAILABLE");
-        }
-    }
-
-    private OutboxSnapshot outboxSnapshot() {
-        long retryable = oneLong("SELECT COUNT(*) FROM outbox_event WHERE status IN ('NEW', 'FAILED', 'PROCESSING')");
-        long dead = oneLong("SELECT COUNT(*) FROM outbox_event WHERE status = 'DEAD'");
-        long blockedByDead = oneLong("""
-                SELECT COUNT(*)
-                FROM outbox_event current_event
-                WHERE current_event.status <> 'PUBLISHED'
-                  AND EXISTS (
-                      SELECT 1 FROM outbox_event prior_event
-                      WHERE prior_event.topic = current_event.topic
-                        AND prior_event.aggregate_id = current_event.aggregate_id
-                        AND prior_event.id < current_event.id
-                        AND prior_event.status = 'DEAD'
-                  )
-                """);
-        return new OutboxSnapshot(retryable + dead, retryable, dead, blockedByDead);
     }
 
     private AdminActionResult auditPost(Long postId, Long requestedTaskId, Long auditorId, String traceId,
@@ -1183,9 +1071,6 @@ public class AdminService {
     }
 
     private record AppealRow(Long postId, Long userId, String reason, String postStatus) {
-    }
-
-    private record OutboxSnapshot(long backlog, long retryable, long dead, long blockedByDead) {
     }
 
 }
