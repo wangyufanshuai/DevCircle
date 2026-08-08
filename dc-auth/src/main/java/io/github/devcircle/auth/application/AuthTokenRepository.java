@@ -81,6 +81,9 @@ public class AuthTokenRepository {
 
     @Transactional
     public Account createAccount(String email, String displayName, String passwordHash) {
+        if (email == null || email.length() > 128 || displayName == null || displayName.length() > 64) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "账号资料长度超出限制");
+        }
         try {
             jdbcClient.sql("""
                             INSERT INTO user_account(username, display_name, email, password_hash, status)

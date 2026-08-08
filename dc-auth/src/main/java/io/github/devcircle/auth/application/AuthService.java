@@ -211,7 +211,11 @@ public class AuthService {
         if (email == null || email.isBlank()) {
             throw new BusinessException(ErrorCode.VALIDATION_FAILED, "邮箱不能为空");
         }
-        return email.trim().toLowerCase(Locale.ROOT);
+        String value = email.trim().toLowerCase(Locale.ROOT);
+        if (value.length() > 128) {
+            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "邮箱长度不能超过 128 个字符");
+        }
+        return value;
     }
 
     private String normalizeDisplayName(String displayName) {

@@ -52,6 +52,7 @@ class AuthServiceBoundaryTest {
 
         assertCode(() -> service.register(null, "valid-password1", "Reader", "trace"), ErrorCode.VALIDATION_FAILED);
         assertCode(() -> service.register(" ", "valid-password1", "Reader", "trace"), ErrorCode.VALIDATION_FAILED);
+        assertCode(() -> service.register("x".repeat(117) + "@example.com", "valid-password1", "Reader", "trace"), ErrorCode.VALIDATION_FAILED);
         assertCode(() -> service.register("reader@example.com", null, "Reader", "trace"), ErrorCode.VALIDATION_FAILED);
         assertCode(() -> service.register("reader@example.com", "short1", "Reader", "trace"), ErrorCode.VALIDATION_FAILED);
         assertCode(() -> service.register("reader@example.com", "x".repeat(129), "Reader", "trace"), ErrorCode.VALIDATION_FAILED);
@@ -63,6 +64,8 @@ class AuthServiceBoundaryTest {
 
     @Test
     void loginRejectsMissingDisabledAndWrongPasswordAccounts() {
+        assertCode(() -> service.login("x".repeat(117) + "@example.com", "valid-password1", "trace"),
+                ErrorCode.VALIDATION_FAILED);
         when(repository.findAccountByEmail("missing@example.com")).thenReturn(Optional.empty());
         assertCode(() -> service.login("missing@example.com", "valid-password1", "trace"),
                 ErrorCode.AUTHENTICATION_FAILED);

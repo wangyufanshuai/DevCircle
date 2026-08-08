@@ -186,12 +186,12 @@ class AuthController {
         return request.getHeader("X-Trace-Id");
     }
 
-    record RegisterRequest(@NotBlank @Email String email,
+    record RegisterRequest(@NotBlank @Email @Size(max = 128) String email,
                            @NotBlank @Size(min = 12, max = 128) String password,
                            @NotBlank @Size(min = 2, max = 32) String displayName) {
     }
 
-    record LoginRequest(@NotBlank @Email String email, @NotBlank String password) {
+    record LoginRequest(@NotBlank @Email @Size(max = 128) String email, @NotBlank String password) {
     }
 
     record LoginResponse(String accessToken, Instant expiresAt, UserSession user) {

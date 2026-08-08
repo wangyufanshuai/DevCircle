@@ -2,9 +2,11 @@ import { expect, test } from '@playwright/test'
 
 test('registers, rotates the session, logs out, and signs in again through the real gateway', async ({ page, request, context }) => {
   const unique = `${Date.now()}-${Math.random().toString(16).slice(2)}`
-  const email = `real-e2e-${unique}@example.test`
+  const email = `real-e2e-${unique}@${'observatory'.repeat(4)}.example.test`
   const password = 'OrbitReader2026!'
   const displayName = `真实观测者-${unique.slice(-6)}`
+  expect(email.length).toBeGreaterThan(64)
+  expect(email.length).toBeLessThanOrEqual(128)
 
   await test.step('register through the browser', async () => {
     await page.goto('/auth?redirect=/')
