@@ -64,7 +64,7 @@ services:
 
   kafka:
     image: apache/kafka:4.1.1
-    profiles: ["community", "performance", "search-recovery"]
+    profiles: ["community", "performance", "search-recovery", "legacy-search"]
     restart: "no"
     environment:
       KAFKA_NODE_ID: 1
@@ -89,7 +89,7 @@ services:
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:9.2.2
-    profiles: ["performance", "search-recovery"]
+    profiles: ["performance", "search-recovery", "legacy-search"]
     restart: "no"
     environment:
       discovery.type: single-node
@@ -159,7 +159,7 @@ services:
 
   dc-content:
     <<: *app-defaults
-    profiles: ["content", "review", "community", "performance", "search-recovery"]
+    profiles: ["content", "review", "community", "performance", "search-recovery", "legacy-search"]
     build:
       <<: *service-build
       args: { JAR_FILE: dc-content/target/dc-content-0.1.0-SNAPSHOT.jar }
@@ -304,10 +304,10 @@ services:
 
   dc-search:
     <<: *app-defaults
-    profiles: ["performance", "search-recovery"]
+    profiles: ["legacy-search"]
     build:
       <<: *service-build
-      args: { JAR_FILE: dc-search/target/dc-search-0.1.0-SNAPSHOT.jar }
+      args: { JAR_FILE: dc-search/target/dc-search-0.1.0-SNAPSHOT-exec.jar }
     environment:
       <<: *app-env
       MYSQL_HOST: mysql
@@ -335,7 +335,7 @@ services:
 
   dc-admin:
     <<: *app-defaults
-    profiles: ["review", "community", "search-recovery"]
+    profiles: ["review", "community", "search-recovery", "legacy-search"]
     build:
       <<: *service-build
       args: { JAR_FILE: dc-admin/target/dc-admin-0.1.0-SNAPSHOT.jar }
@@ -362,6 +362,37 @@ services:
       timeout: 5s
       retries: 24
 
+  dc-discovery:
+    <<: *app-defaults
+    profiles: ["performance", "search-recovery"]
+    build:
+      <<: *service-build
+      args: { JAR_FILE: dc-discovery/target/dc-discovery-0.1.0-SNAPSHOT.jar }
+    environment:
+      <<: *app-env
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: devcircle
+      MYSQL_PASSWORD: e2e-database-password
+      ELASTICSEARCH_URIS: http://elasticsearch:9200
+      DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
+      DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
+      DEVCIRCLE_KAFKA_RETRY_INITIAL_INTERVAL_MS: ${REAL_E2E_SEARCH_RETRY_INITIAL_INTERVAL_MS:-1000}
+      DEVCIRCLE_KAFKA_RETRY_MULTIPLIER: ${REAL_E2E_SEARCH_RETRY_MULTIPLIER:-2.0}
+      DEVCIRCLE_KAFKA_RETRY_MAX_INTERVAL_MS: ${REAL_E2E_SEARCH_RETRY_MAX_INTERVAL_MS:-10000}
+      DEVCIRCLE_KAFKA_RETRY_MAX_ATTEMPTS: ${REAL_E2E_SEARCH_RETRY_MAX_ATTEMPTS:-4}
+    mem_limit: 512m
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      elasticsearch: { condition: service_healthy }
+      dc-content: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8203/actuator/health/readiness"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
   dc-gateway:
     <<: *app-defaults
     build:
@@ -374,7 +405,7 @@ services:
       DC_USER_URI: http://dc-user:8102
       DC_CONTENT_URI: http://dc-content:8103
       DC_INTERACTION_URI: http://dc-interaction:8105
-      DC_SEARCH_URI: http://dc-search:8106
+      DC_SEARCH_URI: ${REAL_E2E_SEARCH_URI:-http://dc-discovery:8203}
       DC_RECOMMEND_URI: http://dc-recommend:8107
       DC_NOTIFICATION_URI: http://dc-notification:8108
       DC_ADMIN_URI: http://dc-admin:8110
@@ -387,6 +418,7 @@ services:
       dc-content: { condition: service_healthy, required: false }
       dc-user: { condition: service_healthy, required: false }
       dc-interaction: { condition: service_healthy, required: false }
+      dc-discovery: { condition: service_healthy, required: false }
       dc-search: { condition: service_healthy, required: false }
       dc-recommend: { condition: service_healthy, required: false }
       dc-notification: { condition: service_healthy, required: false }

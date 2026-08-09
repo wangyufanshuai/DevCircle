@@ -39,7 +39,7 @@ docker image inspect "${K6_IMAGE}" >/dev/null 2>&1 || {
 }
 
 if [[ "${BUILD_MODE}" == "true" ]]; then
-  MODULES="dc-identity,dc-content,dc-interaction,dc-search,dc-recommend,dc-gateway"
+  MODULES="dc-identity,dc-content,dc-interaction,dc-discovery,dc-recommend,dc-gateway"
   if command -v java >/dev/null 2>&1; then
     "${ROOT_DIR}/mvnw" -q -pl "${MODULES}" -am -DskipTests package
   elif command -v cmd.exe >/dev/null 2>&1; then
@@ -79,7 +79,7 @@ for index in $(seq 1 "${WRITE_VUS}"); do
 done
 token_csv="$(IFS=,; echo "${tokens[*]}")"
 
-"${COMPOSE[@]}" exec -T dc-search curl -fsS -X POST http://localhost:8106/api/search/admin/reindex >/dev/null
+"${COMPOSE[@]}" exec -T dc-discovery curl -fsS -X POST http://localhost:8203/api/search/admin/reindex >/dev/null
 
 # Initialize the recommendation datasource and JIT path before the timed steady-state window.
 # Cold-start behavior is validated by Compose health checks and reported separately.

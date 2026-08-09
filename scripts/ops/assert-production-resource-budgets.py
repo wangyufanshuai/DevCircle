@@ -18,7 +18,7 @@ GIB = 1024 * MIB
 APP_SERVICES = {
     "dc-admin", "dc-comment", "dc-content", "dc-content-aggregate",
     "dc-discovery", "dc-file", "dc-gateway", "dc-identity", "dc-interaction",
-    "dc-notification", "dc-recommend", "dc-search", "dc-user",
+    "dc-notification", "dc-recommend", "dc-user",
 }
 OBSERVABILITY_SERVICES = {"prometheus", "alertmanager", "jaeger"}
 EXPECTED_SERVICES = APP_SERVICES | {
@@ -48,6 +48,8 @@ HELM_GATEWAY_ENVIRONMENT = {
     "DC_IDENTITY_URI": "http://dc-identity:8201",
     "DC_CONTENT_AGGREGATE_URI": "http://dc-content-aggregate:8202",
     "DC_DISCOVERY_URI": "http://dc-discovery:8203",
+    "DC_SEARCH_URI": "http://dc-discovery:8203",
+    "DC_RECOMMEND_URI": "http://dc-recommend:8107",
 }
 
 
@@ -236,6 +238,8 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
     secrets = _mapping(values.get("secrets"), "secrets")
     if "auth" in services:
         fail("Helm must not deploy dc-auth separately in the production topology")
+    if "search" in services:
+        fail("Helm must embed search in discovery instead of deploying dc-search separately")
     if not str(secrets.get("existingSecret", "")).strip():
         fail("Helm secrets.existingSecret is required")
     global_collisions = set(global_environment).intersection(global_secret_refs)
@@ -285,6 +289,13 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
     for key, expected in HELM_GATEWAY_ENVIRONMENT.items():
         if gateway_service_environment.get(key) != expected or gateway.get(key) != expected:
             fail(f"Helm gateway must explicitly set {key}={expected}")
+
+    discovery_environment = _mapping(
+        _mapping(services.get("discovery"), "services.discovery").get("env", {}),
+        "services.discovery.env",
+    )
+    if "DC_SEARCH_URI" in discovery_environment or "DC_SEARCH_URI" in global_environment:
+        fail("Helm discovery must embed search instead of proxying DC_SEARCH_URI")
 
     identity_environment = _mapping(
         _mapping(services.get("identity"), "services.identity").get("env", {}),
@@ -363,7 +374,7 @@ def validate(data: dict) -> tuple[int, int]:
     unexpected_services = set(services).difference(EXPECTED_SERVICES)
     if missing_services or unexpected_services:
         fail(
-            "production services do not match the 23-service contract: "
+            "production services do not match the 22-service contract: "
             f"missing={sorted(missing_services)} unexpected={sorted(unexpected_services)}"
         )
 
@@ -426,10 +437,24 @@ def validate(data: dict) -> tuple[int, int]:
         "DC_USER_URI": "http://dc-user:8102",
         "DC_INTERACTION_URI": "http://dc-interaction:8105",
         "DC_NOTIFICATION_URI": "http://dc-notification:8108",
+        "DC_DISCOVERY_URI": "http://dc-discovery:8203",
+        "DC_SEARCH_URI": "http://dc-discovery:8203",
+        "DC_RECOMMEND_URI": "http://dc-recommend:8107",
     }
     for key, expected in expected_gateway_routes.items():
         if gateway_environment.get(key) != expected:
             fail(f"dc-gateway must set {key}={expected}")
+    gateway_dependencies = services["dc-gateway"].get("depends_on") or {}
+    for dependency in ("dc-identity", "dc-content-aggregate", "dc-discovery", "dc-recommend"):
+        if dependency not in gateway_dependencies:
+            fail(f"dc-gateway must depend on {dependency} for aggregate routing")
+    discovery_environment = services["dc-discovery"].get("environment") or {}
+    if "DC_SEARCH_URI" in discovery_environment:
+        fail("dc-discovery must embed search instead of proxying DC_SEARCH_URI")
+    discovery_dependencies = services["dc-discovery"].get("depends_on") or {}
+    for dependency in ("mysql", "elasticsearch", "kafka", "dc-content"):
+        if dependency not in discovery_dependencies:
+            fail(f"dc-discovery must depend on {dependency} for the embedded search runtime")
 
     mysql_command = services["mysql"].get("command") or []
     if "--max-connections=120" not in mysql_command or "--innodb-buffer-pool-size=768M" not in mysql_command:

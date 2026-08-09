@@ -4,6 +4,24 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="${ROOT_DIR}/docker-compose.e2e.yml"
 RECOVERY_MODE="${REAL_E2E_SEARCH_RECOVERY_MODE:-retry}"
+SEARCH_DEPLOYMENT="${REAL_E2E_SEARCH_DEPLOYMENT:-discovery}"
+case "${SEARCH_DEPLOYMENT}" in
+  discovery)
+    SEARCH_SERVICE="dc-discovery"
+    SEARCH_PORT=8203
+    SEARCH_PROFILE="search-recovery"
+    ;;
+  legacy)
+    SEARCH_SERVICE="dc-search"
+    SEARCH_PORT=8106
+    SEARCH_PROFILE="legacy-search"
+    export REAL_E2E_SEARCH_URI="http://dc-search:8106"
+    ;;
+  *)
+    echo "REAL_E2E_SEARCH_DEPLOYMENT must be discovery or legacy" >&2
+    exit 2
+    ;;
+esac
 if [[ "${RECOVERY_MODE}" == "dlt" ]]; then
   DEFAULT_PROJECT_NAME="devcircle-real-search-dlt-e2e"
   DEFAULT_RETRY_INTERVAL_MS=500
@@ -28,7 +46,7 @@ export REAL_E2E_SEARCH_RETRY_MAX_ATTEMPTS="${REAL_E2E_SEARCH_RETRY_MAX_ATTEMPTS:
 export REAL_E2E_MIN_DOCKER_MEMORY_BYTES="${REAL_E2E_MIN_DOCKER_MEMORY_BYTES:-4294967296}"
 ADMIN_EMAIL="real-search-admin@example.test"
 ADMIN_PASSWORD="OrbitAdmin2026!"
-COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" --profile search-recovery)
+COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" --profile "${SEARCH_PROFILE}")
 MYSQL=("${COMPOSE[@]}" exec -T mysql mysql -uroot -pe2e-root-password --skip-column-names --batch)
 # shellcheck source=docker-preflight.sh
 source "${ROOT_DIR}/scripts/e2e/docker-preflight.sh"
@@ -36,7 +54,7 @@ source "${ROOT_DIR}/scripts/e2e/docker-preflight.sh"
 cleanup() {
   status=$?
   if (( status != 0 )); then
-    "${COMPOSE[@]}" logs --no-color --tail=240 dc-search dc-admin dc-content dc-gateway || true
+    "${COMPOSE[@]}" logs --no-color --tail=240 "${SEARCH_SERVICE}" dc-admin dc-content dc-gateway || true
     if [[ "${KEEP_ON_FAILURE}" == "true" ]]; then
       echo "Search recovery environment retained for debugging: project=${PROJECT_NAME}" >&2
       exit "${status}"
@@ -85,13 +103,13 @@ wait_for_elasticsearch() {
 
 wait_for_search_readiness() {
   for _ in $(seq 1 "${WAIT_ATTEMPTS}"); do
-    if "${COMPOSE[@]}" exec -T dc-search curl -fsS \
-      'http://localhost:8106/actuator/health/readiness' >/dev/null 2>&1; then
+    if "${COMPOSE[@]}" exec -T "${SEARCH_SERVICE}" curl -fsS \
+      "http://localhost:${SEARCH_PORT}/actuator/health/readiness" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
   done
-  echo "Search service did not recover readiness after Elasticsearch restart" >&2
+  echo "${SEARCH_SERVICE} did not recover readiness after Elasticsearch restart" >&2
   return 1
 }
 
@@ -127,9 +145,17 @@ command -v node >/dev/null 2>&1 || { echo "node is required" >&2; exit 2; }
 require_real_e2e_docker "search recovery E2E"
 
 if command -v java >/dev/null 2>&1; then
-  "${ROOT_DIR}/mvnw" -q -pl dc-identity,dc-content,dc-admin,dc-search,dc-gateway -am -DskipTests package
+  if [[ "${SEARCH_DEPLOYMENT}" == "discovery" ]]; then
+    "${ROOT_DIR}/mvnw" -q -pl dc-identity,dc-content,dc-admin,dc-discovery,dc-gateway -am -DskipTests package
+  else
+    "${ROOT_DIR}/mvnw" -q -pl dc-identity,dc-content,dc-admin,dc-search,dc-gateway -am -DskipTests package
+  fi
 elif command -v cmd.exe >/dev/null 2>&1; then
-  (cd "${ROOT_DIR}" && cmd.exe /d /c "mvnw.cmd -q -pl dc-identity,dc-content,dc-admin,dc-search,dc-gateway -am -DskipTests package")
+  if [[ "${SEARCH_DEPLOYMENT}" == "discovery" ]]; then
+    (cd "${ROOT_DIR}" && cmd.exe /d /c "mvnw.cmd -q -pl dc-identity,dc-content,dc-admin,dc-discovery,dc-gateway -am -DskipTests package")
+  else
+    (cd "${ROOT_DIR}" && cmd.exe /d /c "mvnw.cmd -q -pl dc-identity,dc-content,dc-admin,dc-search,dc-gateway -am -DskipTests package")
+  fi
 else
   echo "Java 21 is required to package the real E2E services" >&2
   exit 2

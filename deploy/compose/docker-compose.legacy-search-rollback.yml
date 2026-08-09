@@ -1,0 +1,58 @@
+# Optional rollback overlay for a pre-discovery-search image.
+# The base production topology owns /api/search in dc-discovery; this overlay
+# restores the old executable dc-search JVM and points the old discovery proxy
+# at it. Enable only together with an image tag that predates the convergence.
+services:
+  dc-search:
+    image: ghcr.io/wangyufanshuai/devcircle/dc-search:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    restart: unless-stopped
+    stop_grace_period: 40s
+    mem_limit: 512m
+    cpus: 0.75
+    pids_limit: 256
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-devcircle}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      SEARCH_MYSQL_DATABASE: dc_search
+      ELASTICSEARCH_URIS: http://elasticsearch:9200
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
+      DEVCIRCLE_PRODUCTION_MODE: "true"
+      DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
+      DEVCIRCLE_INTERNAL_OPS_KEY: ${DEVCIRCLE_INTERNAL_OPS_KEY:?DEVCIRCLE_INTERNAL_OPS_KEY is required}
+      DEVCIRCLE_KAFKA_DLT_PUBLISH_TIMEOUT_MS: ${KAFKA_DLT_PUBLISH_TIMEOUT_MS:-5000}
+      DEVCIRCLE_KAFKA_RETRY_INITIAL_INTERVAL_MS: ${KAFKA_RETRY_INITIAL_INTERVAL_MS:-1000}
+      DEVCIRCLE_KAFKA_RETRY_MULTIPLIER: ${KAFKA_RETRY_MULTIPLIER:-2.0}
+      DEVCIRCLE_KAFKA_RETRY_MAX_INTERVAL_MS: ${KAFKA_RETRY_MAX_INTERVAL_MS:-10000}
+      DEVCIRCLE_KAFKA_RETRY_MAX_ATTEMPTS: ${KAFKA_RETRY_MAX_ATTEMPTS:-4}
+    expose: ["8106"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      elasticsearch: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      dc-content: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8106/actuator/health/readiness"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    networks: [devcircle]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  dc-discovery:
+    environment:
+      DC_SEARCH_URI: http://dc-search:8106
+    depends_on:
+      dc-search: { condition: service_healthy }
+
+  dc-gateway:
+    environment:
+      DC_DISCOVERY_URI: http://dc-discovery:8203
+      DC_SEARCH_URI: http://dc-search:8106
+    depends_on:
+      dc-discovery: { condition: service_healthy }

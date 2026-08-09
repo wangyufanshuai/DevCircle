@@ -282,17 +282,6 @@ services:
       kafka: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8105/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
-  dc-search:
-    <<: *app-defaults
-    image: ghcr.io/wangyufanshuai/devcircle/dc-search:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
-    environment: *app-env
-    expose: ["8106"]
-    depends_on:
-      mysql: { condition: service_healthy }
-      elasticsearch: { condition: service_healthy }
-      kafka: { condition: service_healthy }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8106/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
-
   dc-recommend:
     <<: *app-defaults
     image: ghcr.io/wangyufanshuai/devcircle/dc-recommend:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
@@ -386,14 +375,13 @@ services:
   dc-discovery:
     <<: *app-defaults
     image: ghcr.io/wangyufanshuai/devcircle/dc-discovery:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
-    environment:
-      <<: *app-env
-      DC_SEARCH_URI: http://dc-search:8106
-      DC_RECOMMEND_URI: http://dc-recommend:8107
+    environment: *app-env
     expose: ["8203"]
     depends_on:
-      dc-search: { condition: service_healthy }
-      dc-recommend: { condition: service_healthy }
+      mysql: { condition: service_healthy }
+      elasticsearch: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      dc-content: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8203/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
   dc-gateway:
@@ -406,6 +394,8 @@ services:
       DC_IDENTITY_URI: http://dc-identity:8201
       DC_CONTENT_AGGREGATE_URI: http://dc-content-aggregate:8202
       DC_DISCOVERY_URI: http://dc-discovery:8203
+      DC_SEARCH_URI: http://dc-discovery:8203
+      DC_RECOMMEND_URI: http://dc-recommend:8107
       DC_USER_URI: http://dc-user:8102
       DC_INTERACTION_URI: http://dc-interaction:8105
       DC_NOTIFICATION_URI: http://dc-notification:8108
@@ -414,6 +404,7 @@ services:
       dc-identity: { condition: service_healthy }
       dc-content-aggregate: { condition: service_healthy }
       dc-discovery: { condition: service_healthy }
+      dc-recommend: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
   web-static:

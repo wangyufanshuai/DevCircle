@@ -174,10 +174,32 @@ expected_community_services="$(printf '%s\n' dc-admin dc-comment dc-content dc-g
 
 search_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
   --profile search-recovery config --services | sort)"
-expected_search_services="$(printf '%s\n' dc-admin dc-content dc-gateway dc-identity dc-search \
+expected_search_services="$(printf '%s\n' dc-admin dc-content dc-discovery dc-gateway dc-identity \
   elasticsearch kafka mysql redis | sort)"
 [[ "${search_services}" == "${expected_search_services}" ]] || {
   echo "Unexpected search-recovery services: ${search_services}" >&2
+  exit 1
+}
+default_search_routes="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
+  --profile search-recovery config | grep -E '^      DC_SEARCH_URI:' | sort -u)"
+[[ "${default_search_routes}" == "      DC_SEARCH_URI: http://dc-discovery:8203" ]] || {
+  echo "Search recovery must default to dc-discovery: ${default_search_routes}" >&2
+  exit 1
+}
+
+legacy_search_services="$(REAL_E2E_SEARCH_URI=http://dc-search:8106 docker compose \
+  -f "${ROOT_DIR}/docker-compose.e2e.yml" --profile legacy-search config --services | sort)"
+expected_legacy_search_services="$(printf '%s\n' dc-admin dc-content dc-gateway dc-identity dc-search \
+  elasticsearch kafka mysql redis | sort)"
+[[ "${legacy_search_services}" == "${expected_legacy_search_services}" ]] || {
+  echo "Unexpected legacy-search services: ${legacy_search_services}" >&2
+  exit 1
+}
+legacy_search_routes="$(REAL_E2E_SEARCH_URI=http://dc-search:8106 docker compose \
+  -f "${ROOT_DIR}/docker-compose.e2e.yml" --profile legacy-search config \
+  | grep -E '^      DC_SEARCH_URI:' | sort -u)"
+[[ "${legacy_search_routes}" == "      DC_SEARCH_URI: http://dc-search:8106" ]] || {
+  echo "Legacy search recovery must select dc-search: ${legacy_search_routes}" >&2
   exit 1
 }
 
@@ -197,6 +219,9 @@ grep -q 'COMPLETED' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
 grep -q '2020-01-01T00:00:00Z' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
 grep -q 'Unable to read Kafka offsets' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
 grep -q 'REAL_E2E_SEARCH_RECOVERY_MODE' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
+grep -q 'REAL_E2E_SEARCH_DEPLOYMENT' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
+grep -q 'SEARCH_SERVICE="dc-discovery"' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
+grep -q 'SEARCH_SERVICE="dc-search"' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
 grep -q 'REPLAY_KAFKA_DLT' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
 grep -q 'kafka_dlt_replay' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
 if grep -q 'exec -T kafka /opt/kafka/bin' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"; then

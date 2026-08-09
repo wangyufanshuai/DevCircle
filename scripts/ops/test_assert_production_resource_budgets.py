@@ -101,8 +101,19 @@ def valid_compose() -> dict:
         "DC_USER_URI": "http://dc-user:8102",
         "DC_INTERACTION_URI": "http://dc-interaction:8105",
         "DC_NOTIFICATION_URI": "http://dc-notification:8108",
+        "DC_DISCOVERY_URI": "http://dc-discovery:8203",
+        "DC_SEARCH_URI": "http://dc-discovery:8203",
+        "DC_RECOMMEND_URI": "http://dc-recommend:8107",
     })
+    services["dc-gateway"]["depends_on"] = {
+        name: {"condition": "service_healthy"}
+        for name in ("dc-identity", "dc-content-aggregate", "dc-discovery", "dc-recommend")
+    }
     services["dc-admin"]["environment"]["DC_AUTH_URI"] = "http://dc-identity:8201"
+    services["dc-discovery"]["depends_on"] = {
+        name: {"condition": "service_healthy"}
+        for name in ("mysql", "elasticsearch", "kafka", "dc-content")
+    }
     return {"services": services}
 
 
@@ -110,10 +121,10 @@ class ProductionResourceBudgetTest(unittest.TestCase):
     def setUp(self) -> None:
         self.compose = valid_compose()
 
-    def test_accepts_the_23_service_production_contract(self) -> None:
+    def test_accepts_the_22_service_production_contract(self) -> None:
         service_count, total_memory = budgets.validate(self.compose)
 
-        self.assertEqual(23, service_count)
+        self.assertEqual(22, service_count)
         self.assertLessEqual(total_memory, 15 * budgets.GIB)
 
     def test_rejects_missing_internal_operations_key(self) -> None:
@@ -206,6 +217,25 @@ class ProductionResourceBudgetTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "DC_USER_URI"):
             budgets.validate(self.compose)
 
+    def test_rejects_a_standalone_or_proxy_search_production_runtime(self) -> None:
+        self.compose["services"]["dc-search"] = {
+            **service(), "environment": app_environment()
+        }
+        with self.assertRaisesRegex(ValueError, "unexpected=.*dc-search"):
+            budgets.validate(self.compose)
+
+        self.compose = valid_compose()
+        self.compose["services"]["dc-discovery"]["environment"]["DC_SEARCH_URI"] = (
+            "http://dc-search:8106"
+        )
+        with self.assertRaisesRegex(ValueError, "embed search"):
+            budgets.validate(self.compose)
+
+        self.compose = valid_compose()
+        del self.compose["services"]["dc-discovery"]["depends_on"]["elasticsearch"]
+        with self.assertRaisesRegex(ValueError, "depend on elasticsearch"):
+            budgets.validate(self.compose)
+
     def test_caddy_admin_api_is_restricted_to_the_container_loopback(self) -> None:
         temporary = Path(self.id().replace(".", "-") + ".Caddyfile")
         try:
@@ -232,6 +262,19 @@ class HelmTopologyContractTest(unittest.TestCase):
 
     def test_accepts_identity_as_the_explicit_helm_auth_runtime_without_helm(self) -> None:
         budgets.validate_helm_topology(self.values, self.production, self.template)
+
+    def test_rejects_a_separate_or_proxied_search_helm_runtime(self) -> None:
+        separate = copy.deepcopy(self.values)
+        separate["services"]["search"] = {"port": "8106"}
+        with self.assertRaisesRegex(ValueError, "embed search"):
+            budgets.validate_helm_topology(separate, self.production, self.template)
+
+        proxied = copy.deepcopy(self.values)
+        proxied["services"]["discovery"]["env"] = {
+            "DC_SEARCH_URI": "http://dc-search:8106"
+        }
+        with self.assertRaisesRegex(ValueError, "embed search"):
+            budgets.validate_helm_topology(proxied, self.production, self.template)
 
     def test_rejects_a_missing_or_globally_duplicated_gateway_auth_route(self) -> None:
         missing = copy.deepcopy(self.values)

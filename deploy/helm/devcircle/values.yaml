@@ -15,6 +15,8 @@ services:
       DC_IDENTITY_URI: http://dc-identity:8201
       DC_CONTENT_AGGREGATE_URI: http://dc-content-aggregate:8202
       DC_DISCOVERY_URI: http://dc-discovery:8203
+      DC_SEARCH_URI: http://dc-discovery:8203
+      DC_RECOMMEND_URI: http://dc-recommend:8107
   identity:
     port: 8201
   content-aggregate: { port: 8202 }
@@ -23,7 +25,6 @@ services:
   content: { port: 8103 }
   comment: { port: 8104 }
   interaction: { port: 8105 }
-  search: { port: 8106 }
   recommend: { port: 8107 }
   notification: { port: 8108 }
   file: { port: 8109 }
@@ -45,8 +46,6 @@ env:
   DC_CONTENT_URI: http://dc-content:8103
   DC_COMMENT_URI: http://dc-comment:8104
   DC_INTERACTION_URI: http://dc-interaction:8105
-  DC_SEARCH_URI: http://dc-search:8106
-  DC_RECOMMEND_URI: http://dc-recommend:8107
   DC_NOTIFICATION_URI: http://dc-notification:8108
   DC_FILE_URI: http://dc-file:8109
   DC_ADMIN_URI: http://dc-admin:8110
