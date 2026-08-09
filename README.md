@@ -27,6 +27,7 @@ DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“
 | 运维接口 | 系统健康、Outbox backlog、Outbox replay、推荐降级概览 |
 | 前端工程化 | Vue Router、内存 Access Token、HttpOnly Refresh Cookie、统一响应和幂等写请求 |
 | 可观测 | Prometheus alerts、Grafana dashboard、Jaeger OTLP endpoint |
+| 产品指标 | WMRU 北极星、阅读/解谜/创作漏斗、留存与数据质量口径 |
 
 ## 模块
 

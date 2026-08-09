@@ -107,6 +107,7 @@ flowchart LR
 - Helm values：`values-dev.yaml` 和 `values-prod.yaml` 分离镜像、资源、Ingress 和生产密钥策略；生产不启用 demo token 或 mock fallback。生产模板 fail closed：Identity 必须启用安全 Cookie，前端和 GitHub callback 必须从公开 HTTPS origin 推导，GitHub OAuth 凭证及内部运维密钥必须由非可选 Secret 引用投影。Chart 创建 Secret 时缺少必需映射会在 render 阶段失败；外部 `existingSecret` 无法由 Helm render 验证，缺失会阻止 Pod 启动。
 - CI：后端测试、前端构建、Playwright、Helm lint、Compose config、GHCR 镜像构建、Trivy 扫描。
 - 可观测：Actuator + Prometheus + Grafana + Jaeger；告警覆盖服务不可用、5xx、P95、JVM、连接池压力。
+- 产品度量：按 [`product-metrics.md`](product-metrics.md) 统一 WMRU、激活、解谜、创作、搜索、推荐和留存口径；业务成功只从持久化状态与幂等事件计算。
 
 ## 生产差距
 
