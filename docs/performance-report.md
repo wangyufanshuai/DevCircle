@@ -44,9 +44,10 @@ bash scripts/performance/run-linux-acceptance.sh
 - Gateway 压测前后 readiness；
 - Admin Outbox fleet 完整性快照；
 - Prometheus 可用性、读写 P95、Outbox 完整性和积压查询结果；
+- 解析后的 `prometheus-summary.json`，包含实际值与本次生效阈值；
 - 全部 JSON/TXT 证据的 `SHA256SUMS`。
 
-执行失败时证据仍会保留，但退出码非零，不得把存在证据目录解释为验收通过。
+执行器要求宿主机安装 `jq`。Prometheus 查询必须返回且只返回一个有限数值；空值、NaN、Inf、多序列、availability 低于 0.99、读/写 P95 超过 0.3/0.6 秒都会失败。Admin 健康响应还必须证明 `outboxScope=FLEET`、`outboxComplete=true`、DEAD/blocked 为零、无不可用来源且每个来源均为 `UP`。执行失败时证据仍会保留，但退出码非零，不得把存在证据目录解释为验收通过。
 
 场景覆盖：
 

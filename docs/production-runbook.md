@@ -3,6 +3,7 @@
 ## 前置条件
 
 - Linux 4 vCPU / 16 GB RAM / 200 GB SSD，Docker Engine 与 Compose v2。
+- 正式验收主机安装 `git`、`k6`、`jq` 与 `sha256sum`；验收脚本缺少任一工具都会失败，不会降级跳过指标校验。
 - 正式域名的 A/AAAA 记录已指向主机，80/443 可入站；Caddy 自动申请 TLS。
 - 已准备隐私政策、用户协议及适用的备案/合规材料。
 - 从 `.env.production.example` 创建权限为 `0600` 的 `.env.production`，所有占位值都必须替换；`IMAGE_TAG` 必须是 40 位提交 SHA。

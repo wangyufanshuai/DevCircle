@@ -4,15 +4,15 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 ## 当前证据边界
 
-截至 2026-08-10，当前证据绑定提交为 `86fd1fa3db17665876d9c2d4b18ada3a938a42f1`。生产运行时已完成 Auth-in-Identity、Search-in-Discovery 和 Content/File-in-Content-Aggregate 三个收口阶段。内容与媒体继续保留独立 Maven 模块和 Flyway history，但在同一 Servlet JVM 中执行；评论、互动、通知、推荐和治理仍是兼容服务，因此还不是最终四运行单元。
+截至 2026-08-10，当前非容器证据绑定提交为 `5bbbb268a14c37b28c24eef5587643252a15ef49`。生产运行时已完成 Auth-in-Identity、Search-in-Discovery 和 Content/File-in-Content-Aggregate 三个收口阶段。内容与媒体继续保留独立 Maven 模块和 Flyway history，但在同一 Servlet JVM 中执行；评论、互动、通知、推荐和治理仍是兼容服务，因此还不是最终四运行单元。
 
-当前 `86fd1fa` 已在 Windows 本机使用默认 Surefire 分叉配置完成一轮全新的 `clean verify -Pcoverage` 非容器回归：19/19 个 Reactor projects（根项目 + 18 个子模块）构建成功；`clean` 后本轮生成 109 份 Surefire XML，共 474 个测试，0 failures、0 errors、0 skipped。17 份 JaCoCo 报告的聚合行/分支覆盖率为 81.23%/74.13%，通过 CI 的 75%/70% 门禁；14 个关键状态类全部通过 85% 分支门禁。可复跑命令、范围与限制见 [Content/File-in-Content-Aggregate 非容器证据](evidence/2026-08-10-content-file-in-aggregate-noncontainer.md)。
+当前 `5bbbb26` 已在 Windows 本机使用默认 Surefire 分叉配置完成一轮全新的 `clean verify -Pcoverage` 非容器回归：19/19 个 Reactor projects（根项目 + 18 个子模块）构建成功；`clean` 后本轮生成 110 份 Surefire XML，共 478 个测试，0 failures、0 errors、0 skipped。17 份 JaCoCo 报告的聚合行/分支覆盖率为 81.31%/74.18%，通过 CI 的 75%/70% 门禁；14 个关键状态类全部通过 85% 分支门禁。解谜答案关键词已从 `DeductionService` 抽为结构化 Jackson 策略，非法 JSON 明确失败，不再由手工字符串拆分静默误判。可复跑命令、范围与限制见 [Linux 验收门禁与解谜策略非容器证据](evidence/2026-08-10-linux-acceptance-and-deduction-noncontainer.md)。
 
-本轮 ops 契约、迁移版本门禁、关键状态覆盖率门禁、生产资源预算门禁、生产 Compose 和 legacy Content rollback Compose 静态解析均通过。生产 Compose 当前声明 20 个服务、12.62 GiB 容器内存上限，且仅 Web 与 Gateway 对宿主机发布端口；这只是静态配置证据，不代表已在目标主机启动。本轮非容器覆盖率回归显式排除了 `*IntegrationTest`、`DockerPreflightTest` 和 `KafkaContainerSmokeTest`，不得解释为 Testcontainers、真实 Compose 或 Linux 验收通过。新增 `ContentRuntimeFlywayIntegrationTest` 已编译并覆盖 fresh DB、既有双 history 和 restart idempotency 三个场景，但 Docker 不可用使其未实际运行，不能记为 MySQL 8.4 通过。
+本轮 49 项 ops Python 测试、Shell 语法、迁移版本门禁、关键状态覆盖率门禁、生产资源预算门禁、生产 Compose 和 legacy Content rollback Compose 静态解析均通过。Linux 验收执行器现对 Prometheus 单值、availability、读写 P95、Outbox complete/DEAD/blocked 和 Fleet JSON 做 fail-closed 校验；该结果只证明验收门禁实现完整，尚未在 Linux 主机产生运行数据。生产 Compose 当前声明 20 个服务、12.62 GiB 容器内存上限，且仅 Web 与 Gateway 对宿主机发布端口；这只是静态配置证据，不代表已在目标主机启动。本轮非容器覆盖率回归显式排除了 `*IntegrationTest`、`DockerPreflightTest` 和 `KafkaContainerSmokeTest`，不得解释为 Testcontainers、真实 Compose 或 Linux 验收通过。`ContentRuntimeFlywayIntegrationTest` 已编译并覆盖 fresh DB、既有双 history 和 restart idempotency 三个场景，但 Docker 不可用使其未实际运行，不能记为 MySQL 8.4 通过。
 
 `dc-identity` 第一阶段只内嵌 `dc-auth` 与个人仪表盘：认证模块的逻辑 producer（`dc-auth`）、认证 schema、Flyway 迁移和 Maven 模块继续保留，但生产执行载体是 `dc-identity`。其 H2 回归实际启用 8 个认证 Flyway 迁移，并验证注册会写入账号、刷新令牌/幂等记录、审计与 `user.registered` Outbox。`dc-user`、`dc-interaction` 和 `dc-notification` 仍是兼容服务；因此这不是完整四聚合完成的证据。
 
-Docker Linux Engine 当前不可用：`docker info` 超时。因而当前提交未重新执行 Testcontainers、真实 Compose、真实认证/内容/审核/社区 E2E、目标 Linux 性能测试、恢复演练、Helm 实际 render 或 Cosign Registry 验签；本文下方带日期的容器、性能、恢复和 Registry 结果均为绑定旧提交的历史证据，除非重新在当前 SHA 执行，否则不得作为 `86fd1fa` 的生产验收结论。
+Docker Linux Engine 当前不可用：`docker info` 超时。因而当前提交未重新执行 Testcontainers、真实 Compose、真实认证/内容/审核/社区 E2E、目标 Linux 性能测试、恢复演练、Helm 实际 render 或 Cosign Registry 验签；本文下方带日期的容器、性能、恢复和 Registry 结果均为绑定旧提交的历史证据，除非重新在当前 SHA 执行，否则不得作为 `5bbbb26` 的生产验收结论。
 
 ## 验证证据时间线
 
