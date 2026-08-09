@@ -4,7 +4,9 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 ## 当前证据边界
 
-截至 2026-08-09，本轮搜索架构基线提交为 `4eac841`，其后的提交只更新证据文档。Windows 本机已证明内容写侧切片编译成功，`PostRepositoryStateTest` 15 项和元数据策略测试 2 项通过；搜索架构切片编译成功，22 项搜索契约测试通过（使用 E 盘临时目录规避本机 C 盘空间限制）。最新一次全仓纯单元/H2 `clean verify -Pcoverage` 在 `dc-user` 的 `LegacyProfileBackfillRepositoryTest` 因 H2 驱动未加载失败，尚未到达 `dc-search`；完整全仓结果仍未证明通过。因此本文下方带日期的全仓、Testcontainers 和 Compose 结果均为历史证据，不能当作最新全仓通过结论。
+截至 2026-08-09，当前推荐架构基线为 `304b120`。Windows 本机使用 E 盘临时目录并禁用 Surefire 分叉执行全仓纯单元/H2 回归，18/18 个 Maven 模块构建成功，其中 15 个模块产生 102 份测试报告，共 451 个测试，0 failures、0 errors、0 skipped；推荐写侧拆分的定向契约、依赖故障、写校验、Controller 和仓储状态测试为 18/18 通过。该全仓命令显式排除 `*IntegrationTest`、`DockerPreflightTest` 和 `KafkaContainerSmokeTest`，且 `forkCount=0` 不能产生可信 JaCoCo 结果，因此只能证明当前非容器功能回归，不能解释为最新全仓覆盖率、Testcontainers 或 Compose 通过。
+
+同一工作树的前端 `npm run build` 成功，四个 Playwright project 共 120/120 通过；常规 Playwright 套件使用显式 API 拦截，不替代真实多服务 E2E。当前 `docker info` 在 14 秒内超时，因此未执行最新 Testcontainers、真实 Compose、k6 或恢复演练；`npm audit --audit-level=high` 也因本机 `npmmirror` 不实现 npm security audit endpoint 而失败，不能据此判断依赖安全状态。本文下方带日期的容器、覆盖率、Compose、性能和恢复结果均为绑定旧提交的历史证据，除非重新在当前 SHA 执行，否则不得当作 `304b120` 的生产验收结论。
 
 ## 验证证据时间线
 
