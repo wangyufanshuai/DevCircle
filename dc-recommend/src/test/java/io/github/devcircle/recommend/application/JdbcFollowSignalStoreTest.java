@@ -15,6 +15,7 @@ class JdbcFollowSignalStoreTest {
     void setUp() {
         DriverManagerDataSource dataSource = new DriverManagerDataSource(
                 "jdbc:h2:mem:follow-projection;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE", "sa", "");
+        dataSource.setDriverClassName("org.h2.Driver");
         JdbcClient jdbcClient = JdbcClient.create(dataSource);
         jdbcClient.sql("DROP TABLE IF EXISTS recommend_follow_projection").update();
         jdbcClient.sql("""
