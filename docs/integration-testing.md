@@ -4,15 +4,13 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 ## 当前证据边界
 
-截至 2026-08-09，当前架构基线为 `ca155f4`，Post/草稿读侧拆分基线为 `8b1c2d4`，详情拆分基线为 `5dbba82`，媒体读取拆分基线为 `6ff55ff`，推荐拆分基线为 `acee747`，供应链验证基线为 `baf074e`。`FeedService` 已将写侧 Telemetry、场景策略和候选召回分离，`AdminService` 已将推荐实验迁入独立领域服务，并删除与 `AdminMutationSupport` 重复的幂等、审计、Outbox 和校验实现。内容读侧新增 `PostMediaReadRepository`、`PostDetailReadRepository`、`PostViewerStateReadRepository` 和 `DraftReadRepository`，并将种子导入、申诉/审计读取移至 `PostSeedImporter` 与 `PostAppealRepository`；`PostQueryRepository` 从约 356 行降至约 231 行，`PostRepository` 从约 320 行降至约 225 行，`DraftRepository` 从约 316 行降至约 250 行，均保留兼容构造器供迁移期测试使用；`dc-common` 同时删除确认无引用的内容领域 `PostCreatedPayload`，继续收缩公共模块的业务模型边界。
+截至 2026-08-09，当前证据绑定提交为 `99e6d67`。本轮将可靠消息基础设施从 `dc-common` 迁入新增的非部署库 `dc-messaging-support`：8 个生产类和 4 个测试类完成迁移，业务模块改为显式依赖该支持库。`dc-common` 的主类从 24 个降至 16 个，且不再依赖 JDBC、Kafka 或 H2；这一步进一步收缩了公共模块边界，但它仍保留 Web、追踪、异常处理和认证上下文等运行时支持，后续会继续迁移。
 
-Windows 本机使用 E 盘临时目录并禁用 Surefire 分叉执行当前 `ca155f4` 的全仓纯单元/H2 回归，18/18 个 Maven 模块构建成功，其中 15 个模块在本轮时间窗口内产生 104 份测试报告，共 457 个测试，0 failures、0 errors、0 skipped；内容模块及其依赖回归 145 项，单独的内容仓储、连接池和依赖故障定向测试 19 项均通过。该全仓命令显式排除 `*IntegrationTest`、`DockerPreflightTest` 和 `KafkaContainerSmokeTest`，且 `forkCount=0` 不能产生可信 JaCoCo 结果，因此只能证明当前非容器功能回归，不能解释为最新全仓覆盖率、Testcontainers 或 Compose 通过。
+Windows 本机使用 E 盘临时目录并禁用 Surefire 分叉执行当前 `99e6d67` 的全仓非容器回归，19/19 个 Maven 模块构建成功；本轮时间窗口内产生 104 份 Surefire 报告，共 457 个测试，0 failures、0 errors、0 skipped。定向回归中，`dc-common` 为 42/42，`dc-messaging-support` 为 18/18。全仓命令显式排除 `*IntegrationTest`、`DockerPreflightTest` 和 `KafkaContainerSmokeTest`，且 `forkCount=0` 不能产生可信 JaCoCo 结果，因此这些结果只证明当前非容器功能回归，不得解释为最新全仓覆盖率、Testcontainers 或真实 Compose 通过。
 
-同一代码基线的前端 `npm run build` 成功，四个 Playwright project 共 120/120 通过；常规 Playwright 套件使用显式 API 拦截，不替代真实多服务 E2E。31 项生产资源、迁移、覆盖率门禁、Linux 性能/恢复证据和发布身份 Python 契约通过，实际生产 Compose 静态资源门禁确认 24 个服务、14.62 GiB 内存上限和 2 个发布服务；生产 Compose `config --quiet` 也通过。当前 `docker info` 在约 19 秒内超时，Bash/WSL 入口也返回 `HCS_E_CONNECTION_TIMEOUT`，因此未执行最新 Testcontainers、真实 Compose 启动、Shell 行为门禁、k6 或恢复演练；`npm audit --audit-level=high` 仍受本机 Registry 镜像不实现 security audit endpoint 的限制。本文下方带日期的容器、覆盖率、Compose、性能和恢复结果均为绑定旧提交的历史证据，除非重新在当前 SHA 执行，否则不得当作 `ca155f4` 的生产验收结论。
+本轮 31 项 ops 契约、迁移版本门禁、生产资源预算门禁和生产 Compose `config --quiet` 均通过。覆盖率门禁已要求新增 `dc-messaging-support` 的报告；`ReliableOutboxWorker` 分支覆盖率 95.45% 仅为本轮定向覆盖证据，并非当前全仓覆盖率结论。当前尚未在 `99e6d67` 执行完整全仓 `-Pcoverage`。
 
-提交 `101359e` 后重新执行离线交付门禁：Linux 性能、Linux 恢复、k6 和生产资源预算契约 19 项通过，发布身份、迁移版本和关键状态覆盖契约 8 项通过，生产环境校验与覆盖率 Shell 门禁通过，备份、恢复和迁移验证夹具在补齐当前 Alertmanager 生产路径契约后通过。实际生产 Compose 渲染为 24 个服务、14.62 GiB 容器内存上限，只发布 Web 与绑定宿主机回环地址的 Gateway。该批次只证明脚本和配置拒绝错误证据的能力；没有启动真实容器、没有执行真实 Cosign Registry 验证，也没有产生目标 Linux 的性能或 RTO/RPO 证据。
-
-供应链基线 `baf074e` 将单镜像 Cosign 签名与 SLSA provenance 验证抽为 CI/生产共用入口；后端镜像矩阵和 Web 镜像会在签名与证明写入 Registry 后立即按 digest 验证。验证器只接受项目 GHCR 的不可变 SHA-256 digest，Registry 短暂传播允许默认 5 次、每次 3 秒的有界重试，耗尽后失败关闭并输出最终 Cosign 诊断。Shell 行为测试、5 项 Python 契约、Bash 语法与 GitHub Actions YAML 解析均通过；由于本机没有执行真实 GHCR/Cosign 网络验证，该证据仍只证明失败关闭和工作流接线，不证明 Registry 中当前镜像已经验签成功。
+Docker Linux Engine 当前不可用：`docker info` 超时，Bash/WSL 入口返回 `HCS_E_CONNECTION_TIMEOUT`。因此当前提交未重新执行 Testcontainers、真实 Compose 启动、目标 Linux 性能测试、恢复演练或 Cosign Registry 验签；本文下方带日期的容器、性能、恢复和 Registry 结果均为绑定旧提交的历史证据，除非重新在当前 SHA 执行，否则不得作为 `99e6d67` 的生产验收结论。
 
 ## 验证证据时间线
 
