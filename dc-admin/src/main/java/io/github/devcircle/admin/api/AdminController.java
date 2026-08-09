@@ -5,6 +5,7 @@ import io.github.devcircle.admin.application.AdminOpsQueryService;
 import io.github.devcircle.admin.application.AdminModerationService;
 import io.github.devcircle.admin.application.AdminReadService;
 import io.github.devcircle.admin.application.AdminService;
+import io.github.devcircle.admin.application.AdminExperimentService;
 import io.github.devcircle.admin.application.DltReplayService;
 import io.github.devcircle.admin.application.query.DegradationView;
 import io.github.devcircle.admin.application.query.OpsHealthView;
@@ -28,15 +29,17 @@ class AdminController {
     private final AdminService adminService;
     private final AdminModerationService moderationService;
     private final AdminReadService adminReadService;
+    private final AdminExperimentService experimentService;
     private final DltReplayService dltReplayService;
     private final AdminOpsQueryService adminOpsQueryService;
 
     AdminController(AdminService adminService, AdminModerationService moderationService,
-                    AdminReadService adminReadService, DltReplayService dltReplayService,
-                    AdminOpsQueryService adminOpsQueryService) {
+                    AdminReadService adminReadService, AdminExperimentService experimentService,
+                    DltReplayService dltReplayService, AdminOpsQueryService adminOpsQueryService) {
         this.adminService = adminService;
         this.moderationService = moderationService;
         this.adminReadService = adminReadService;
+        this.experimentService = experimentService;
         this.dltReplayService = dltReplayService;
         this.adminOpsQueryService = adminOpsQueryService;
     }
@@ -202,7 +205,7 @@ class AdminController {
                                                      @RequestHeader("Idempotency-Key") String idempotencyKey,
                                                      @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
                                                      @RequestBody Map<String, Object> payload) {
-        return ApiResponse.ok(adminService.createExperiment(payload, userId, traceId, idempotencyKey));
+        return ApiResponse.ok(experimentService.create(payload, userId, traceId, idempotencyKey));
     }
 
     @PostMapping("/recommend/experiments/{id}/activate")
@@ -210,7 +213,7 @@ class AdminController {
                                                        @RequestHeader("X-User-Id") Long userId,
                                                        @RequestHeader("Idempotency-Key") String idempotencyKey,
                                                        @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-        return ApiResponse.ok(adminService.updateExperimentStatus(id, "ACTIVE", userId, traceId, idempotencyKey));
+        return ApiResponse.ok(experimentService.updateStatus(id, "ACTIVE", userId, traceId, idempotencyKey));
     }
 
     @PostMapping("/recommend/experiments/{id}/pause")
@@ -218,7 +221,7 @@ class AdminController {
                                                     @RequestHeader("X-User-Id") Long userId,
                                                     @RequestHeader("Idempotency-Key") String idempotencyKey,
                                                     @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
-        return ApiResponse.ok(adminService.updateExperimentStatus(id, "PAUSED", userId, traceId, idempotencyKey));
+        return ApiResponse.ok(experimentService.updateStatus(id, "PAUSED", userId, traceId, idempotencyKey));
     }
 
     @GetMapping("/audit-logs")

@@ -8,6 +8,7 @@ import io.github.devcircle.admin.application.query.OpsHealthView;
 import io.github.devcircle.admin.application.query.OutboxEventView;
 import io.github.devcircle.admin.application.query.OutboxSourceView;
 import io.github.devcircle.admin.application.AdminService;
+import io.github.devcircle.admin.application.AdminExperimentService;
 import io.github.devcircle.admin.application.DltReplayService;
 import org.junit.jupiter.api.Test;
 
@@ -22,10 +23,11 @@ class AdminControllerTest {
     private final AdminService service = mock(AdminService.class);
     private final AdminModerationService moderationService = mock(AdminModerationService.class);
     private final AdminReadService readService = mock(AdminReadService.class);
+    private final AdminExperimentService experimentService = mock(AdminExperimentService.class);
     private final DltReplayService dltReplayService = mock(DltReplayService.class);
     private final AdminOpsQueryService opsQueryService = mock(AdminOpsQueryService.class);
     private final AdminController controller = new AdminController(
-            service, moderationService, readService, dltReplayService, opsQueryService);
+            service, moderationService, readService, experimentService, dltReplayService, opsQueryService);
 
     @Test
     void governanceDecisionsForwardIdentityReasonsAndIdempotencyKeys() {
@@ -41,9 +43,9 @@ class AdminControllerTest {
         when(service.restrictUser(13L, 9L, "trace-5", "BANNED", request.reason(), "ban-13"))
                 .thenReturn(new AdminActionResult("RESTRICT_USER", Map.of()));
         Map<String, Object> experiment = Map.of("experimentId", "exp-home-a", "name", "首页实验");
-        when(service.createExperiment(experiment, 9L, "trace-6", "experiment-create"))
+        when(experimentService.create(experiment, 9L, "trace-6", "experiment-create"))
                 .thenReturn(new AdminActionResult("CREATE_RECOMMEND_EXPERIMENT", Map.of()));
-        when(service.updateExperimentStatus("exp-home-a", "ACTIVE", 9L, "trace-7", "experiment-active"))
+        when(experimentService.updateStatus("exp-home-a", "ACTIVE", 9L, "trace-7", "experiment-active"))
                 .thenReturn(new AdminActionResult("UPDATE_RECOMMEND_EXPERIMENT", Map.of()));
         when(service.replayOutbox("post.submitted", 25, 9L, "trace-8", "outbox-replay"))
                 .thenReturn(new AdminActionResult("REPLAY_OUTBOX", Map.of()));
@@ -71,8 +73,8 @@ class AdminControllerTest {
         verify(service).restrictUser(12L, 9L, "trace-3", "NO_POST", request.reason(), "restrict-12");
         verify(service).unrestrictUser(12L, 9L, "trace-4", request.reason(), "unrestrict-12");
         verify(service).restrictUser(13L, 9L, "trace-5", "BANNED", request.reason(), "ban-13");
-        verify(service).createExperiment(experiment, 9L, "trace-6", "experiment-create");
-        verify(service).updateExperimentStatus("exp-home-a", "ACTIVE", 9L, "trace-7", "experiment-active");
+        verify(experimentService).create(experiment, 9L, "trace-6", "experiment-create");
+        verify(experimentService).updateStatus("exp-home-a", "ACTIVE", 9L, "trace-7", "experiment-active");
         verify(service).replayOutbox("post.submitted", 25, 9L, "trace-8", "outbox-replay");
         verify(dltReplayService).replay(dltReplay, 9L, "trace-dlt", "dlt-replay");
         verify(service).createTag(tag.name(), 9L, "trace-9", "tag-create");
