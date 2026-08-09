@@ -6,7 +6,6 @@ import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.content.api.FavoritePostView;
 import io.github.devcircle.content.api.PostCursorPage;
 import io.github.devcircle.content.api.PostDetailView;
-import io.github.devcircle.content.api.ReadingProgressView;
 import io.github.devcircle.content.api.SubmissionView;
 import io.github.devcircle.content.contract.PostSummary;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,25 +19,28 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 @Repository
 public class PostQueryRepository {
     private final JdbcClient jdbcClient;
-    private final ObjectMapper objectMapper;
     private final PostMediaReadRepository mediaReadRepository;
+    private final PostDetailReadRepository detailReadRepository;
 
     public PostQueryRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
-        this(jdbcTemplate, objectMapper, new PostMediaReadRepository(jdbcTemplate));
+        PostMediaReadRepository media = new PostMediaReadRepository(jdbcTemplate);
+        this.jdbcClient = JdbcClient.create(jdbcTemplate);
+        this.mediaReadRepository = media;
+        this.detailReadRepository = new PostDetailReadRepository(jdbcTemplate, objectMapper, media,
+                new PostViewerStateReadRepository(jdbcTemplate));
     }
 
     @Autowired
     public PostQueryRepository(JdbcTemplate jdbcTemplate,
-                               ObjectMapper objectMapper,
-                               PostMediaReadRepository mediaReadRepository) {
+                               PostMediaReadRepository mediaReadRepository,
+                               PostDetailReadRepository detailReadRepository) {
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
-        this.objectMapper = objectMapper;
         this.mediaReadRepository = mediaReadRepository;
+        this.detailReadRepository = detailReadRepository;
     }
 
     public List<PostSummary> list(int page, int size) {
@@ -81,89 +83,11 @@ public class PostQueryRepository {
     }
 
     public PostSummary detail(Long id) {
-        PostSummary row = jdbcClient.sql("""
-                        SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
-                               p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
-                               p.like_count, p.comment_count, p.view_count, p.created_at,
-                               pc.clues, pc.suspects, pc.timeline, pc.question, pc.answer_keywords,
-                               pc.explanation, pc.worldbuilding, pc.cosmic_facts, pc.related_post_ids,
-                               GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR ',') AS tags
-                        FROM post p
-                        JOIN post_content pc ON pc.post_id = p.id
-                        LEFT JOIN post_tag pt ON pt.post_id = p.id
-                        LEFT JOIN tag t ON t.id = pt.tag_id
-                        WHERE p.id = :id
-                        GROUP BY p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
-                                 p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count, p.view_count, p.created_at,
-                                 pc.clues, pc.suspects, pc.timeline, pc.question, pc.answer_keywords,
-                                 pc.explanation, pc.worldbuilding, pc.cosmic_facts, pc.related_post_ids
-                        """)
-                .param("id", id)
-                .query((rs, rowNum) -> new PostSummary(
-                        rs.getLong("id"), rs.getString("type"), rs.getString("theme"),
-                        rs.getString("content_kind"), rs.getString("difficulty"), rs.getBoolean("solvable"),
-                        rs.getLong("solved_count"), rs.getString("title"), rs.getString("excerpt"),
-                        "user-" + rs.getLong("author_id"), rs.getLong("author_id"), splitTags(rs.getString("tags")),
-                        List.of(), rs.getLong("like_count"), rs.getLong("comment_count"), rs.getLong("view_count"),
-                        rs.getString("status"), rs.getTimestamp("created_at").toInstant(),
-                        readStringList(rs.getString("clues")), readStringList(rs.getString("suspects")),
-                        readStringList(rs.getString("timeline")), Optional.ofNullable(rs.getString("question")).orElse(""),
-                        readStringList(rs.getString("answer_keywords")),
-                        Optional.ofNullable(rs.getString("explanation")).orElse(""),
-                        readStringList(rs.getString("worldbuilding")), readStringList(rs.getString("cosmic_facts")),
-                        readLongList(rs.getString("related_post_ids"))))
-                .single();
-        return mediaReadRepository.attachMediaAssets(List.of(row)).getFirst();
+        return detailReadRepository.detail(id);
     }
 
     public PostDetailView publicDetail(Long id, Long viewerId) {
-        DeductionSnapshot deduction = deductionSnapshot(viewerId, id);
-        ReadingProgressView progress = readingProgress(viewerId, id);
-        PostDetailView detail = jdbcClient.sql("""
-                        SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
-                               p.title, pc.markdown, pc.solution, p.author_id, p.status,
-                               p.like_count, p.comment_count, p.view_count, p.created_at,
-                               pc.clues, pc.suspects, pc.timeline, pc.question,
-                               pc.worldbuilding, pc.cosmic_facts, pc.related_post_ids,
-                               GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR ',') AS tags
-                        FROM post p
-                        JOIN post_content pc ON pc.post_id = p.id
-                        LEFT JOIN post_tag pt ON pt.post_id = p.id
-                        LEFT JOIN tag t ON t.id = pt.tag_id
-                        WHERE p.id = :id AND p.status = 'PUBLISHED'
-                        GROUP BY p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
-                                 p.title, pc.markdown, pc.solution, p.author_id, p.status,
-                                 p.like_count, p.comment_count, p.view_count, p.created_at,
-                                 pc.clues, pc.suspects, pc.timeline, pc.question,
-                                 pc.worldbuilding, pc.cosmic_facts, pc.related_post_ids
-                        """)
-                .param("id", id)
-                .query((rs, rowNum) -> {
-                    String markdown = Optional.ofNullable(rs.getString("markdown")).orElse("");
-                    long authorId = rs.getLong("author_id");
-                    boolean unlocked = deduction.solved() || deduction.revealed();
-                    return new PostDetailView(
-                            rs.getLong("id"), rs.getString("type"), rs.getString("theme"),
-                            rs.getString("content_kind"), rs.getString("difficulty"),
-                            rs.getBoolean("solvable"), rs.getLong("solved_count"), rs.getString("title"),
-                            excerpt(markdown), markdown,
-                            new PostDetailView.AuthorView(authorId, "user-" + authorId, null, null, null, null),
-                            splitTags(rs.getString("tags")), List.of(), rs.getLong("like_count"),
-                            rs.getLong("comment_count"), rs.getLong("view_count"), rs.getString("status"),
-                            rs.getTimestamp("created_at").toInstant(), readStringList(rs.getString("clues")),
-                            readStringList(rs.getString("suspects")), readStringList(rs.getString("timeline")),
-                            Optional.ofNullable(rs.getString("question")).orElse(""),
-                            readStringList(rs.getString("worldbuilding")), readStringList(rs.getString("cosmic_facts")),
-                            readLongList(rs.getString("related_post_ids")),
-                            new PostDetailView.ViewerState(false, false, progress.progressPercent(),
-                                    progress.anchor(), progress.completed()),
-                            new PostDetailView.DeductionState(deduction.attempted(), deduction.solved(),
-                                    deduction.revealed(), deduction.points(), unlocked),
-                            unlocked ? Optional.ofNullable(rs.getString("solution")).orElse("") : null);
-                })
-                .optional()
-                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "内容不存在或尚未发布"));
-        return mediaReadRepository.withPublicMedia(detail);
+        return detailReadRepository.publicDetail(id, viewerId);
     }
 
     public List<FavoritePostView> publicSummaries(List<Long> postIds) {
@@ -292,31 +216,6 @@ public class PostQueryRepository {
     }
 
 
-    private DeductionSnapshot deductionSnapshot(Long userId, Long postId) {
-        if (userId == null || userId <= 0) return DeductionSnapshot.empty();
-        return jdbcClient.sql("""
-                        SELECT correct, revealed, points FROM deduction_attempt
-                        WHERE user_id = :userId AND post_id = :postId
-                        """)
-                .param("userId", userId).param("postId", postId)
-                .query((rs, rowNum) -> new DeductionSnapshot(true, rs.getBoolean("correct"),
-                        rs.getBoolean("revealed"), rs.getInt("points")))
-                .optional().orElse(DeductionSnapshot.empty());
-    }
-
-    private ReadingProgressView readingProgress(Long userId, Long postId) {
-        if (userId == null || userId <= 0) return new ReadingProgressView(postId, 0, null, false, null);
-        return jdbcClient.sql("""
-                        SELECT progress_percent, anchor, completed, last_read_at FROM reading_progress
-                        WHERE user_id = :userId AND post_id = :postId
-                        """)
-                .param("userId", userId).param("postId", postId)
-                .query((rs, rowNum) -> new ReadingProgressView(postId, rs.getInt("progress_percent"),
-                        rs.getString("anchor"), rs.getBoolean("completed"),
-                        rs.getTimestamp("last_read_at").toInstant()))
-                .optional().orElse(new ReadingProgressView(postId, 0, null, false, null));
-    }
-
     private String normalizeNullableTheme(String theme) {
         if (theme == null || theme.isBlank()) return null;
         String normalized = theme.toUpperCase();
@@ -348,30 +247,6 @@ public class PostQueryRepository {
         return tags == null || tags.isBlank() ? List.of() : Arrays.asList(tags.split(","));
     }
 
-    private List<String> readStringList(String json) {
-        try {
-            if (json == null || json.isBlank()) return List.of();
-            return objectMapper.readValue(json,
-                    objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
-        } catch (Exception ex) {
-            return List.of();
-        }
-    }
-
-    private List<Long> readLongList(String json) {
-        try {
-            if (json == null || json.isBlank()) return List.of();
-            return objectMapper.readValue(json,
-                    objectMapper.getTypeFactory().constructCollectionType(List.class, Long.class));
-        } catch (Exception ex) {
-            return List.of();
-        }
-    }
-
-    private String excerpt(String content) {
-        return content.substring(0, Math.min(140, content.length()));
-    }
-
     private String safeText(String value) {
         return value == null ? "" : value;
     }
@@ -379,9 +254,4 @@ public class PostQueryRepository {
     private record CursorValue(Instant createdAt, Long id) {
     }
 
-    private record DeductionSnapshot(boolean attempted, boolean solved, boolean revealed, int points) {
-        static DeductionSnapshot empty() {
-            return new DeductionSnapshot(false, false, false, 0);
-        }
-    }
 }
