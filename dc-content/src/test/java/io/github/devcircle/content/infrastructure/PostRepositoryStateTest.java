@@ -42,6 +42,8 @@ class PostRepositoryStateTest {
     @Qualifier("failingRepository")
     private PostRepository failingRepository;
     @Autowired
+    private PostQueryRepository queryRepository;
+    @Autowired
     private ReadingProgressRepository readingProgressRepository;
     @Autowired
     private JdbcClient jdbcClient;
@@ -357,10 +359,10 @@ class PostRepositoryStateTest {
         long draft = post(7L, "作者草稿", "DRAFT");
         long pending = post(8L, "待审核档案", "PENDING");
 
-        assertThat(repository.publicSummaries(List.of(pending, published, draft, published)))
+        assertThat(queryRepository.publicSummaries(List.of(pending, published, draft, published)))
                 .extracting(item -> item.id())
                 .containsExactly(published);
-        assertThat(repository.publicSummaries(Arrays.asList(null, -1L, 0L))).isEmpty();
+        assertThat(queryRepository.publicSummaries(Arrays.asList(null, -1L, 0L))).isEmpty();
     }
 
     @Test
@@ -428,8 +430,8 @@ class PostRepositoryStateTest {
         long firstImage = post(7L, "第一张索引图", "PUBLISHED", "IMAGE");
         long secondImage = post(7L, "第二张索引图", "PUBLISHED", "IMAGE");
 
-        var first = repository.listCursor(null, 1, "IMAGE", null, null, null);
-        var second = repository.listCursor(first.nextCursor(), 1, "IMAGE", null, null, null);
+        var first = queryRepository.listCursor(null, 1, "IMAGE", null, null, null);
+        var second = queryRepository.listCursor(first.nextCursor(), 1, "IMAGE", null, null, null);
 
         assertThat(first.records()).singleElement().satisfies(post -> {
             assertThat(post.id()).isEqualTo(secondImage);
@@ -441,7 +443,7 @@ class PostRepositoryStateTest {
             assertThat(post.type()).isEqualTo("IMAGE");
         });
         assertThat(second.hasMore()).isFalse();
-        assertCode(() -> repository.listCursor(null, 20, "AUDIO", null, null, null),
+        assertCode(() -> queryRepository.listCursor(null, 20, "AUDIO", null, null, null),
                 ErrorCode.VALIDATION_FAILED);
     }
 
@@ -605,16 +607,18 @@ class PostRepositoryStateTest {
         }
 
         @Bean("normalRepository")
-        PostRepository postRepository(JdbcTemplate jdbcTemplate, DraftMediaRepository draftMediaRepository,
+        PostRepository postRepository(JdbcTemplate jdbcTemplate, PostQueryRepository postQueryRepository,
+                                       DraftMediaRepository draftMediaRepository,
                                       ContentIdempotencyStore idempotencyStore,
                                       ContentEventStore eventStore,
                                       ContentModerationStore moderationStore) {
             return new PostRepository(jdbcTemplate, new ObjectMapper().findAndRegisterModules(),
-                    draftMediaRepository, idempotencyStore, eventStore, moderationStore);
+                    postQueryRepository, draftMediaRepository, idempotencyStore, eventStore, moderationStore);
         }
 
         @Bean("failingRepository")
-        PostRepository failingRepository(JdbcTemplate jdbcTemplate, DraftMediaRepository draftMediaRepository,
+        PostRepository failingRepository(JdbcTemplate jdbcTemplate, PostQueryRepository postQueryRepository,
+                                          DraftMediaRepository draftMediaRepository,
                                          ContentIdempotencyStore idempotencyStore,
                                          ContentEventStore eventStore,
                                          ContentModerationStore moderationStore) {
@@ -624,8 +628,13 @@ class PostRepositoryStateTest {
                     throw new JsonProcessingException("structured content serializer unavailable") { };
                 }
             };
-            return new PostRepository(jdbcTemplate, failingMapper, draftMediaRepository, idempotencyStore,
+            return new PostRepository(jdbcTemplate, failingMapper, postQueryRepository, draftMediaRepository, idempotencyStore,
                     eventStore, moderationStore);
+        }
+
+        @Bean
+        PostQueryRepository postQueryRepository(JdbcTemplate jdbcTemplate) {
+            return new PostQueryRepository(jdbcTemplate, new ObjectMapper().findAndRegisterModules());
         }
 
         @Bean

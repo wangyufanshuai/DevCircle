@@ -4,6 +4,7 @@ import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.content.api.ReadingProgressRequest;
 import io.github.devcircle.content.infrastructure.PostRepository;
+import io.github.devcircle.content.infrastructure.PostQueryRepository;
 import io.github.devcircle.content.infrastructure.ReadingProgressRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -52,6 +53,9 @@ class ReadingProgressIntegrationTest {
     PostRepository repository;
 
     @Autowired
+    PostQueryRepository postQueryRepository;
+
+    @Autowired
     ReadingProgressRepository readingProgressRepository;
 
     @Autowired
@@ -97,7 +101,7 @@ class ReadingProgressIntegrationTest {
         assertThat(completed.anchor()).isEqualTo("reading-section-3");
         assertThat(completed.completed()).isTrue();
 
-        var viewerState = repository.publicDetail(93001L, USER_ID).viewerState();
+        var viewerState = postQueryRepository.publicDetail(93001L, USER_ID).viewerState();
         assertThat(viewerState.readingProgress()).isEqualTo(100);
         assertThat(viewerState.readingAnchor()).isEqualTo("reading-section-3");
         assertThat(viewerState.readingCompleted()).isTrue();

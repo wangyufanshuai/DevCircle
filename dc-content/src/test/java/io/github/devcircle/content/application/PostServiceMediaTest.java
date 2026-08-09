@@ -4,6 +4,7 @@ import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.content.api.DraftMediaInput;
 import io.github.devcircle.content.api.SaveDraftRequest;
 import io.github.devcircle.content.infrastructure.PostRepository;
+import io.github.devcircle.content.infrastructure.PostQueryRepository;
 import io.github.devcircle.content.infrastructure.ReadingProgressRepository;
 import org.junit.jupiter.api.Test;
 
@@ -16,7 +17,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 
 class PostServiceMediaTest {
     private final PostRepository repository = mock(PostRepository.class);
-    private final PostService service = new PostService(repository, mock(ReadingProgressRepository.class));
+    private final PostService service = new PostService(
+            repository, mock(PostQueryRepository.class), mock(ReadingProgressRepository.class));
 
     @Test
     void structuredMediaRequiresUniqueIdsAltTextAndSingleCover() {

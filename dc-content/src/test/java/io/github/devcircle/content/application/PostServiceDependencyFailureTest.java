@@ -6,6 +6,7 @@ import io.github.devcircle.content.api.CreatePostRequest;
 import io.github.devcircle.content.api.ReadingProgressRequest;
 import io.github.devcircle.content.api.SaveDraftRequest;
 import io.github.devcircle.content.infrastructure.PostRepository;
+import io.github.devcircle.content.infrastructure.PostQueryRepository;
 import io.github.devcircle.content.infrastructure.ReadingProgressRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,6 +26,7 @@ import static org.mockito.Mockito.when;
 
 class PostServiceDependencyFailureTest {
     private PostRepository repository;
+    private PostQueryRepository queryRepository;
     private ReadingProgressRepository readingProgressRepository;
     private PostService service;
     private DataAccessResourceFailureException outage;
@@ -32,20 +34,21 @@ class PostServiceDependencyFailureTest {
     @BeforeEach
     void setUp() {
         repository = mock(PostRepository.class);
+        queryRepository = mock(PostQueryRepository.class);
         readingProgressRepository = mock(ReadingProgressRepository.class);
-        service = new PostService(repository, readingProgressRepository);
+        service = new PostService(repository, queryRepository, readingProgressRepository);
         outage = new DataAccessResourceFailureException(
                 "jdbc:mysql://10.0.0.12:3306/dc_content refused the connection");
     }
 
     @Test
     void publicReadPathsDoNotExposeDatabaseConnectionDetails() {
-        when(repository.list(anyInt(), anyInt(), isNull(), isNull(), isNull())).thenThrow(outage);
-        when(repository.listCursor(isNull(), anyInt(), anyString(), isNull(), isNull(), isNull())).thenThrow(outage);
-        when(repository.detail(11L)).thenThrow(outage);
-        when(repository.publicDetail(anyLong(), isNull())).thenThrow(outage);
-        when(repository.publicSummaries(any())).thenThrow(outage);
-        when(repository.related(anyLong(), anyInt())).thenThrow(outage);
+        when(queryRepository.list(anyInt(), anyInt(), isNull(), isNull(), isNull())).thenThrow(outage);
+        when(queryRepository.listCursor(isNull(), anyInt(), anyString(), isNull(), isNull(), isNull())).thenThrow(outage);
+        when(queryRepository.detail(11L)).thenThrow(outage);
+        when(queryRepository.publicDetail(anyLong(), isNull())).thenThrow(outage);
+        when(queryRepository.publicSummaries(any())).thenThrow(outage);
+        when(queryRepository.related(anyLong(), anyInt())).thenThrow(outage);
 
         assertDependency(() -> service.list(1, 20, null));
         assertDependency(() -> service.listCursor(null, 20, "IMAGE", null, null, null));

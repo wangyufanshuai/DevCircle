@@ -15,6 +15,7 @@ import io.github.devcircle.content.api.PostAuditView;
 import io.github.devcircle.content.api.ReadingProgressRequest;
 import io.github.devcircle.content.api.ReadingProgressView;
 import io.github.devcircle.content.api.SaveDraftRequest;
+import io.github.devcircle.content.infrastructure.PostQueryRepository;
 import io.github.devcircle.content.infrastructure.PostRepository;
 import io.github.devcircle.content.infrastructure.ReadingProgressRepository;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,14 +30,17 @@ import java.util.function.Supplier;
 @Service
 public class PostService {
     private final PostRepository postRepository;
+    private final PostQueryRepository postQueryRepository;
     private final ReadingProgressRepository readingProgressRepository;
     private final List<PostSummary> seedPosts = ThemeContentLibrary.summaries();
 
     @Value("${devcircle.content.read-fallback-enabled:false}")
     private boolean readFallbackEnabled;
 
-    public PostService(PostRepository postRepository, ReadingProgressRepository readingProgressRepository) {
+    public PostService(PostRepository postRepository, PostQueryRepository postQueryRepository,
+                       ReadingProgressRepository readingProgressRepository) {
         this.postRepository = postRepository;
+        this.postQueryRepository = postQueryRepository;
         this.readingProgressRepository = readingProgressRepository;
     }
 
@@ -47,7 +51,7 @@ public class PostService {
     public PageResponse<PostSummary> list(int page, int size, String type, String theme, String contentKind, String difficulty) {
         int safeSize = Math.max(1, Math.min(size, 20));
         try {
-            var records = filterByType(postRepository.list(page, safeSize, theme, contentKind, difficulty), type);
+            var records = filterByType(postQueryRepository.list(page, safeSize, theme, contentKind, difficulty), type);
             return PageResponse.of(records, records.size(), page, safeSize);
         } catch (DataAccessException ex) {
             if (!readFallbackEnabled) {
@@ -61,12 +65,12 @@ public class PostService {
     public PostCursorPage listCursor(String cursor, int size, String type, String theme,
                                      String contentKind, String difficulty) {
         int safeSize = Math.max(1, Math.min(size, 20));
-        return database(() -> postRepository.listCursor(cursor, safeSize, type, theme, contentKind, difficulty));
+        return database(() -> postQueryRepository.listCursor(cursor, safeSize, type, theme, contentKind, difficulty));
     }
 
     public PostSummary detail(Long id) {
         try {
-            PostSummary post = postRepository.detail(id);
+            PostSummary post = postQueryRepository.detail(id);
             if (!"PUBLISHED".equals(post.status())) {
                 throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "内容不存在或尚未发布");
             }
@@ -82,11 +86,11 @@ public class PostService {
     }
 
     public PostDetailView publicDetail(Long id, Long viewerId) {
-        return database(() -> postRepository.publicDetail(id, viewerId));
+        return database(() -> postQueryRepository.publicDetail(id, viewerId));
     }
 
     public List<FavoritePostView> publicSummaries(List<Long> postIds) {
-        return database(() -> postRepository.publicSummaries(postIds));
+        return database(() -> postQueryRepository.publicSummaries(postIds));
     }
 
     public ReadingProgressView saveReadingProgress(Long userId, Long postId, ReadingProgressRequest request,
@@ -97,7 +101,7 @@ public class PostService {
 
     public List<PostSummary> related(Long id, int size) {
         try {
-            return postRepository.related(id, size);
+            return postQueryRepository.related(id, size);
         } catch (DataAccessException ex) {
             if (!readFallbackEnabled) {
                 throw dependency(ex);

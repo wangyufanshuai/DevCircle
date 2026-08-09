@@ -7,6 +7,7 @@ import io.github.devcircle.common.event.EventEnvelope;
 import io.github.devcircle.content.api.CreatePostRequest;
 import io.github.devcircle.content.infrastructure.JdbcOutboxPublisher;
 import io.github.devcircle.content.infrastructure.PostRepository;
+import io.github.devcircle.content.infrastructure.PostQueryRepository;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -59,6 +60,9 @@ class ContentOutboxIntegrationTest {
     PostRepository postRepository;
 
     @Autowired
+    PostQueryRepository postQueryRepository;
+
+    @Autowired
     JdbcOutboxPublisher outboxPublisher;
 
     @Autowired
@@ -87,7 +91,7 @@ class ContentOutboxIntegrationTest {
         ));
 
         assertThat(created.id()).isPositive();
-        assertThat(postRepository.detail(created.id()).tags()).containsExactlyInAnyOrder("Kafka", "MySQL");
+        assertThat(postQueryRepository.detail(created.id()).tags()).containsExactlyInAnyOrder("Kafka", "MySQL");
         assertThat(count("SELECT COUNT(*) FROM post_content WHERE post_id = " + created.id())).isEqualTo(1);
         assertThat(outboxStatus(created.id())).isEqualTo("NEW");
 

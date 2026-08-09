@@ -5,6 +5,7 @@ import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.content.api.DraftMediaInput;
 import io.github.devcircle.content.api.SaveDraftRequest;
 import io.github.devcircle.content.infrastructure.PostRepository;
+import io.github.devcircle.content.infrastructure.PostQueryRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -45,6 +46,9 @@ class DraftPersistenceIntegrationTest {
 
     @Autowired
     PostRepository postRepository;
+
+    @Autowired
+    PostQueryRepository postQueryRepository;
 
     @Autowired
     JdbcClient jdbcClient;
@@ -148,7 +152,7 @@ class DraftPersistenceIntegrationTest {
         assertThat(postRepository.submitDraft(43L, created.id(), created.version(), "submit-pending-draft"))
                 .extracting("id", "status", "version")
                 .containsExactly(created.id(), "PENDING", 1L);
-        assertThatThrownBy(() -> postRepository.publicDetail(created.id(), null))
+        assertThatThrownBy(() -> postQueryRepository.publicDetail(created.id(), null))
                 .isInstanceOfSatisfying(BusinessException.class,
                         exception -> assertThat(exception.code()).isEqualTo(ErrorCode.RESOURCE_NOT_FOUND));
     }

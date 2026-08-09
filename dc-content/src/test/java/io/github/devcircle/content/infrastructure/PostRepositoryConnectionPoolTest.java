@@ -25,14 +25,7 @@ class PostRepositoryConnectionPoolTest {
                     """);
             jdbc.update("INSERT INTO post_media(post_id, media_id, sort_order) VALUES (1, 11, 0)");
             ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
-            ContentEventStore eventStore = new ContentEventStore(jdbc, objectMapper);
-            PostRepository repository = new PostRepository(
-                    jdbc,
-                    objectMapper,
-                    new DraftMediaRepository(jdbc),
-                    new ContentIdempotencyStore(jdbc),
-                    eventStore,
-                    new ContentModerationStore(jdbc, eventStore));
+            PostQueryRepository repository = new PostQueryRepository(jdbc, objectMapper);
 
             var posts = assertTimeoutPreemptively(Duration.ofSeconds(2), () -> repository.list(1, 20));
 

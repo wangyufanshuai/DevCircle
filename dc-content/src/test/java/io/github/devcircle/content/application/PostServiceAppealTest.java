@@ -2,6 +2,7 @@ package io.github.devcircle.content.application;
 
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.content.infrastructure.PostRepository;
+import io.github.devcircle.content.infrastructure.PostQueryRepository;
 import io.github.devcircle.content.infrastructure.ReadingProgressRepository;
 import org.junit.jupiter.api.Test;
 
@@ -12,7 +13,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 
 class PostServiceAppealTest {
     private final PostRepository repository = mock(PostRepository.class);
-    private final PostService service = new PostService(repository, mock(ReadingProgressRepository.class));
+    private final PostService service = new PostService(
+            repository, mock(PostQueryRepository.class), mock(ReadingProgressRepository.class));
 
     @Test
     void appealRequiresAnActionableReason() {

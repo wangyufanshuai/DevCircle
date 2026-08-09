@@ -5,6 +5,7 @@ import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.content.contract.PostSummary;
 import io.github.devcircle.seed.ThemeContentLibrary;
 import io.github.devcircle.content.infrastructure.PostRepository;
+import io.github.devcircle.content.infrastructure.PostQueryRepository;
 import io.github.devcircle.content.infrastructure.ReadingProgressRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,13 +21,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class PostServiceReadContractTest {
-    private PostRepository repository;
+    private PostQueryRepository repository;
     private PostService service;
 
     @BeforeEach
     void setUp() {
-        repository = mock(PostRepository.class);
-        service = new PostService(repository, mock(ReadingProgressRepository.class));
+        repository = mock(PostQueryRepository.class);
+        service = new PostService(mock(PostRepository.class), repository, mock(ReadingProgressRepository.class));
     }
 
     @Test
