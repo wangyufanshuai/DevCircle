@@ -51,14 +51,20 @@ Copy-Item .env.example .env
 - `POST /api/admin/ops/dlt/replay`（要求 ADMIN、`Idempotency-Key`、原始 topic、partition、offset 和操作理由）
 - `GET /api/admin/ops/degradation`
 
-`ops/health` 和 `ops/degradation` 会聚合 `dc-auth`、`dc-user`、`dc-content`、`dc-comment` 与 `dc-interaction` 五个生产域，返回 `outboxScope=FLEET`、`outboxComplete`、总 backlog/重试/DEAD/阻塞数、逐来源状态和不可用来源。任一来源超时或失败时必须返回 `outboxComplete=false` 与 `OUTBOX_SOURCE_UNAVAILABLE`，不能以缺失来源的零值伪造全局健康。内部状态端点不经 Gateway 暴露，只允许 Docker 网络内携带 `X-Internal-Ops-Key` 调用。
+## 生产执行边界
+
+- `dc-identity` 是认证的生产执行载体，进程内承载 `dc-auth` 认证逻辑。`dc-auth` 的逻辑 producer 名称、schema、Flyway 迁移和 Maven 模块保持不变；独立 `dc-auth` 可执行镜像仅在 `legacy-auth rollback Compose` 中短期启用。
+- `dc-discovery` 是 Search 的生产执行载体，进程内承载 `dc-search` 代码模块；独立 `dc-search` 可执行镜像仅在 `legacy-search rollback Compose` 中短期启用。
+- `dc-recommend` 是独立推荐进程。Gateway 将 `/api/recommend/**` 直接路由到 `dc-recommend`，推荐运行时不嵌入 `dc-discovery`。
+
+`ops/health` 和 `ops/degradation` 会聚合 `dc-identity`（其内承载逻辑 producer `dc-auth`）、`dc-user`、`dc-content`、`dc-comment` 与 `dc-interaction` 五个生产域，返回 `outboxScope=FLEET`、`outboxComplete`、总 backlog/重试/DEAD/阻塞数、逐来源状态和不可用来源。任一来源超时或失败时必须返回 `outboxComplete=false` 与 `OUTBOX_SOURCE_UNAVAILABLE`，不能以缺失来源的零值伪造全局健康。内部状态端点不经 Gateway 暴露，只允许 Docker 网络内携带 `X-Internal-Ops-Key` 调用。
 
 ## 开发环境显式降级
 
 本地演示可以显式开启读取降级，但它不是生产可用性策略：
 
 - 生产读写路径不返回 seed 或 mock 数据；依赖不可用时返回统一错误码和 `traceId`。
-- 生产 Compose 固定 `DEVCIRCLE_READ_FALLBACK_ENABLED=false`，推荐、搜索和内容服务均遵守该约束。
+- 生产 Compose 固定 `DEVCIRCLE_READ_FALLBACK_ENABLED=false`，独立的推荐 (`dc-recommend`)、Search (`dc-discovery` 内的 `dc-search` runtime) 和内容服务均遵守该约束。
 - 页面只展示用户可理解的空状态和重试入口。
 - 管理端工程状态展示真实 Outbox backlog、推荐事件和依赖健康。
 

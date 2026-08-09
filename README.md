@@ -33,12 +33,12 @@ DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“
 - `dc-gateway`: 统一入口、TraceId、JWT 鉴权、角色拦截、限流、用户上下文透传、请求日志。
 - `dc-identity`: 第一阶段的 Identity 部署单元；生产进程内嵌 `dc-auth` 认证运行时和个人仪表盘。`dc-user`、`dc-interaction`、`dc-notification` 仍以兼容服务保留，尚未完成完整四聚合。
 - `dc-content-deployment`: content、comment、file、moderation 的兼容聚合部署门面。
-- `dc-discovery`: search、recommend、experiment 的兼容聚合部署门面。
-- `dc-auth`: 邮箱密码登录、Refresh Token 轮换、GitHub OAuth、审计日志。
+- `dc-discovery`: Discovery 生产边界；第一阶段在该进程内承载 `dc-search` Search 代码模块，实验能力继续兼容聚合。推荐不是 Discovery 的内嵌能力，而是独立的 `dc-recommend` 进程，由 Gateway 直接路由。
+- `dc-auth`: 邮箱密码登录、Refresh Token 轮换、GitHub OAuth、审计日志；逻辑 producer、schema 和 Maven 模块保留，由 `dc-identity` 进程承载，独立可执行镜像仅用于 legacy auth rollback。
 - `dc-user`: 关注关系、共同关注、二跳推荐。
 - `dc-content`: 主题内容、详情、相关内容、推理解谜、审核状态、Outbox。
 - `dc-interaction`: 点赞、收藏、幂等写入、Redis 热度信号。
-- `dc-search`: Elasticsearch 索引、Kafka 内容事件同步、重建入口。
+- `dc-search`: 保留的 Search 领域模块；正常生产由 `dc-discovery` 进程承载，独立进程仅用于 [`legacy-search rollback Compose`](deploy/compose/docker-compose.legacy-search-rollback.yml)。
 - `dc-recommend`: 可解释固定权重规则、候选召回、曝光去重、推荐实验。
 - `dc-notification`: 站内通知、Kafka 消费、WebSocket 推送。
 - `dc-file`: MinIO 上传、媒体元数据、上传安全校验。
@@ -51,7 +51,9 @@ DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“
 
 独立的 `dc-auth` 可执行镜像不属于正常生产拓扑；仅在 [legacy auth rollback Compose](deploy/compose/docker-compose.legacy-auth-rollback.yml) 中用于短期回滚。该覆盖文件会将 Gateway 与管理端的认证上游切回 `dc-auth:8101`，回滚结束后应恢复 `dc-identity` 路由。
 
-生产静态资源预算当前为 23 个 Compose 服务、14.12 GiB 容器内存上限，仅 Web 和 Gateway 向宿主机发布端口。该数字是配置门禁结果，不是 Linux 实际运行、容量或可用性证明。
+生产推荐路由为 `Gateway /api/recommend/** → dc-recommend:8107`；`dc-recommend` 是独立进程，推荐运行时未嵌入 `dc-discovery`。Search 路由为 `Gateway /api/search/** → dc-discovery:8203`，其中由 Discovery 进程承载 `dc-search` 代码模块。
+
+生产静态资源预算当前为 22 个 Compose 服务、13.62 GiB 容器内存上限，仅 Web 和 Gateway 向宿主机发布端口。该数字是配置门禁结果，不是 Linux 实际运行、容量或可用性证明。Search-in-Discovery 当前仅有 Windows 非容器证据；Docker、Testcontainers、Helm 实际部署、目标 Linux 性能/恢复和 Cosign Registry 验签仍未验证。
 
 ## 本地启动
 

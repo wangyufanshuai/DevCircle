@@ -2,11 +2,11 @@
 
 ## 服务拆分
 
-DevCircle 使用按业务域拆分、兼容聚合的微服务结构。Gateway 负责统一入口、路由、TraceId、真实 JWT 校验和幂等键约束；业务服务分别承载认证、用户、内容、评论、互动、搜索、推荐、通知、文件和管理端能力。
+DevCircle 使用按业务域拆分、兼容聚合的微服务结构。Gateway 负责统一入口、路由、TraceId、真实 JWT 校验和幂等键约束；业务服务分别承载认证、用户、内容、评论、互动、搜索、推荐、通知、文件和管理端能力。部署边界与 Maven 领域模块是两个维度：`dc-search` 领域代码第一阶段由 `dc-discovery` 进程承载，`dc-auth` 仍保留认证逻辑 producer、schema、迁移和 Maven 模块但由 `dc-identity` 进程承载；两个旧的独立可执行进程都只用于对应的 legacy rollback Compose。
 
 ## 数据流
 
-用户发布帖子后，`dc-content` 写入帖子数据，并在同一个本地事务内写入 `outbox_event`。后台发布任务将事件发送到 Kafka，`dc-search` 消费后同步 Elasticsearch，`dc-notification` 消费审核和互动事件后写入站内信并通过 WebSocket 推送。
+用户发布帖子后，`dc-content` 写入帖子数据，并在同一个本地事务内写入 `outbox_event`。后台发布任务将事件发送到 Kafka，`dc-discovery` 进程内承载的 `dc-search` runtime 消费后同步 Elasticsearch，`dc-notification` 消费审核和互动事件后写入站内信并通过 WebSocket 推送。推荐由独立的 `dc-recommend` 进程消费特征事件；`/api/recommend/**` 由 Gateway 直接路由到它，不经过 Discovery 内嵌。
 
 ## Outbox 约定
 
@@ -44,7 +44,7 @@ Admin 不再以自身连接的内容库代表全局 Outbox。Auth、User、Conte
 
 ## 搜索同步
 
-搜索服务只依赖事件，不直接跨库读取内容库。`post.created` 和 `post.updated` 更新索引，`post.deleted` 删除索引。Elasticsearch 短暂不可用时，消费者保留失败状态并由补偿任务重放。
+搜索服务只依赖事件，不直接跨库读取内容库。`dc-search` 的代码模块在第一阶段由 `dc-discovery` 进程承载；`post.created` 和 `post.updated` 更新索引，`post.deleted` 删除索引。Elasticsearch 短暂不可用时，消费者保留失败状态并由补偿任务重放。独立 `dc-search` 可执行镜像仅在 `legacy-search rollback Compose` 中启用。
 
 搜索投影以 `(occurredAtMillis, eventId)` 作为统一的单调版本。协调器和 Elasticsearch 脚本使用相同的字典序规则：较新的事件毫秒时间优先；同一毫秒内 eventId 较大的事件优先。这样同一时刻产生的审核、更新或删除事件不会被协调器误判为重复，也不会由旧事件覆盖较新投影。
 
@@ -55,6 +55,8 @@ Admin 不再以自身连接的内容库代表全局 Outbox。Auth、User、Conte
 所有同步 HTTP 客户端统一使用有界连接：连接超时 1 秒、读取超时 2 秒。评论、互动、推荐、搜索、旧通知事件回源及 GitHub OAuth 在依赖半开或响应挂起时都会明确失败，由调用方的错误响应或 Kafka 重试/DLT 接管，不允许无限占用请求与消费线程。聚合门面的 WebClient 调用另有 2 秒 Reactor 超时。
 
 ## 推荐策略
+
+推荐运行在独立的 `dc-recommend` 进程中。Gateway 将 `/api/recommend/**` 直接路由到 `dc-recommend`；Discovery 不嵌入推荐运行时，二者通过 Kafka 事件和共享契约协作。
 
 第一版推荐不训练模型，采用可解释规则：
 

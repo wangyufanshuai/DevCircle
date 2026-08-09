@@ -7,10 +7,12 @@ DevCircle 的 Feed 引擎由规则召回、固定权重排序、推荐实验分�
 - 内容：`dc-content` 写入 MySQL 的 `post/post_content/tag/post_tag/post_media`。
 - 媒体：`dc-file` 写入 `media_asset`，帖子通过 `post_media` 关联。
 - 事件：发布时同事务写入 `outbox_event`，再由 Outbox publisher 推送到 Kafka。
-- 搜索：`dc-search` 监听发布、审核通过、驳回和删除事件，使用持久去重、文章级租约和事件水位维护 Elasticsearch 文档。
+- 搜索：`dc-discovery` 进程内承载的 `dc-search` runtime 监听发布、审核通过、驳回和删除事件，使用持久去重、文章级租约和事件水位维护 Elasticsearch 文档；独立 `dc-search` 进程只保留 legacy rollback 用途。
 - 互动：`dc-interaction` 用 MySQL 唯一索引保证点赞/收藏幂等，写入 `interaction.changed` Outbox；`dc-recommend` 消费事件后原子更新 Redis 信号。
 - 图谱：`dc-user` 的关注事件投影为推荐侧关注作者信号。
 - 曝光：`dc-recommend` 记录 `user:{id}:exposed-posts`，避免短时间重复刷出同一内容。
+
+`dc-recommend` 是独立的推荐部署单元。Gateway 将 `/api/recommend/**` 直接路由到 `dc-recommend`，推荐运行时不嵌入 `dc-discovery`；Discovery 只承载 Search 代码模块和搜索 API。
 
 ## Redis Key
 
