@@ -205,21 +205,22 @@ test('write route exposes draft editor and safe preview', async ({ page }) => {
 })
 
 test('detail resolves attached inline media without duplicating it in the gallery', async ({ page }) => {
+  const storedMediaUrl = 'http://minio:9000/devcircle/private/8.png'
   const signedMediaUrl = '/media/evidence.png'
   const mediaPost = {
     ...post,
     markdown: '# 雾港钟楼\n\n![停摆的怀表](media://8)\n\n![远程图片](https://tracker.example/pixel.png)',
-    media: [{ mediaId: 8, objectKey: 'private/8.png', url: signedMediaUrl, contentType: 'image/png', size: 12, status: 'APPROVED', role: 'INLINE', altText: '证物桌上停摆的怀表', sortOrder: 0 }]
+    media: [{ mediaId: 8, objectKey: 'private/8.png', url: storedMediaUrl, contentType: 'image/png', size: 12, status: 'APPROVED', role: 'INLINE', altText: '证物桌上停摆的怀表', sortOrder: 0 }]
   }
   let accessCalls = 0
   await page.route('**/api/posts/1001', route => route.fulfill({ json: { code: 'OK', message: 'success', data: mediaPost } }))
-  await page.route('**/api/files/access?*', route => { accessCalls += 1; return route.fulfill({ status: 500 }) })
+  await page.route('**/api/files/access?*', route => { accessCalls += 1; return route.fulfill({ json: { code: 'OK', message: 'success', data: [{ mediaId: 8, url: signedMediaUrl, expiresAt: '2026-08-10T01:00:00Z' }] } }) })
   await page.route('**/media/evidence.png', route => route.fulfill({ status: 200, contentType: 'image/png', body: Buffer.from([0x89, 0x50, 0x4e, 0x47]) }))
   await page.goto('/posts/1001')
   await expect(page.locator('.inline-media img')).toHaveAttribute('alt', '证物桌上停摆的怀表')
   await expect(page.locator('.detail-media-grid')).toHaveCount(0)
-  await expect(page.locator('.inline-media-unavailable')).toContainText('外部图片已阻止')
-  expect(accessCalls).toBe(0)
+  await expect(page.locator('.inline-media img')).toHaveAttribute('src', /\/media\/evidence\.png$/)
+  expect(accessCalls).toBe(1)
 })
 
 test('detail batches author profiles instead of issuing per-comment requests', async ({ page }) => {

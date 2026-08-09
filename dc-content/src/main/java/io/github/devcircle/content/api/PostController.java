@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.List;
 import java.util.Map;
@@ -22,9 +23,11 @@ import java.util.Map;
 @RequestMapping("/api/posts")
 class PostController {
     private final PostService postService;
+    private final PostDetailComposer postDetailComposer;
 
-    PostController(PostService postService) {
+    PostController(PostService postService, ObjectProvider<PostDetailComposer> postDetailComposers) {
         this.postService = postService;
+        this.postDetailComposer = postDetailComposers.getIfAvailable(PostDetailComposer::passthrough);
     }
 
     @GetMapping
@@ -44,8 +47,10 @@ class PostController {
 
     @GetMapping("/{id}")
     ApiResponse<PostDetailView> detail(@PathVariable Long id,
-                                       @RequestHeader(value = "X-User-Id", required = false) Long viewerId) {
-        return ApiResponse.ok(postService.publicDetail(id, viewerId));
+                                       @RequestHeader(value = "X-User-Id", required = false) Long viewerId,
+                                       @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+        PostDetailView detail = postService.publicDetail(id, viewerId);
+        return ApiResponse.ok(postDetailComposer.compose(detail, viewerId, traceId));
     }
 
     @GetMapping("/summaries")

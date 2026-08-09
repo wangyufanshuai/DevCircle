@@ -13,6 +13,7 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
   flyway:
     enabled: true
+    locations: classpath:db/file-migration
     table: flyway_schema_history_file
     baseline-on-migrate: true
     baseline-version: 1

@@ -1,7 +1,7 @@
 import type {
   ApiResponse, AppealItem, CommentItem, CommentThread, CursorPage, Dashboard, DeductionAnswerResult, Draft, FeedItem, FollowResult, InteractionResult,
   LoginResponse, ModerationTask, NotificationItem, PageResponse, Post, SaveDraftRequest,
-  PostAudit, PostDetail, ReadingProgress, Theme, UploadIntent, UploadResult, UserProfile, UserSession
+  PostAudit, PostDetail, ReadingProgress, Theme, UploadIntent, UploadResult, UserProfile, UserSession, MediaAccess
 } from './types'
 import { readonly, shallowRef } from 'vue'
 
@@ -140,6 +140,12 @@ export async function fetchPostsCursor(cursor = '', filters: { theme?: Theme; co
   return { records: body.data, nextCursor: String(body.meta?.nextCursor ?? ''), hasMore: body.meta?.hasMore === true }
 }
 export function fetchPost(id: number) { return request<PostDetail>(`/api/posts/${id}`) }
+export async function fetchMediaAccess(ids: number[]) {
+  const safeIds = [...new Set(ids)].filter(id => id > 0).slice(0, 50)
+  if (!safeIds.length) return []
+  const body = await requestEnvelope<MediaAccess[]>(`/api/files/access?ids=${safeIds.join(',')}`)
+  return body.data
+}
 export function fetchRelated(id: number) { return request<Post[]>(`/api/posts/${id}/related?size=6`) }
 export function fetchDashboard() { return request<Dashboard>('/api/me/dashboard') }
 export function followUser(userId: number) { return write<FollowResult>(`/api/users/${userId}/follow`, 'POST') }

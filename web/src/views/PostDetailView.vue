@@ -4,7 +4,7 @@ import { ArrowLeft, Bookmark, CheckCircle2, Eye, Heart, LoaderCircle, MessageCir
 import { onBeforeRouteLeave, RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   answerCase, createComment, currentSession, deleteComment, fetchComments,
-  fetchPost, fetchRelated, fetchUserProfiles, followUser, interact, revealAnswer,
+  fetchMediaAccess, fetchPost, fetchRelated, fetchUserProfiles, followUser, interact, revealAnswer,
   hideComment, saveReadingProgress, sessionState, unfollowUser
 } from '../api/client'
 import type { CommentItem, CommentThread, Post, PostDetail, UserProfile } from '../api/types'
@@ -35,6 +35,7 @@ const feedback = ref('')
 const commentError = ref('')
 const commentLoadError = ref('')
 const relatedError = ref('')
+const mediaAccessError = ref('')
 const following = ref(false)
 const savingProgress = ref(false)
 const readingContent = ref<HTMLElement | null>(null)
@@ -58,7 +59,7 @@ const renderedMarkdown = computed(() => {
   if (!post.value?.markdown) return ''
   return renderSafeMarkdown(post.value.markdown, post.value.media)
 })
-const standaloneMedia = computed(() => { if (!post.value) return []; const placed = markdownMediaIds(post.value.markdown); return post.value.media.filter(media => media.role === 'COVER' || !placed.has(media.mediaId)) })
+const standaloneMedia = computed(() => { if (!post.value) return []; const placed = markdownMediaIds(post.value.markdown); return post.value.media.filter(media => media.url && (media.role === 'COVER' || !placed.has(media.mediaId))) })
 
 async function load() {
   loading.value = true
@@ -66,6 +67,7 @@ async function load() {
   post.value = null
   related.value = []
   relatedError.value = ''
+  mediaAccessError.value = ''
   threads.value = []
   commentCursor.value = ''
   commentHasMore.value = false
@@ -73,7 +75,21 @@ async function load() {
   userProfiles.clear()
   try {
     const detail = await fetchPost(id.value)
-    post.value = detail
+    const media = detail.media ?? []
+    if (media.length) {
+      try {
+        const access = await fetchMediaAccess(media.map(item => item.mediaId))
+        const urls = new Map(access.map(item => [item.mediaId, item.url]))
+        post.value = { ...detail, media: media.map(item => ({ ...item, url: urls.get(item.mediaId) ?? '' })) }
+        if (access.length !== media.length) mediaAccessError.value = '部分媒体暂时不可用，正文仍可继续阅读。'
+      } catch {
+        // Never expose the stored object URL from the private bucket to browsers.
+        post.value = { ...detail, media: media.map(item => ({ ...item, url: '' })) }
+        mediaAccessError.value = '媒体暂时无法加载，请稍后重试。'
+      }
+    } else {
+      post.value = detail
+    }
     following.value = detail.author.followedByViewer === true
     lastSavedProgress = detail.viewerState.readingProgress
     lastSavedAnchor = detail.viewerState.readingAnchor ?? null
@@ -436,6 +452,7 @@ onBeforeUnmount(() => {
         </div>
       </header>
       <p v-if="error" class="form-error detail-feedback" role="alert">{{ error }}</p>
+      <p v-if="mediaAccessError" class="inline-feedback" role="status">{{ mediaAccessError }}</p>
 
       <section class="author-strip">
         <div class="profile-avatar">{{ post.author.username.slice(0, 1).toUpperCase() }}</div>

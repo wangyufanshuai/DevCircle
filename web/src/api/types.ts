@@ -30,6 +30,8 @@ export type MediaAsset = {
   sortOrder?: number
 }
 
+export type MediaAccess = { mediaId: number; url: string; expiresAt: string }
+
 export type Post = {
   id: number
   type: 'TEXT' | 'IMAGE' | 'VIDEO'

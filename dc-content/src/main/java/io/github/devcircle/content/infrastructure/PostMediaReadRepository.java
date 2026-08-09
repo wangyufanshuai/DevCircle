@@ -35,17 +35,19 @@ public class PostMediaReadRepository {
 
     public List<PostMediaView> publicMediaAssets(Long postId) {
         return jdbcClient.sql("""
-                        SELECT m.id, m.object_key, m.url, m.content_type, m.size_bytes,
+                        SELECT m.id, m.object_key, m.content_type, m.size_bytes,
                                m.width, m.height, m.duration_seconds, m.status,
                                pm.role, pm.alt_text, pm.sort_order
                         FROM post_media pm
                         JOIN media_asset m ON m.id = pm.media_id
-                        WHERE pm.post_id = :postId AND m.status = 'APPROVED'
+                        WHERE pm.post_id = :postId
+                          AND m.status = 'APPROVED'
+                          AND m.upload_status = 'COMPLETED'
                         ORDER BY pm.sort_order, m.id
                         """)
                 .param("postId", postId)
                 .query((rs, rowNum) -> new PostMediaView(
-                        rs.getLong("id"), rs.getString("object_key"), rs.getString("url"),
+                        rs.getLong("id"), rs.getString("object_key"), "",
                         rs.getString("content_type"), rs.getLong("size_bytes"),
                         (Integer) rs.getObject("width"), (Integer) rs.getObject("height"),
                         (Integer) rs.getObject("duration_seconds"), rs.getString("status"),
@@ -65,16 +67,18 @@ public class PostMediaReadRepository {
 
     private Map<Long, List<MediaAssetView>> mediaAssetsByPostId(List<Long> postIds) {
         List<PostMediaAsset> rows = jdbcClient.sql("""
-                        SELECT pm.post_id, m.id, m.object_key, m.url, m.content_type, m.size_bytes,
+                        SELECT pm.post_id, m.id, m.object_key, m.content_type, m.size_bytes,
                                m.width, m.height, m.duration_seconds, m.status
                         FROM post_media pm
                         JOIN media_asset m ON m.id = pm.media_id
                         WHERE pm.post_id IN (:postIds)
+                          AND m.status = 'APPROVED'
+                          AND m.upload_status = 'COMPLETED'
                         ORDER BY pm.post_id, pm.sort_order, m.id
                         """)
                 .param("postIds", postIds)
                 .query((rs, rowNum) -> new PostMediaAsset(rs.getLong("post_id"), new MediaAssetView(
-                        rs.getLong("id"), rs.getString("object_key"), rs.getString("url"),
+                        rs.getLong("id"), rs.getString("object_key"), "",
                         rs.getString("content_type"), rs.getLong("size_bytes"),
                         (Integer) rs.getObject("width"), (Integer) rs.getObject("height"),
                         (Integer) rs.getObject("duration_seconds"), rs.getString("status"))))

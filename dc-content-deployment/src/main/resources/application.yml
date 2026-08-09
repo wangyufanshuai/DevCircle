@@ -4,28 +4,21 @@ server:
 spring:
   application:
     name: dc-content-aggregate
+  main:
+    web-application-type: servlet
   lifecycle:
     timeout-per-shutdown-phase: 30s
-  cloud:
-    gateway:
-      server:
-        webflux:
-          routes:
-            - id: comments
-              uri: ${DC_COMMENT_URI:http://localhost:8104}
-              predicates: [Path=/api/comments/**,/api/posts/*/comments/**]
-            - id: files
-              uri: ${DC_FILE_URI:http://localhost:8109}
-              predicates: [Path=/api/files/**]
-            - id: moderation
-              uri: ${DC_ADMIN_URI:http://localhost:8110}
-              predicates: [Path=/api/admin/**]
-            - id: deduction
-              uri: ${DC_CONTENT_URI:http://localhost:8103}
-              predicates: [Path=/api/deduction/**,/api/content/**]
-            - id: posts
-              uri: ${DC_CONTENT_URI:http://localhost:8103}
-              predicates: [Path=/api/posts/**]
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${CONTENT_MYSQL_DATABASE:dc_content}?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC
+    username: ${MYSQL_USER:devcircle}
+    password: ${MYSQL_PASSWORD:devcircle}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
 management:
   endpoints:
     web:
@@ -35,9 +28,30 @@ management:
     health:
       probes:
         enabled: true
+logging:
+  pattern:
+    level: "%5p traceId=%X{traceId:-} userId=%X{userId:-}"
 devcircle:
+  production: ${DEVCIRCLE_PRODUCTION_MODE:false}
   internal:
-    content-uri: ${DC_CONTENT_URI:http://localhost:8103}
     user-uri: ${DC_USER_URI:http://localhost:8102}
     interaction-uri: ${DC_INTERACTION_URI:http://localhost:8105}
-    file-uri: ${DC_FILE_URI:http://localhost:8109}
+  outbox:
+    # Keep the logical domain identity stable when the Content and File runtimes
+    # share one JVM. Admin fleet health and recovery tooling key off this name.
+    service-name: dc-content
+  seed:
+    theme-content:
+      enabled: ${DEVCIRCLE_THEME_CONTENT_SEED_ENABLED:false}
+  content:
+    read-fallback-enabled: ${DEVCIRCLE_READ_FALLBACK_ENABLED:false}
+  upload:
+    max-bytes: ${UPLOAD_MAX_BYTES:10485760}
+    intent-ttl-minutes: ${UPLOAD_INTENT_TTL_MINUTES:15}
+  s3:
+    endpoint: ${S3_ENDPOINT:http://localhost:9000}
+    presign-endpoint: ${S3_PRESIGN_ENDPOINT:${S3_ENDPOINT:http://localhost:9000}}
+    bucket: ${S3_BUCKET:devcircle}
+    access-key: ${S3_ACCESS_KEY:minioadmin}
+    secret-key: ${S3_SECRET_KEY:minioadmin}
+    public-base-url: ${S3_PUBLIC_BASE_URL:http://localhost:9000/devcircle}
