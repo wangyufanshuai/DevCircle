@@ -4,9 +4,9 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 ## 当前证据边界
 
-截至 2026-08-09，当前推荐架构基线为 `acee747`。Windows 本机使用 E 盘临时目录并禁用 Surefire 分叉执行全仓纯单元/H2 回归，18/18 个 Maven 模块构建成功，其中 15 个模块产生 104 份测试报告，共 457 个测试，0 failures、0 errors、0 skipped；推荐写侧、场景策略与候选召回拆分的定向契约、依赖故障、写校验、Controller 和策略测试均通过。该全仓命令显式排除 `*IntegrationTest`、`DockerPreflightTest` 和 `KafkaContainerSmokeTest`，且 `forkCount=0` 不能产生可信 JaCoCo 结果，因此只能证明当前非容器功能回归，不能解释为最新全仓覆盖率、Testcontainers 或 Compose 通过。
+截至 2026-08-09，当前架构基线为 `523dd5d`，其中推荐拆分基线为 `acee747`。`FeedService` 已将写侧 Telemetry、场景策略和候选召回分离，`AdminService` 已将推荐实验迁入独立领域服务，并删除与 `AdminMutationSupport` 重复的幂等、审计、Outbox 和校验实现。Windows 本机使用 E 盘临时目录并禁用 Surefire 分叉执行全仓纯单元/H2 回归，18/18 个 Maven 模块构建成功，其中 15 个模块产生 104 份测试报告，共 457 个测试，0 failures、0 errors、0 skipped；Admin 全套 46 项以及推荐定向契约、依赖故障、写校验、Controller 和策略测试均通过。该全仓命令显式排除 `*IntegrationTest`、`DockerPreflightTest` 和 `KafkaContainerSmokeTest`，且 `forkCount=0` 不能产生可信 JaCoCo 结果，因此只能证明当前非容器功能回归，不能解释为最新全仓覆盖率、Testcontainers 或 Compose 通过。
 
-同一工作树的前端 `npm run build` 成功，四个 Playwright project 共 120/120 通过；常规 Playwright 套件使用显式 API 拦截，不替代真实多服务 E2E。当前 `docker info` 在 14 秒内超时，因此未执行最新 Testcontainers、真实 Compose、k6 或恢复演练；`npm audit --audit-level=high` 也因本机 `npmmirror` 不实现 npm security audit endpoint 而失败，不能据此判断依赖安全状态。本文下方带日期的容器、覆盖率、Compose、性能和恢复结果均为绑定旧提交的历史证据，除非重新在当前 SHA 执行，否则不得当作 `acee747` 的生产验收结论。
+同一工作树的前端 `npm run build` 成功，四个 Playwright project 共 120/120 通过；常规 Playwright 套件使用显式 API 拦截，不替代真实多服务 E2E。当前 `docker info` 在 14 秒内超时，因此未执行最新 Testcontainers、真实 Compose、k6 或恢复演练；`npm audit --audit-level=high` 也因本机 `npmmirror` 不实现 npm security audit endpoint 而失败，不能据此判断依赖安全状态。本文下方带日期的容器、覆盖率、Compose、性能和恢复结果均为绑定旧提交的历史证据，除非重新在当前 SHA 执行，否则不得当作 `523dd5d` 的生产验收结论。
 
 提交 `101359e` 后重新执行离线交付门禁：Linux 性能、Linux 恢复、k6 和生产资源预算契约 19 项通过，发布身份、迁移版本和关键状态覆盖契约 8 项通过，生产环境校验与覆盖率 Shell 门禁通过，备份、恢复和迁移验证夹具在补齐当前 Alertmanager 生产路径契约后通过。实际生产 Compose 渲染为 24 个服务、14.62 GiB 容器内存上限，只发布 Web 与绑定宿主机回环地址的 Gateway。该批次只证明脚本和配置拒绝错误证据的能力；没有启动真实容器、没有执行真实 Cosign Registry 验证，也没有产生目标 Linux 的性能或 RTO/RPO 证据。
 
