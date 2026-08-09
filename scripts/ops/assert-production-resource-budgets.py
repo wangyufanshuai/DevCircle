@@ -17,9 +17,10 @@ APP_SERVICES = {
     "dc-discovery", "dc-file", "dc-gateway", "dc-identity", "dc-interaction",
     "dc-notification", "dc-recommend", "dc-search", "dc-user",
 }
+OBSERVABILITY_SERVICES = {"prometheus", "alertmanager", "jaeger"}
 EXPECTED_SERVICES = APP_SERVICES | {
     "mysql", "redis", "kafka", "elasticsearch", "minio", "web-static", "web",
-}
+} | OBSERVABILITY_SERVICES
 PUBLISHED_PORTS = {
     "dc-gateway": {("127.0.0.1", 8080, 8080, "tcp")},
     "web": {(None, 80, 80, "tcp"), (None, 443, 443, "tcp"), (None, 443, 443, "udp")},
@@ -31,6 +32,8 @@ PRODUCTION_ENVIRONMENT = {
     "DEVCIRCLE_THEME_CONTENT_SEED_ENABLED": "false",
     "SPRINGDOC_API_DOCS_ENABLED": "false",
     "SPRINGDOC_SWAGGER_UI_ENABLED": "false",
+    "MANAGEMENT_METRICS_DISTRIBUTION_PERCENTILES_HISTOGRAM_HTTP_SERVER_REQUESTS": "true",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://jaeger:4318",
 }
 
 
@@ -91,7 +94,7 @@ def validate(data: dict) -> tuple[int, int]:
     unexpected_services = set(services).difference(EXPECTED_SERVICES)
     if missing_services or unexpected_services:
         fail(
-            "production services do not match the 21-service contract: "
+            "production services do not match the 24-service contract: "
             f"missing={sorted(missing_services)} unexpected={sorted(unexpected_services)}"
         )
 
@@ -147,6 +150,16 @@ def validate(data: dict) -> tuple[int, int]:
     elastic_heap = (services["elasticsearch"].get("environment") or {}).get("ES_JAVA_OPTS", "")
     if "-Xmx1g" not in elastic_heap:
         fail("Elasticsearch heap must be capped at 1 GiB")
+
+    prometheus_command = services["prometheus"].get("command") or []
+    for option in ("--storage.tsdb.retention.time=35d", "--storage.tsdb.retention.size=1GB"):
+        if option not in prometheus_command:
+            fail(f"prometheus command is missing {option}")
+    jaeger_environment = services["jaeger"].get("environment") or {}
+    if str(jaeger_environment.get("BADGER_EPHEMERAL", "")).lower() != "false":
+        fail("jaeger must use persistent Badger storage")
+    if jaeger_environment.get("SPAN_STORAGE_TYPE") != "badger":
+        fail("jaeger SPAN_STORAGE_TYPE must be badger")
 
     return len(services), total_memory
 

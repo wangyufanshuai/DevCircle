@@ -1,20 +1,39 @@
 global:
   scrape_interval: 15s
+  evaluation_interval: 15s
+
 rule_files:
+  - /etc/prometheus/slo.yml
   - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
 scrape_configs:
   - job_name: devcircle
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets:
-          - host.docker.internal:8080
-          - host.docker.internal:8101
-          - host.docker.internal:8102
-          - host.docker.internal:8103
-          - host.docker.internal:8104
-          - host.docker.internal:8105
-          - host.docker.internal:8106
-          - host.docker.internal:8107
-          - host.docker.internal:8108
-          - host.docker.internal:8109
-          - host.docker.internal:8110
+      - targets: ["host.docker.internal:8080"]
+        labels: { service: dc-gateway }
+      - targets: ["host.docker.internal:8101"]
+        labels: { service: dc-auth }
+      - targets: ["host.docker.internal:8102"]
+        labels: { service: dc-user }
+      - targets: ["host.docker.internal:8103"]
+        labels: { service: dc-content }
+      - targets: ["host.docker.internal:8104"]
+        labels: { service: dc-comment }
+      - targets: ["host.docker.internal:8105"]
+        labels: { service: dc-interaction }
+      - targets: ["host.docker.internal:8106"]
+        labels: { service: dc-search }
+      - targets: ["host.docker.internal:8107"]
+        labels: { service: dc-recommend }
+      - targets: ["host.docker.internal:8108"]
+        labels: { service: dc-notification }
+      - targets: ["host.docker.internal:8109"]
+        labels: { service: dc-file }
+      - targets: ["host.docker.internal:8110"]
+        labels: { service: dc-admin }

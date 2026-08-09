@@ -34,6 +34,9 @@ x-app-env: &app-env
   GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
   GITHUB_CALLBACK_URI: ${PUBLIC_ORIGIN}/api/auth/oauth2/github/callback
   MANAGEMENT_TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLE_RATE:-0.1}
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+  MANAGEMENT_METRICS_DISTRIBUTION_PERCENTILES_HISTOGRAM_HTTP_SERVER_REQUESTS: "true"
+  MANAGEMENT_METRICS_DISTRIBUTION_SLO_HTTP_SERVER_REQUESTS: 0.1s,0.3s,0.6s,1s,2s
   JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60.0 -XX:InitialRAMPercentage=20.0 -XX:+ExitOnOutOfMemoryError"
   SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${DB_POOL_MAX_SIZE:-8}
   SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: ${DB_POOL_MIN_IDLE:-1}
@@ -153,6 +156,63 @@ services:
       timeout: 10s
       retries: 20
     networks: [devcircle]
+
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.25
+    pids_limit: 128
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=35d
+      - --storage.tsdb.retention.size=1GB
+    volumes:
+      - ./deploy/prometheus/prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./deploy/prometheus/slo.yml:/etc/prometheus/slo.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - alertmanager
+    networks: [devcircle]
+    security_opt: [no-new-privileges:true]
+    healthcheck: { test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/ready"], interval: 15s, timeout: 5s, retries: 12 }
+
+  alertmanager:
+    image: prom/alertmanager:v0.29.0
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.15
+    pids_limit: 128
+    volumes:
+      - ${ALERTMANAGER_CONFIG_PATH:?ALERTMANAGER_CONFIG_PATH is required}:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    networks: [devcircle]
+    security_opt: [no-new-privileges:true]
+    healthcheck: { test: ["CMD", "wget", "-qO-", "http://localhost:9093/-/ready"], interval: 15s, timeout: 5s, retries: 12 }
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.67.0
+    restart: unless-stopped
+    user: "0:0"
+    mem_limit: 256m
+    cpus: 0.25
+    pids_limit: 128
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      SPAN_STORAGE_TYPE: badger
+      BADGER_EPHEMERAL: "false"
+      BADGER_DIRECTORY_VALUE: /badger/data
+      BADGER_DIRECTORY_KEY: /badger/key
+    volumes:
+      - jaeger-data:/badger
+    networks: [devcircle]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck: { test: ["CMD", "wget", "-qO-", "http://localhost:14269/"], interval: 15s, timeout: 5s, retries: 12 }
 
   minio-maintenance:
     image: alpine:3.22.2
@@ -398,3 +458,6 @@ volumes:
   minio-data:
   caddy-data:
   caddy-config:
+  prometheus-data:
+  alertmanager-data:
+  jaeger-data:

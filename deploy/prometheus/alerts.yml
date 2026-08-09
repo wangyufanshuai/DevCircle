@@ -1,51 +1,76 @@
 groups:
-  - name: devcircle-core
+  - name: devcircle-runtime
     rules:
       - alert: DevCircleServiceDown
         expr: up{job="devcircle"} == 0
         for: 2m
-        labels:
-          severity: critical
+        labels: { severity: critical, team: platform }
         annotations:
           summary: "DevCircle service is down"
-          description: "{{ $labels.instance }} has not responded to Prometheus for 2 minutes."
-
-      - alert: DevCircleHighHttp5xx
-        expr: |
-          sum(rate(http_server_requests_seconds_count{status=~"5.."}[5m])) by (instance)
-          /
-          clamp_min(sum(rate(http_server_requests_seconds_count[5m])) by (instance), 0.001)
-          > 0.01
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High 5xx rate"
-          description: "{{ $labels.instance }} has returned more than 1% 5xx responses for 5 minutes."
-
-      - alert: DevCircleHighP95Latency
-        expr: histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket[5m])) by (le, instance)) > 0.6
-        for: 10m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High p95 latency"
-          description: "{{ $labels.instance }} aggregate p95 latency is above the 600ms write SLO."
+          description: "{{ $labels.service }} at {{ $labels.instance }} has not responded for 2 minutes."
+          runbook_url: "https://github.com/wangyufanshuai/DevCircle/blob/main/docs/observability-runbook.md#service-down"
 
       - alert: DevCircleJvmMemoryPressure
-        expr: sum(jvm_memory_used_bytes{area="heap"}) by (instance) / sum(jvm_memory_max_bytes{area="heap"}) by (instance) > 0.85
+        expr: sum(jvm_memory_used_bytes{area="heap"}) by (service, instance) / sum(jvm_memory_max_bytes{area="heap"}) by (service, instance) > 0.85
         for: 10m
-        labels:
-          severity: warning
+        labels: { severity: warning, team: platform }
         annotations:
           summary: "JVM heap pressure"
-          description: "{{ $labels.instance }} heap usage is above 85%."
+          description: "{{ $labels.service }} heap usage is above 85% for 10 minutes."
+          runbook_url: "https://github.com/wangyufanshuai/DevCircle/blob/main/docs/observability-runbook.md#jvm-memory-pressure"
 
       - alert: DevCircleMySqlPoolExhausted
-        expr: hikaricp_connections_active / hikaricp_connections_max > 0.9
+        expr: hikaricp_connections_active / clamp_min(hikaricp_connections_max, 1) > 0.9
         for: 5m
-        labels:
-          severity: critical
+        labels: { severity: critical, team: platform }
         annotations:
           summary: "MySQL connection pool nearly exhausted"
-          description: "{{ $labels.instance }} active Hikari connections exceed 90%."
+          description: "{{ $labels.service }} active Hikari connections exceed 90%."
+          runbook_url: "https://github.com/wangyufanshuai/DevCircle/blob/main/docs/observability-runbook.md#mysql-pool-exhausted"
+
+  - name: devcircle-events
+    rules:
+      - alert: DevCircleOutboxFleetIncomplete
+        expr: devcircle_outbox_fleet_complete{service="dc-admin"} == 0
+        for: 2m
+        labels: { severity: critical, team: platform }
+        annotations:
+          summary: "Outbox fleet snapshot is incomplete"
+          description: "At least one transactional outbox source is unavailable; known counts are not fleet totals."
+          runbook_url: "https://github.com/wangyufanshuai/DevCircle/blob/main/docs/observability-runbook.md#outbox-fleet-incomplete"
+
+      - alert: DevCircleOutboxDead
+        expr: devcircle_outbox_fleet_dead{service="dc-admin"} > 0
+        for: 2m
+        labels: { severity: critical, team: platform }
+        annotations:
+          summary: "Dead outbox events require operator action"
+          description: "{{ $value }} known outbox events exhausted automatic retries."
+          runbook_url: "https://github.com/wangyufanshuai/DevCircle/blob/main/docs/observability-runbook.md#outbox-dead-or-blocked"
+
+      - alert: DevCircleOutboxBlocked
+        expr: devcircle_outbox_fleet_blocked{service="dc-admin"} > 0
+        for: 2m
+        labels: { severity: critical, team: platform }
+        annotations:
+          summary: "Outbox streams are blocked behind dead events"
+          description: "{{ $value }} events cannot publish until their dead predecessor is handled."
+          runbook_url: "https://github.com/wangyufanshuai/DevCircle/blob/main/docs/observability-runbook.md#outbox-dead-or-blocked"
+
+      - alert: DevCircleOutboxBacklogHigh
+        expr: devcircle_outbox_fleet_backlog{service="dc-admin"} > 100
+        for: 10m
+        labels: { severity: warning, team: platform }
+        annotations:
+          summary: "Outbox backlog remains high"
+          description: "Known fleet backlog has remained above 100 for 10 minutes."
+          runbook_url: "https://github.com/wangyufanshuai/DevCircle/blob/main/docs/observability-runbook.md#outbox-backlog-high"
+
+      - alert: DevCircleOutboxMetricsMissing
+        expr: absent(devcircle_outbox_fleet_complete{service="dc-admin"})
+        for: 5m
+        labels: { severity: warning, team: platform }
+        annotations:
+          summary: "Outbox fleet metrics are missing"
+          description: "Prometheus has not observed the Admin outbox fleet gauges for 5 minutes."
+          runbook_url: "https://github.com/wangyufanshuai/DevCircle/blob/main/docs/observability-runbook.md#outbox-fleet-incomplete"

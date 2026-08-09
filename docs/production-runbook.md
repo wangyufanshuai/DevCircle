@@ -6,6 +6,7 @@
 - 正式域名的 A/AAAA 记录已指向主机，80/443 可入站；Caddy 自动申请 TLS。
 - 已准备隐私政策、用户协议及适用的备案/合规材料。
 - 从 `.env.production.example` 创建权限为 `0600` 的 `.env.production`，所有占位值都必须替换；`IMAGE_TAG` 必须是 40 位提交 SHA。
+- 从 `deploy/alertmanager/alertmanager.example.yml` 创建宿主机私有配置，替换 webhook，并将其绝对路径写入 `ALERTMANAGER_CONFIG_PATH`；真实通知凭据不得提交仓库。
 - 密钥使用 Base64URL 等不含 `$` 的字符集；Compose 会把未转义的 `$变量` 当作插值并可能静默截断密码。
 
 ## 首次发布
@@ -20,7 +21,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d mysql
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 ```
 
-生产 Compose 将21个容器的内存上限控制在合计14 GiB，只允许 `web` 与 `dc-gateway` 发布宿主机端口。14个 JVM 服务单实例限制为512 MiB、0.75 CPU和256个 PID，Java 最大堆按容器内存的60%计算；数据库连接池默认每服务最多8个连接。MySQL、Kafka和Elasticsearch分别设置显式缓存或堆上限，为16GB目标主机保留约2GB给操作系统与 Docker。该预算是防止资源失控的上限，不代表性能验收已经通过；发布前仍必须执行50并发 k6 和目标主机观测。
+生产 Compose 将24个容器的内存上限控制在约14.63 GiB，只允许 `web` 与 `dc-gateway` 发布宿主机端口。14个 JVM 服务单实例限制为512 MiB、0.75 CPU和256个 PID，Java 最大堆按容器内存的60%计算；数据库连接池默认每服务最多8个连接。内部 Prometheus 保留35天/最多1GB指标，Alertmanager使用宿主机私有路由配置，Jaeger使用持久化Badger存储。该预算是防止资源失控的上限，不代表性能验收已经通过；发布前仍必须执行50并发 k6 和目标主机观测。
 
 生产编排发布 Caddy Web 的 80/443，并仅把 Gateway 的 8080 绑定到宿主机 `127.0.0.1`，供本机诊断使用。公网 API 统一经过 Caddy 与 Web Nginx 转发；MySQL、Redis、Kafka、Elasticsearch、MinIO、Gateway Actuator 与领域服务均不能从公网直接访问。Caddy 管理 API 同样只监听容器内 localhost。
 
@@ -107,3 +108,5 @@ curl -fsS -X POST https://<domain>/api/admin/ops/dlt/replay \
 - DLT 发布等待时间由 `KAFKA_DLT_PUBLISH_TIMEOUT_MS` 控制（默认 5000ms）；DLT broker 未确认时源消息不得提交 offset。
 - 磁盘低于 80%，备份校验和每天成功，证书续期无错误。
 - 写接口失败时必须带公开错误码和 `traceId`，日志中按 `traceId` 关联，禁止向页面暴露内部服务名或堆栈。
+- `devcircle:gateway_availability:ratio30d` 不低于 0.995，读取/写入 P95 分别低于 0.3/0.6 秒；燃烧率告警按 [`observability-runbook.md`](observability-runbook.md) 处置。
+- Alertmanager 必须有真实通知接收方并完成一次测试告警；生产不得使用仓库中的 `dev-null` 或 `.invalid` 示例接收器。

@@ -183,10 +183,21 @@ jobs:
       - run: docker compose --profile infra config
       - run: docker compose --profile demo config
       - run: docker compose --env-file .env.production.example -f docker-compose.prod.yml config --quiet
+      - name: Validate Prometheus rules and configs
+        run: |
+          docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check rules /etc/prometheus/slo.yml /etc/prometheus/alerts.yml
+          docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check config /etc/prometheus/prometheus.yml
+          docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check config /etc/prometheus/prometheus.prod.yml
+      - name: Validate Alertmanager routes and Grafana dashboard
+        run: |
+          docker run --rm -v "$PWD/deploy/alertmanager:/etc/alertmanager:ro" --entrypoint /bin/amtool prom/alertmanager:v0.29.0 check-config /etc/alertmanager/alertmanager.dev.yml
+          docker run --rm -v "$PWD/deploy/alertmanager:/etc/alertmanager:ro" --entrypoint /bin/amtool prom/alertmanager:v0.29.0 check-config /etc/alertmanager/alertmanager.example.yml
+          python -m json.tool deploy/grafana/dashboards/devcircle-overview.json > /dev/null
       - run: python -m unittest scripts/ops/test_assert_production_resource_budgets.py
       - run: python -m unittest scripts/ops/test_assert_critical_state_coverage.py
       - run: python -m unittest scripts/ops/test_assert_migration_versions.py
       - run: python -m unittest scripts/ops/test_k6_contract.py
+      - run: python -m unittest scripts/ops/test_linux_acceptance_contract.py
       - run: python scripts/ops/assert-production-resource-budgets.py
 
   source-sbom:

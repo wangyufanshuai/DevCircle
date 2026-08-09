@@ -28,6 +28,8 @@ def app_environment() -> dict[str, str]:
         "DEVCIRCLE_THEME_CONTENT_SEED_ENABLED": "false",
         "SPRINGDOC_API_DOCS_ENABLED": "false",
         "SPRINGDOC_SWAGGER_UI_ENABLED": "false",
+        "MANAGEMENT_METRICS_DISTRIBUTION_PERCENTILES_HISTOGRAM_HTTP_SERVER_REQUESTS": "true",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://jaeger:4318",
         "DEVCIRCLE_INTERNAL_OPS_KEY": "Ops-4w-N8-kR2-sV7-xM5-qL9-cD1-pT6-yH",
     }
 
@@ -75,6 +77,18 @@ def valid_compose() -> dict:
                 {"published": 443, "target": 443, "protocol": "udp"},
             ],
         },
+        "prometheus": {
+            **service(256 * budgets.MIB),
+            "command": [
+                "--storage.tsdb.retention.time=35d",
+                "--storage.tsdb.retention.size=1GB",
+            ],
+        },
+        "alertmanager": service(128 * budgets.MIB),
+        "jaeger": {
+            **service(256 * budgets.MIB),
+            "environment": {"SPAN_STORAGE_TYPE": "badger", "BADGER_EPHEMERAL": "false"},
+        },
     })
     services["dc-gateway"]["ports"] = [
         {"host_ip": "127.0.0.1", "published": 8080, "target": 8080, "protocol": "tcp"},
@@ -86,10 +100,10 @@ class ProductionResourceBudgetTest(unittest.TestCase):
     def setUp(self) -> None:
         self.compose = valid_compose()
 
-    def test_accepts_the_21_service_production_contract(self) -> None:
+    def test_accepts_the_24_service_production_contract(self) -> None:
         service_count, total_memory = budgets.validate(self.compose)
 
-        self.assertEqual(21, service_count)
+        self.assertEqual(24, service_count)
         self.assertLessEqual(total_memory, 15 * budgets.GIB)
 
     def test_rejects_missing_internal_operations_key(self) -> None:

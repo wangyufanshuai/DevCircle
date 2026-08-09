@@ -118,5 +118,7 @@ docker compose --profile demo config
 - [推荐实验平台](docs/recommendation-experiment.md)
 - [云服务器 Docker 部署](docs/deployment-cloud-docker.md)
 - [压测报告](docs/performance-report.md)
+- [服务等级目标](docs/service-level-objectives.md)
+- [可观测告警运行手册](docs/observability-runbook.md)
 - [OAuth2 与安全](docs/oauth2-security.md)
 - [推荐系统](docs/ml-recommendation.md)

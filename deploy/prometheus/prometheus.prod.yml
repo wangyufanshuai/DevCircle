@@ -1,0 +1,45 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/slo.yml
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: devcircle
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["dc-gateway:8080"]
+        labels: { service: dc-gateway }
+      - targets: ["dc-identity:8201"]
+        labels: { service: dc-identity }
+      - targets: ["dc-content-aggregate:8202"]
+        labels: { service: dc-content-aggregate }
+      - targets: ["dc-discovery:8203"]
+        labels: { service: dc-discovery }
+      - targets: ["dc-auth:8101"]
+        labels: { service: dc-auth }
+      - targets: ["dc-user:8102"]
+        labels: { service: dc-user }
+      - targets: ["dc-content:8103"]
+        labels: { service: dc-content }
+      - targets: ["dc-comment:8104"]
+        labels: { service: dc-comment }
+      - targets: ["dc-interaction:8105"]
+        labels: { service: dc-interaction }
+      - targets: ["dc-search:8106"]
+        labels: { service: dc-search }
+      - targets: ["dc-recommend:8107"]
+        labels: { service: dc-recommend }
+      - targets: ["dc-notification:8108"]
+        labels: { service: dc-notification }
+      - targets: ["dc-file:8109"]
+        labels: { service: dc-file }
+      - targets: ["dc-admin:8110"]
+        labels: { service: dc-admin }

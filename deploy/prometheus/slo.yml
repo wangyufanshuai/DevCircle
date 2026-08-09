@@ -1,0 +1,114 @@
+groups:
+  - name: devcircle-slo-recording
+    interval: 30s
+    rules:
+      - record: devcircle:gateway_requests:rate5m
+        expr: sum(rate(http_server_requests_seconds_count{job="devcircle",service="dc-gateway"}[5m]))
+
+      - record: devcircle:gateway_errors:ratio5m
+        expr: |
+          sum(rate(http_server_requests_seconds_count{job="devcircle",service="dc-gateway",status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(http_server_requests_seconds_count{job="devcircle",service="dc-gateway"}[5m])), 0.001)
+
+      - record: devcircle:gateway_availability:ratio30d
+        expr: |
+          1 - (
+            sum(increase(http_server_requests_seconds_count{job="devcircle",service="dc-gateway",status=~"5.."}[30d]))
+            /
+            clamp_min(sum(increase(http_server_requests_seconds_count{job="devcircle",service="dc-gateway"}[30d])), 1)
+          )
+
+      - record: devcircle:gateway_read_p95_seconds:5m
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_server_requests_seconds_bucket{job="devcircle",service="dc-gateway",method=~"GET|HEAD|OPTIONS"}[5m])) by (le)
+          )
+
+      - record: devcircle:gateway_write_p95_seconds:5m
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_server_requests_seconds_bucket{job="devcircle",service="dc-gateway",method=~"POST|PUT|PATCH|DELETE"}[5m])) by (le)
+          )
+
+      - record: devcircle:gateway_error_budget_burn:5m
+        expr: |
+          sum(rate(http_server_requests_seconds_count{job="devcircle",service="dc-gateway",status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(http_server_requests_seconds_count{job="devcircle",service="dc-gateway"}[5m])), 0.001)
+          / 0.005
+
+      - record: devcircle:gateway_error_budget_burn:30m
+        expr: |
+          sum(rate(http_server_requests_seconds_count{job="devcircle",service="dc-gateway",status=~"5.."}[30m]))
+          /
+          clamp_min(sum(rate(http_server_requests_seconds_count{job="devcircle",service="dc-gateway"}[30m])), 0.001)
+          / 0.005
+
+      - record: devcircle:gateway_error_budget_burn:1h
+        expr: |
+          sum(rate(http_server_requests_seconds_count{job="devcircle",service="dc-gateway",status=~"5.."}[1h]))
+          /
+          clamp_min(sum(rate(http_server_requests_seconds_count{job="devcircle",service="dc-gateway"}[1h])), 0.001)
+          / 0.005
+
+      - record: devcircle:gateway_error_budget_burn:6h
+        expr: |
+          sum(rate(http_server_requests_seconds_count{job="devcircle",service="dc-gateway",status=~"5.."}[6h]))
+          /
+          clamp_min(sum(rate(http_server_requests_seconds_count{job="devcircle",service="dc-gateway"}[6h])), 0.001)
+          / 0.005
+
+      - record: devcircle:gateway_error_budget_burn:3d
+        expr: |
+          sum(rate(http_server_requests_seconds_count{job="devcircle",service="dc-gateway",status=~"5.."}[3d]))
+          /
+          clamp_min(sum(rate(http_server_requests_seconds_count{job="devcircle",service="dc-gateway"}[3d])), 0.001)
+          / 0.005
+
+  - name: devcircle-slo-alerts
+    rules:
+      - alert: DevCircleAvailabilityFastBurn
+        expr: devcircle:gateway_error_budget_burn:1h > 14.4 and devcircle:gateway_error_budget_burn:5m > 14.4
+        for: 2m
+        labels: { severity: critical, team: platform, slo: availability }
+        annotations:
+          summary: "Gateway availability is consuming error budget rapidly"
+          description: "The 99.5% availability budget is burning above 14.4x in both the 1h and 5m windows."
+          runbook_url: "https://github.com/wangyufanshuai/DevCircle/blob/main/docs/observability-runbook.md#availability-fast-burn"
+
+      - alert: DevCircleAvailabilitySlowBurn
+        expr: devcircle:gateway_error_budget_burn:6h > 6 and devcircle:gateway_error_budget_burn:30m > 6
+        for: 15m
+        labels: { severity: warning, team: platform, slo: availability }
+        annotations:
+          summary: "Gateway availability is consuming error budget persistently"
+          description: "The 99.5% availability budget is burning above 6x in both the 6h and 30m windows."
+          runbook_url: "https://github.com/wangyufanshuai/DevCircle/blob/main/docs/observability-runbook.md#availability-slow-burn"
+
+      - alert: DevCircleAvailabilityBudgetRisk
+        expr: devcircle:gateway_error_budget_burn:3d > 1 and devcircle:gateway_error_budget_burn:6h > 1
+        for: 1h
+        labels: { severity: warning, team: platform, slo: availability }
+        annotations:
+          summary: "Gateway availability is projected to exhaust the monthly budget"
+          description: "The 3d and 6h burn rates are above the sustainable 1x rate."
+          runbook_url: "https://github.com/wangyufanshuai/DevCircle/blob/main/docs/observability-runbook.md#availability-budget-risk"
+
+      - alert: DevCircleReadLatencySloMiss
+        expr: devcircle:gateway_read_p95_seconds:5m > 0.3
+        for: 10m
+        labels: { severity: warning, team: platform, slo: read-latency }
+        annotations:
+          summary: "Gateway read p95 exceeds 300ms"
+          description: "User-facing GET/HEAD/OPTIONS latency has exceeded the read SLO for 10 minutes."
+          runbook_url: "https://github.com/wangyufanshuai/DevCircle/blob/main/docs/observability-runbook.md#latency-slo-miss"
+
+      - alert: DevCircleWriteLatencySloMiss
+        expr: devcircle:gateway_write_p95_seconds:5m > 0.6
+        for: 10m
+        labels: { severity: warning, team: platform, slo: write-latency }
+        annotations:
+          summary: "Gateway write p95 exceeds 600ms"
+          description: "User-facing POST/PUT/PATCH/DELETE latency has exceeded the write SLO for 10 minutes."
+          runbook_url: "https://github.com/wangyufanshuai/DevCircle/blob/main/docs/observability-runbook.md#latency-slo-miss"

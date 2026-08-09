@@ -23,6 +23,7 @@ required=(
   IMAGE_TAG DOMAIN PUBLIC_ORIGIN TLS_EMAIL MYSQL_USER MYSQL_PASSWORD MYSQL_ROOT_PASSWORD
   REDIS_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD DEVCIRCLE_JWT_SECRET
   DEVCIRCLE_INTERNAL_OPS_KEY
+  ALERTMANAGER_CONFIG_PATH
 )
 for key in "${required[@]}"; do
   [[ -n "${values[${key}]:-}" ]] || fail "${key} is required"
@@ -65,6 +66,11 @@ domain="${values[DOMAIN]:-}"
 [[ "${domain}" =~ ^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$ ]] || fail "DOMAIN must be a valid public hostname"
 [[ "${values[PUBLIC_ORIGIN]:-}" == "https://${domain}" ]] || fail "PUBLIC_ORIGIN must equal https://DOMAIN"
 [[ "${values[TLS_EMAIL]:-}" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || fail "TLS_EMAIL must be a valid email address"
+
+alertmanager_config="${values[ALERTMANAGER_CONFIG_PATH]:-}"
+[[ "${alertmanager_config}" == /* ]] || fail "ALERTMANAGER_CONFIG_PATH must be an absolute Linux path"
+[[ "${alertmanager_config,,}" != *example* && "${alertmanager_config,,}" != *.invalid* ]] || \
+  fail "ALERTMANAGER_CONFIG_PATH must point to an operator-managed production config"
 
 if [[ "${values[MYSQL_PASSWORD]:-}" == "${values[MYSQL_ROOT_PASSWORD]:-}" ]]; then
   fail "MYSQL_PASSWORD and MYSQL_ROOT_PASSWORD must be different"

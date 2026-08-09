@@ -17,6 +17,8 @@ x-service-env: &service-env
   OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
   OTEL_SERVICE_NAME: devcircle
   MANAGEMENT_TRACING_SAMPLING_PROBABILITY: 1.0
+  MANAGEMENT_METRICS_DISTRIBUTION_PERCENTILES_HISTOGRAM_HTTP_SERVER_REQUESTS: "true"
+  MANAGEMENT_METRICS_DISTRIBUTION_SLO_HTTP_SERVER_REQUESTS: 0.1s,0.3s,0.6s,1s,2s
 
 x-service-build: &service-build
   context: .
@@ -121,6 +123,17 @@ services:
     volumes:
       - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - ./deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml
+      - ./deploy/prometheus/slo.yml:/etc/prometheus/slo.yml
+    depends_on:
+      - alertmanager
+
+  alertmanager:
+    image: prom/alertmanager:v0.29.0
+    profiles: ["infra", "demo"]
+    ports:
+      - "19093:9093"
+    volumes:
+      - ./deploy/alertmanager/alertmanager.dev.yml:/etc/alertmanager/alertmanager.yml:ro
 
   grafana:
     image: grafana/grafana:12.3.0
