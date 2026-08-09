@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 line_min="${MIN_LINE_COVERAGE:-68.0}"
 branch_min="${MIN_BRANCH_COVERAGE:-64.0}"
-required_modules_csv="${REQUIRED_COVERAGE_MODULES:-dc-common,dc-gateway,dc-identity,dc-content-deployment,dc-auth,dc-user,dc-content,dc-comment,dc-interaction,dc-search,dc-recommend,dc-notification,dc-file,dc-admin}"
+required_modules_csv="${REQUIRED_COVERAGE_MODULES:-dc-common,dc-messaging-support,dc-gateway,dc-identity,dc-content-deployment,dc-auth,dc-user,dc-content,dc-comment,dc-interaction,dc-search,dc-recommend,dc-notification,dc-file,dc-admin}"
 allowed_missing_csv="${ALLOW_MISSING_COVERAGE_MODULES:-}"
 
 IFS=',' read -r -a required_modules <<<"${required_modules_csv}"

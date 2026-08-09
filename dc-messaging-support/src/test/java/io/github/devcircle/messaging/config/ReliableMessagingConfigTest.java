@@ -1,6 +1,6 @@
-package io.github.devcircle.common.config;
+package io.github.devcircle.messaging.config;
 
-import io.github.devcircle.common.event.ReliableOutboxWorker;
+import io.github.devcircle.messaging.outbox.ReliableOutboxWorker;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.kafka.core.KafkaTemplate;

@@ -5,6 +5,7 @@
     <artifactId>dc-recommend</artifactId>
     <dependencies>
         <dependency><groupId>io.github.devcircle</groupId><artifactId>dc-common</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>io.github.devcircle</groupId><artifactId>dc-messaging-support</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.github.devcircle</groupId><artifactId>dc-content-contract</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.github.devcircle</groupId><artifactId>dc-seed-data</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>

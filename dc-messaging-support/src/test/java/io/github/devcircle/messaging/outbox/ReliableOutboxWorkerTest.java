@@ -1,4 +1,4 @@
-package io.github.devcircle.common.event;
+package io.github.devcircle.messaging.outbox;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

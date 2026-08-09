@@ -1,7 +1,7 @@
 package io.github.devcircle.admin.application;
 
 import io.github.devcircle.admin.application.query.OutboxFleetSnapshot;
-import io.github.devcircle.common.event.OutboxStatusView;
+import io.github.devcircle.messaging.outbox.OutboxStatusView;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 

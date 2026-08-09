@@ -13,6 +13,7 @@
 
     <modules>
         <module>dc-common</module>
+        <module>dc-messaging-support</module>
         <module>dc-content-contract</module>
         <module>dc-seed-data</module>
         <module>dc-gateway</module>

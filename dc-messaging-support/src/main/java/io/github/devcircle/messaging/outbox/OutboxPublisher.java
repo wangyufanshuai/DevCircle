@@ -1,6 +1,5 @@
-package io.github.devcircle.common.event;
+package io.github.devcircle.messaging.outbox;
 
 public interface OutboxPublisher {
     int publishNewEvents(int batchSize);
 }
-

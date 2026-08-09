@@ -1,4 +1,4 @@
-package io.github.devcircle.common.event;
+package io.github.devcircle.messaging.outbox;
 
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;

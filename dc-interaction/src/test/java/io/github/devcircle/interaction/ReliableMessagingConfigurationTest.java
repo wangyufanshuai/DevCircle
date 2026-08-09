@@ -1,7 +1,7 @@
 package io.github.devcircle.interaction;
 
-import io.github.devcircle.common.config.ReliableMessagingConfig;
-import io.github.devcircle.common.event.ReliableOutboxWorker;
+import io.github.devcircle.messaging.config.ReliableMessagingConfig;
+import io.github.devcircle.messaging.outbox.ReliableOutboxWorker;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.kafka.autoconfigure.KafkaAutoConfiguration;

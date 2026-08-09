@@ -1,7 +1,7 @@
 package io.github.devcircle.content.api;
 
-import io.github.devcircle.common.event.OutboxPublisher;
-import io.github.devcircle.common.event.ReliableOutboxWorker;
+import io.github.devcircle.messaging.outbox.OutboxPublisher;
+import io.github.devcircle.messaging.outbox.ReliableOutboxWorker;
 import io.github.devcircle.content.infrastructure.JdbcOutboxPublisher;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;

@@ -1,4 +1,4 @@
-package io.github.devcircle.common.event;
+package io.github.devcircle.messaging.outbox;
 
 public record OutboxStatusView(
         String service,

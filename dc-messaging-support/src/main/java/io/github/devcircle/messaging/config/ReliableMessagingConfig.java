@@ -1,8 +1,8 @@
-package io.github.devcircle.common.config;
+package io.github.devcircle.messaging.config;
 
-import io.github.devcircle.common.event.ReliableOutboxWorker;
-import io.github.devcircle.common.event.OutboxInternalController;
-import io.github.devcircle.common.event.OutboxStatusService;
+import io.github.devcircle.messaging.outbox.ReliableOutboxWorker;
+import io.github.devcircle.messaging.outbox.OutboxInternalController;
+import io.github.devcircle.messaging.outbox.OutboxStatusService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -14,10 +14,8 @@ import org.springframework.kafka.core.KafkaTemplate;
 /**
  * Kafka outbox publishing configuration.
  *
- * Keeping Kafka types out of {@link CommonWebConfig} is important because
- * {@code dc-common} is intentionally an optional dependency. Services such
- * as dc-user must be able to start without the Kafka client on their runtime
- * classpath.
+ * Kept in a dedicated non-deployment support library so {@code dc-common}
+ * does not pull JDBC and Kafka infrastructure into every domain module.
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnClass(name = "org.springframework.kafka.core.KafkaTemplate")

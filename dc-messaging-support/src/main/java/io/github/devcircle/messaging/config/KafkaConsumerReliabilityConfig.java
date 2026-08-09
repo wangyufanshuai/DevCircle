@@ -1,4 +1,4 @@
-package io.github.devcircle.common.config;
+package io.github.devcircle.messaging.config;
 
 import org.apache.kafka.common.TopicPartition;
 import org.springframework.beans.factory.ObjectProvider;

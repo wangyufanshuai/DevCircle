@@ -1,6 +1,6 @@
 package io.github.devcircle.content.infrastructure;
 
-import io.github.devcircle.common.event.ReliableOutboxWorker;
+import io.github.devcircle.messaging.outbox.ReliableOutboxWorker;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;

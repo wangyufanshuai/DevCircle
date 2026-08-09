@@ -1,4 +1,4 @@
-package io.github.devcircle.common.event;
+package io.github.devcircle.messaging.outbox;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 

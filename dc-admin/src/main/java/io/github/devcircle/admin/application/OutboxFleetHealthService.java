@@ -2,7 +2,7 @@ package io.github.devcircle.admin.application;
 
 import io.github.devcircle.admin.application.query.OutboxFleetSnapshot;
 import io.github.devcircle.admin.application.query.OutboxSourceView;
-import io.github.devcircle.common.event.OutboxStatusView;
+import io.github.devcircle.messaging.outbox.OutboxStatusView;
 import io.github.devcircle.common.http.BoundedRestClientFactory;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;

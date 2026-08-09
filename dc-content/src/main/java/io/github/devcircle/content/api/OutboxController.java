@@ -1,7 +1,7 @@
 package io.github.devcircle.content.api;
 
 import io.github.devcircle.common.api.ApiResponse;
-import io.github.devcircle.common.event.OutboxPublisher;
+import io.github.devcircle.messaging.outbox.OutboxPublisher;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;

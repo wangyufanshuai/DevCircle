@@ -1,4 +1,4 @@
-package io.github.devcircle.common.event;
+package io.github.devcircle.messaging.outbox;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -14,4 +14,3 @@ public record OutboxEventRecord(
         Instant createdAt
 ) {
 }
-

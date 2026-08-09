@@ -1,4 +1,4 @@
-package io.github.devcircle.common.event;
+package io.github.devcircle.messaging.outbox;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

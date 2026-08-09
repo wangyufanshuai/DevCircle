@@ -55,4 +55,21 @@ if (cd "${TEMP_ROOT}" && REQUIRED_COVERAGE_MODULES=dc-alpha \
 fi
 grep -q 'Coverage regression: line 75.00% < 76%' "${TEMP_ROOT}/regression.err"
 
+# The default gate must require the extracted messaging support module as well.
+rm -rf -- "${TEMP_ROOT}/dc-alpha" "${TEMP_ROOT}/dc-beta"
+default_modules=(
+  dc-common dc-messaging-support dc-gateway dc-identity dc-content-deployment
+  dc-auth dc-user dc-content dc-comment dc-interaction dc-search dc-recommend
+  dc-notification dc-file dc-admin
+)
+for module in "${default_modules[@]}"; do
+  write_report "${module}" 0 1 0 1
+done
+rm -f "${TEMP_ROOT}/dc-messaging-support/target/site/jacoco/jacoco.xml"
+if (cd "${TEMP_ROOT}" && bash "${ASSERT_COVERAGE}" >/dev/null 2>"${TEMP_ROOT}/default-missing.err"); then
+  echo "Expected a missing dc-messaging-support report to fail the default coverage gate" >&2
+  exit 1
+fi
+grep -q 'Missing required JaCoCo reports for: dc-messaging-support' "${TEMP_ROOT}/default-missing.err"
+
 echo "Coverage assertion tests passed"

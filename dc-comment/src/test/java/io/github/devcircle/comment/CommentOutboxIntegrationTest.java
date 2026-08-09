@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.comment.application.PostPublicationGateway;
 import io.github.devcircle.comment.infrastructure.CommentRepository;
 import io.github.devcircle.common.event.EventTopics;
-import io.github.devcircle.common.event.ReliableOutboxWorker;
+import io.github.devcircle.messaging.outbox.ReliableOutboxWorker;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
