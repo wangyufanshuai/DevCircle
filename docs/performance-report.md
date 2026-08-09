@@ -23,6 +23,31 @@ READ_VUS=40 WRITE_VUS=10 DURATION=3m \
 k6 run tests/k6/mysticverse-smoke.js
 ```
 
+目标 Linux 主机应使用证据化执行器，而不是直接调用 k6：
+
+```bash
+ENV_FILE=.env.production \
+BASE_URL=http://127.0.0.1:8080 \
+POST_ID=1001 \
+TOKENS="token-user-1,token-user-2" \
+ADMIN_TOKEN="token-admin" \
+bash scripts/performance/run-linux-acceptance.sh
+```
+
+`run-linux-acceptance.sh` 会强制要求 Linux、至少 4 CPU、15 GiB 可见内存和 180 GiB
+文件系统容量，并要求 `.env.production` 的 `IMAGE_TAG` 与当前 Git SHA 完全一致、跟踪文件无未提交
+修改。执行器默认运行 40 读 VU、10 写 VU、3 分钟，保留以下不可变验收证据：
+
+- 主机、块设备、Docker 版本和镜像 SHA；
+- 压测前后的 Compose 状态与容器资源快照；
+- k6 JSON 摘要、完整输出和退出码；
+- Gateway 压测前后 readiness；
+- Admin Outbox fleet 完整性快照；
+- Prometheus 可用性、读写 P95、Outbox 完整性和积压查询结果；
+- 全部 JSON/TXT 证据的 `SHA256SUMS`。
+
+执行失败时证据仍会保留，但退出码非零，不得把存在证据目录解释为验收通过。
+
 场景覆盖：
 
 - 推荐 Feed、搜索和正式详情路由。

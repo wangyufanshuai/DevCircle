@@ -4,6 +4,7 @@ target/
 node_modules/
 dist/
 coverage/
+artifacts/
 __pycache__/
 *.py[cod]
 playwright-report/
