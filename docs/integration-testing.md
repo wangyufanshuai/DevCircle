@@ -4,7 +4,7 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 ## 当前证据边界
 
-截至 2026-08-09，当前 HEAD 为 `7da4fd9`。Windows 本机已证明内容写侧切片编译成功，`PostRepositoryStateTest` 15 项和元数据策略测试 2 项通过；此前执行内容模块全量命令时发生环境超时，最新 HEAD 的完整 `clean verify -Pcoverage` 尚未证明通过。因此本文下方带日期的全仓、Testcontainers 和 Compose 结果均为历史证据，不能当作当前 HEAD 的全仓通过结论。
+截至 2026-08-09，当前 HEAD 为 `4eac841`。Windows 本机已证明内容写侧切片编译成功，`PostRepositoryStateTest` 15 项和元数据策略测试 2 项通过；搜索架构切片编译成功，22 项搜索契约测试通过（使用 E 盘临时目录规避本机 C 盘空间限制）。此前执行内容模块全量命令时发生环境超时，最新 HEAD 的完整 `clean verify -Pcoverage` 尚未证明通过。因此本文下方带日期的全仓、Testcontainers 和 Compose 结果均为历史证据，不能当作当前 HEAD 的全仓通过结论。
 
 ## 验证证据时间线
 
