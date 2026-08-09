@@ -31,7 +31,7 @@ x-app-env: &app-env
   DEVCIRCLE_PRODUCTION_MODE: "true"
   DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
   DEVCIRCLE_THEME_CONTENT_SEED_ENABLED: "false"
-  DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
+  DEVCIRCLE_CONTENT_BASE_URL: http://dc-content-aggregate:8202
   AUTH_COOKIE_SECURE: "true"
   SPRINGDOC_API_DOCS_ENABLED: "false"
   SPRINGDOC_SWAGGER_UI_ENABLED: "false"
@@ -251,16 +251,6 @@ services:
       kafka: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8102/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
-  dc-content:
-    <<: *app-defaults
-    image: ghcr.io/wangyufanshuai/devcircle/dc-content:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
-    environment: *app-env
-    expose: ["8103"]
-    depends_on:
-      mysql: { condition: service_healthy }
-      kafka: { condition: service_healthy }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8103/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
-
   dc-comment:
     <<: *app-defaults
     image: ghcr.io/wangyufanshuai/devcircle/dc-comment:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
@@ -290,7 +280,7 @@ services:
     depends_on:
       redis: { condition: service_healthy }
       kafka: { condition: service_healthy }
-      dc-content: { condition: service_healthy }
+      dc-content-aggregate: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8107/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
   dc-notification:
@@ -303,17 +293,6 @@ services:
       kafka: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8108/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
-  dc-file:
-    <<: *app-defaults
-    image: ghcr.io/wangyufanshuai/devcircle/dc-file:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
-    environment: *app-env
-    expose: ["8109"]
-    depends_on:
-      mysql: { condition: service_healthy }
-      minio: { condition: service_healthy }
-      dc-content: { condition: service_healthy }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8109/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
-
   dc-admin:
     <<: *app-defaults
     image: ghcr.io/wangyufanshuai/devcircle/dc-admin:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
@@ -321,7 +300,7 @@ services:
       <<: *app-env
       DC_AUTH_URI: http://dc-identity:8201
       DC_USER_URI: http://dc-user:8102
-      DC_CONTENT_URI: http://dc-content:8103
+      DC_CONTENT_URI: http://dc-content-aggregate:8202
       DC_COMMENT_URI: http://dc-comment:8104
       DC_INTERACTION_URI: http://dc-interaction:8105
     expose: ["8110"]
@@ -329,6 +308,7 @@ services:
       mysql: { condition: service_healthy }
       kafka: { condition: service_healthy }
       dc-identity: { condition: service_healthy }
+      dc-content-aggregate: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8110/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
   dc-identity:
@@ -337,7 +317,7 @@ services:
     environment:
       <<: *app-env
       DC_USER_URI: http://dc-user:8102
-      DC_CONTENT_URI: http://dc-content:8103
+      DC_CONTENT_URI: http://dc-content-aggregate:8202
       DC_INTERACTION_URI: http://dc-interaction:8105
       DC_NOTIFICATION_URI: http://dc-notification:8108
     expose: ["8201"]
@@ -346,7 +326,7 @@ services:
       redis: { condition: service_healthy }
       kafka: { condition: service_healthy }
       dc-user: { condition: service_healthy }
-      dc-content: { condition: service_healthy }
+      dc-content-aggregate: { condition: service_healthy }
       dc-interaction: { condition: service_healthy }
       dc-notification: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8201/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
@@ -356,20 +336,13 @@ services:
     image: ghcr.io/wangyufanshuai/devcircle/dc-content-aggregate:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
     environment:
       <<: *app-env
-      DC_CONTENT_URI: http://dc-content:8103
       DC_USER_URI: http://dc-user:8102
       DC_INTERACTION_URI: http://dc-interaction:8105
-      DC_COMMENT_URI: http://dc-comment:8104
-      DC_FILE_URI: http://dc-file:8109
-      DC_ADMIN_URI: http://dc-admin:8110
     expose: ["8202"]
     depends_on:
-      dc-content: { condition: service_healthy }
-      dc-user: { condition: service_healthy }
-      dc-interaction: { condition: service_healthy }
-      dc-comment: { condition: service_healthy }
-      dc-file: { condition: service_healthy }
-      dc-admin: { condition: service_healthy }
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      minio: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8202/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
   dc-discovery:
@@ -381,7 +354,7 @@ services:
       mysql: { condition: service_healthy }
       elasticsearch: { condition: service_healthy }
       kafka: { condition: service_healthy }
-      dc-content: { condition: service_healthy }
+      dc-content-aggregate: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8203/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
   dc-gateway:
@@ -399,12 +372,16 @@ services:
       DC_USER_URI: http://dc-user:8102
       DC_INTERACTION_URI: http://dc-interaction:8105
       DC_NOTIFICATION_URI: http://dc-notification:8108
+      DC_COMMENT_URI: http://dc-comment:8104
+      DC_ADMIN_URI: http://dc-admin:8110
     ports: ["127.0.0.1:8080:8080"]
     depends_on:
       dc-identity: { condition: service_healthy }
       dc-content-aggregate: { condition: service_healthy }
       dc-discovery: { condition: service_healthy }
       dc-recommend: { condition: service_healthy }
+      dc-comment: { condition: service_healthy }
+      dc-admin: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
   web-static:

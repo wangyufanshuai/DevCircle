@@ -29,9 +29,9 @@ test -d "${ROOT_DIR}/web/node_modules" || { echo "Run npm ci in web before the r
 require_real_e2e_docker "review E2E"
 
 if command -v java >/dev/null 2>&1; then
-  "${ROOT_DIR}/mvnw" -q -pl dc-identity,dc-content,dc-admin,dc-gateway -am -DskipTests package
+  "${ROOT_DIR}/mvnw" -q -pl dc-identity,dc-content-deployment,dc-admin,dc-gateway -am -DskipTests package
 elif command -v cmd.exe >/dev/null 2>&1; then
-  (cd "${ROOT_DIR}" && cmd.exe /d /c "mvnw.cmd -q -pl dc-identity,dc-content,dc-admin,dc-gateway -am -DskipTests package")
+  (cd "${ROOT_DIR}" && cmd.exe /d /c "mvnw.cmd -q -pl dc-identity,dc-content-deployment,dc-admin,dc-gateway -am -DskipTests package")
 else
   echo "Java 21 is required to package the real E2E services" >&2
   exit 2

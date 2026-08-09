@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AggregateRouteContractTest {
     @Test
-    void contentRequestsCannotBypassTheContentAggregateFacade() throws IOException {
+    void contentAndMediaUseTheServletAggregateWhileCommentAndAdminStayIndependent() throws IOException {
         String configuration;
         try (InputStream resource = getClass().getClassLoader()
                 .getResourceAsStream("application-aggregate.yml")) {
@@ -21,9 +21,13 @@ class AggregateRouteContractTest {
         }
 
         assertThat(configuration).contains("id: content-aggregate")
-                .contains("Path=/api/posts/**,/api/deduction/**,/api/content/**,/api/comments/**,/api/files/**,/api/admin/**")
-                .doesNotContain("id: content-comments")
-                .doesNotContain("DC_COMMENT_URI:http://localhost:8104");
+                .contains("uri: ${DC_CONTENT_AGGREGATE_URI:http://localhost:8202}")
+                .contains("Path=/api/posts/**,/api/deduction/**,/api/content/**,/api/files/**")
+                .contains("id: content-comments")
+                .contains("uri: ${DC_COMMENT_URI:http://localhost:8104}")
+                .contains("id: content-moderation")
+                .contains("uri: ${DC_ADMIN_URI:http://localhost:8110}")
+                .doesNotContain("DC_CONTENT_URI:http://localhost:8103");
     }
 
     @Test

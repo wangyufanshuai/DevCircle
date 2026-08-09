@@ -1,0 +1,127 @@
+# Optional rollback overlay for an image that predates the embedded content/media runtime.
+# It restores the standalone executable dc-content and dc-file services and turns the
+# previous dc-content-aggregate image back into its compatibility proxy role.
+services:
+  dc-content:
+    image: ghcr.io/wangyufanshuai/devcircle/dc-content:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    restart: unless-stopped
+    stop_grace_period: 40s
+    mem_limit: 512m
+    cpus: 0.75
+    pids_limit: 256
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-devcircle}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      DEVCIRCLE_PRODUCTION_MODE: "true"
+      DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
+      DEVCIRCLE_THEME_CONTENT_SEED_ENABLED: "false"
+      DEVCIRCLE_INTERNAL_OPS_KEY: ${DEVCIRCLE_INTERNAL_OPS_KEY:?DEVCIRCLE_INTERNAL_OPS_KEY is required}
+      DEVCIRCLE_OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-50}
+      DEVCIRCLE_OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-8}
+      DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS: ${OUTBOX_SEND_TIMEOUT_MS:-15000}
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60.0 -XX:InitialRAMPercentage=20.0 -XX:+ExitOnOutOfMemoryError"
+    expose: ["8103"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8103/actuator/health/readiness"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    networks: [devcircle]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  dc-file:
+    image: ghcr.io/wangyufanshuai/devcircle/dc-file:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    restart: unless-stopped
+    stop_grace_period: 40s
+    mem_limit: 512m
+    cpus: 0.75
+    pids_limit: 256
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-devcircle}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      S3_ENDPOINT: http://minio:9000
+      S3_PRESIGN_ENDPOINT: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN is required}
+      S3_PUBLIC_BASE_URL: ${PUBLIC_ORIGIN}/devcircle
+      S3_BUCKET: devcircle
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      DEVCIRCLE_PRODUCTION_MODE: "true"
+      DEVCIRCLE_INTERNAL_OPS_KEY: ${DEVCIRCLE_INTERNAL_OPS_KEY:?DEVCIRCLE_INTERNAL_OPS_KEY is required}
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60.0 -XX:InitialRAMPercentage=20.0 -XX:+ExitOnOutOfMemoryError"
+    expose: ["8109"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      minio: { condition: service_healthy }
+      dc-content: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8109/actuator/health/readiness"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    networks: [devcircle]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  dc-content-aggregate:
+    environment:
+      DC_CONTENT_URI: http://dc-content:8103
+      DC_USER_URI: http://dc-user:8102
+      DC_INTERACTION_URI: http://dc-interaction:8105
+      DC_COMMENT_URI: http://dc-comment:8104
+      DC_FILE_URI: http://dc-file:8109
+      DC_ADMIN_URI: http://dc-admin:8110
+    depends_on:
+      dc-content: { condition: service_healthy }
+      dc-user: { condition: service_healthy }
+      dc-interaction: { condition: service_healthy }
+      dc-comment: { condition: service_healthy }
+      dc-file: { condition: service_healthy }
+
+  dc-identity:
+    environment:
+      DC_CONTENT_URI: http://dc-content:8103
+    depends_on:
+      dc-content: { condition: service_healthy }
+
+  dc-comment:
+    environment:
+      DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
+    depends_on:
+      dc-content: { condition: service_healthy }
+
+  dc-interaction:
+    environment:
+      DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
+    depends_on:
+      dc-content: { condition: service_healthy }
+
+  dc-recommend:
+    environment:
+      DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
+    depends_on:
+      dc-content: { condition: service_healthy }
+
+  dc-discovery:
+    environment:
+      DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
+    depends_on:
+      dc-content: { condition: service_healthy }
+
+  dc-admin:
+    environment:
+      DC_CONTENT_URI: http://dc-content:8103
+    depends_on:
+      dc-content: { condition: service_healthy }

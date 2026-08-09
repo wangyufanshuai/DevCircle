@@ -16,8 +16,8 @@ from urllib.parse import urlsplit
 MIB = 1024 * 1024
 GIB = 1024 * MIB
 APP_SERVICES = {
-    "dc-admin", "dc-comment", "dc-content", "dc-content-aggregate",
-    "dc-discovery", "dc-file", "dc-gateway", "dc-identity", "dc-interaction",
+    "dc-admin", "dc-comment", "dc-content-aggregate",
+    "dc-discovery", "dc-gateway", "dc-identity", "dc-interaction",
     "dc-notification", "dc-recommend", "dc-user",
 }
 OBSERVABILITY_SERVICES = {"prometheus", "alertmanager", "jaeger"}
@@ -51,6 +51,10 @@ HELM_GATEWAY_ENVIRONMENT = {
     "DC_SEARCH_URI": "http://dc-discovery:8203",
     "DC_RECOMMEND_URI": "http://dc-recommend:8107",
 }
+PRODUCTION_MODE_APPLICATIONS = (
+    "dc-auth", "dc-identity", "dc-content-deployment", "dc-content",
+    "dc-user", "dc-comment", "dc-interaction",
+)
 
 
 def fail(message: str) -> None:
@@ -109,6 +113,20 @@ def validate_caddyfile(caddyfile: Path) -> None:
         fail("Caddy admin API must listen on localhost:2019")
     if "admin 0.0.0.0:" in text or "admin :2019" in text:
         fail("Caddy admin API must not listen on all container interfaces")
+
+
+def validate_production_mode_bindings(root: Path) -> None:
+    expected = re.compile(
+        r"(?m)^\s{2}production:\s*\$\{DEVCIRCLE_PRODUCTION_MODE:false\}\s*$"
+    )
+    for module in PRODUCTION_MODE_APPLICATIONS:
+        application = root / module / "src/main/resources/application.yml"
+        try:
+            text = application.read_text(encoding="utf-8")
+        except OSError as error:
+            fail(f"cannot read {module} production configuration: {error}")
+        if expected.search(text) is None:
+            fail(f"{module} must bind DEVCIRCLE_PRODUCTION_MODE to devcircle.production")
 
 
 def _without_yaml_comment(line: str) -> str:
@@ -304,6 +322,10 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
     if "DC_AUTH_URI" in identity_environment or "DC_AUTH_URI" in global_environment:
         fail("Helm identity must embed authentication instead of proxying DC_AUTH_URI")
     public_origin = _public_https_origin(values.get("publicOrigin"), "publicOrigin")
+    if global_environment.get("S3_PRESIGN_ENDPOINT") != public_origin:
+        fail("Helm S3_PRESIGN_ENDPOINT must match publicOrigin")
+    if global_environment.get("S3_PUBLIC_BASE_URL") != f"{public_origin}/devcircle":
+        fail("Helm S3_PUBLIC_BASE_URL must derive from publicOrigin")
     if str(identity_environment.get("AUTH_COOKIE_SECURE", "")).lower() != "true":
         fail("Helm production identity must set AUTH_COOKIE_SECURE=true")
     if identity_environment.get("PUBLIC_ORIGIN") != public_origin:
@@ -360,6 +382,8 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
         "production identity GITHUB_CALLBACK_URI must derive from publicOrigin",
         "production identity must project GitHub OAuth credentials from a Secret",
         "production services must project DEVCIRCLE_INTERNAL_OPS_KEY from a Secret",
+        "production S3_PRESIGN_ENDPOINT must match publicOrigin",
+        "production S3_PUBLIC_BASE_URL must derive from publicOrigin",
     ):
         if required_guard not in template:
             fail(f"Helm service template is missing guard: {required_guard}")
@@ -374,7 +398,7 @@ def validate(data: dict) -> tuple[int, int]:
     unexpected_services = set(services).difference(EXPECTED_SERVICES)
     if missing_services or unexpected_services:
         fail(
-            "production services do not match the 22-service contract: "
+            "production services do not match the 20-service contract: "
             f"missing={sorted(missing_services)} unexpected={sorted(unexpected_services)}"
         )
 
@@ -430,6 +454,13 @@ def validate(data: dict) -> tuple[int, int]:
     admin_environment = services["dc-admin"].get("environment") or {}
     if admin_environment.get("DC_AUTH_URI") != "http://dc-identity:8201":
         fail("dc-admin must read the logical dc-auth Outbox source from dc-identity")
+    content_environment = services["dc-content-aggregate"].get("environment") or {}
+    for key, expected in {
+        "DC_USER_URI": "http://dc-user:8102",
+        "DC_INTERACTION_URI": "http://dc-interaction:8105",
+    }.items():
+        if content_environment.get(key) != expected:
+            fail(f"dc-content-aggregate must set {key}={expected} for detail composition")
     gateway_environment = services["dc-gateway"].get("environment") or {}
     expected_gateway_routes = {
         "DC_AUTH_URI": "http://dc-identity:8201",
@@ -452,7 +483,7 @@ def validate(data: dict) -> tuple[int, int]:
     if "DC_SEARCH_URI" in discovery_environment:
         fail("dc-discovery must embed search instead of proxying DC_SEARCH_URI")
     discovery_dependencies = services["dc-discovery"].get("depends_on") or {}
-    for dependency in ("mysql", "elasticsearch", "kafka", "dc-content"):
+    for dependency in ("mysql", "elasticsearch", "kafka", "dc-content-aggregate"):
         if dependency not in discovery_dependencies:
             fail(f"dc-discovery must depend on {dependency} for the embedded search runtime")
 
@@ -495,6 +526,7 @@ def main() -> int:
     try:
         service_count, total_memory = validate(rendered_compose(args.compose_file, args.env_file))
         validate_caddyfile(args.caddyfile)
+        validate_production_mode_bindings(Path("."))
         validate_helm_topology(
             load_simple_yaml_mapping(args.helm_values),
             load_simple_yaml_mapping(args.helm_prod_values),

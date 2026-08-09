@@ -24,10 +24,18 @@ spring:
               uri: ${DC_NOTIFICATION_URI:http://localhost:8108}
               predicates:
                 - Path=/api/notifications/**,/ws/notifications/**
+            - id: content-comments
+              uri: ${DC_COMMENT_URI:http://localhost:8104}
+              predicates:
+                - Path=/api/comments/**,/api/posts/*/comments/**
+            - id: content-moderation
+              uri: ${DC_ADMIN_URI:http://localhost:8110}
+              predicates:
+                - Path=/api/admin/**
             - id: content-aggregate
               uri: ${DC_CONTENT_AGGREGATE_URI:http://localhost:8202}
               predicates:
-                - Path=/api/posts/**,/api/deduction/**,/api/content/**,/api/comments/**,/api/files/**,/api/admin/**
+                - Path=/api/posts/**,/api/deduction/**,/api/content/**,/api/files/**
             - id: discovery-search
               uri: ${DC_SEARCH_URI:http://localhost:8203}
               predicates:

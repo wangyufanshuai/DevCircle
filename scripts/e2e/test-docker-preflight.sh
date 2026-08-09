@@ -115,6 +115,10 @@ bash -n "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
 bash -n "${ROOT_DIR}/scripts/e2e/verify-community-outbox-dead-recovery.sh"
 bash -n "${ROOT_DIR}/scripts/e2e/run-real-community.sh"
 bash -n "${ROOT_DIR}/scripts/e2e/community-auth-profile.sh"
+grep -q 'dc-content-deployment' "${ROOT_DIR}/scripts/e2e/run-real-content.sh"
+grep -q 'dc-content-deployment' "${ROOT_DIR}/scripts/e2e/run-real-review.sh"
+grep -q 'dc-content-deployment' "${ROOT_DIR}/scripts/e2e/run-real-community.sh"
+grep -q 'dc-content-deployment' "${ROOT_DIR}/scripts/performance/run-local-k6.sh"
 # shellcheck source=community-auth-profile.sh
 source "${ROOT_DIR}/scripts/e2e/community-auth-profile.sh"
 unset REAL_E2E_AUTH_PROFILE
@@ -123,6 +127,7 @@ configure_community_auth_profile
   "dc-identity:8201:http://dc-identity:8201" ]]
 [[ "${COMMUNITY_AUTH_COMPOSE_PROFILES[*]}" == "--profile community" ]]
 [[ "$(community_outbox_runtime_sources | head -n 1)" == "dc-identity:8201:dc-auth" ]]
+grep -qx 'dc-content-aggregate:8202:dc-content' < <(community_outbox_runtime_sources)
 REAL_E2E_AUTH_PROFILE=legacy-auth
 configure_community_auth_profile
 [[ "${COMMUNITY_AUTH_SERVICE}:${COMMUNITY_AUTH_PORT}:${COMMUNITY_AUTH_URI}" == \
@@ -130,6 +135,7 @@ configure_community_auth_profile
 [[ "${COMMUNITY_AUTH_COMPOSE_PROFILES[*]}" == "--profile community --profile legacy-auth" ]]
 [[ "${COMMUNITY_AUTH_MAVEN_MODULE}" == "dc-auth" ]]
 [[ "$(community_outbox_runtime_sources | head -n 1)" == "dc-auth:8101:dc-auth" ]]
+grep -qx 'dc-content-aggregate:8202:dc-content' < <(community_outbox_runtime_sources)
 REAL_E2E_AUTH_PROFILE=unsupported
 if configure_community_auth_profile >/dev/null 2>&1; then
   echo "Unsupported community authentication profiles must fail closed" >&2
@@ -165,8 +171,8 @@ legacy_community_auth_routes="$(grep -E '^      DC_AUTH_URI:' <<<"${legacy_commu
 
 community_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
   --profile community config --services | sort)"
-expected_community_services="$(printf '%s\n' dc-admin dc-comment dc-content dc-gateway dc-identity dc-interaction \
-  dc-notification dc-recommend dc-user kafka mysql redis | sort)"
+expected_community_services="$(printf '%s\n' dc-admin dc-comment dc-content-aggregate dc-gateway dc-identity dc-interaction \
+  dc-notification dc-recommend dc-user kafka minio mysql redis | sort)"
 [[ "${community_services}" == "${expected_community_services}" ]] || {
   echo "Unexpected community services: ${community_services}" >&2
   exit 1
@@ -174,8 +180,8 @@ expected_community_services="$(printf '%s\n' dc-admin dc-comment dc-content dc-g
 
 search_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
   --profile search-recovery config --services | sort)"
-expected_search_services="$(printf '%s\n' dc-admin dc-content dc-discovery dc-gateway dc-identity \
-  elasticsearch kafka mysql redis | sort)"
+expected_search_services="$(printf '%s\n' dc-admin dc-content-aggregate dc-discovery dc-gateway dc-identity \
+  elasticsearch kafka minio mysql redis | sort)"
 [[ "${search_services}" == "${expected_search_services}" ]] || {
   echo "Unexpected search-recovery services: ${search_services}" >&2
   exit 1
@@ -189,8 +195,8 @@ default_search_routes="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" 
 
 legacy_search_services="$(REAL_E2E_SEARCH_URI=http://dc-search:8106 docker compose \
   -f "${ROOT_DIR}/docker-compose.e2e.yml" --profile legacy-search config --services | sort)"
-expected_legacy_search_services="$(printf '%s\n' dc-admin dc-content dc-gateway dc-identity dc-search \
-  elasticsearch kafka mysql redis | sort)"
+expected_legacy_search_services="$(printf '%s\n' dc-admin dc-content-aggregate dc-gateway dc-identity dc-search \
+  elasticsearch kafka minio mysql redis | sort)"
 [[ "${legacy_search_services}" == "${expected_legacy_search_services}" ]] || {
   echo "Unexpected legacy-search services: ${legacy_search_services}" >&2
   exit 1
@@ -213,6 +219,7 @@ grep -q 'DEVCIRCLE_KAFKA_RETRY_MAX_INTERVAL_MS: "5678"' <<<"${search_retry_confi
 grep -q 'DEVCIRCLE_KAFKA_RETRY_MAX_ATTEMPTS: "42"' <<<"${search_retry_config}"
 
 bash -n "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
+grep -q 'dc-content-deployment' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
 grep -q 'stop -t 10 elasticsearch' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
 grep -q 'FAILED' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
 grep -q 'COMPLETED' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"

@@ -25,5 +25,6 @@ logging:
   pattern:
     level: "%5p traceId=%X{traceId:-} userId=%X{userId:-}"
 devcircle:
+  production: ${DEVCIRCLE_PRODUCTION_MODE:false}
   internal:
     content-uri: ${DEVCIRCLE_CONTENT_BASE_URL:http://localhost:8103}

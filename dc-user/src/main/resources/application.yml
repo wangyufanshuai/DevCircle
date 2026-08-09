@@ -38,6 +38,7 @@ logging:
   pattern:
     level: "%5p traceId=%X{traceId:-} userId=%X{userId:-}"
 devcircle:
+  production: ${DEVCIRCLE_PRODUCTION_MODE:false}
   user:
     auth-schema: ${AUTH_MYSQL_DATABASE:dc_auth}
     profile-backfill:

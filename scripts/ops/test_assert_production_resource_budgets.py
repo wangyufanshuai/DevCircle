@@ -110,9 +110,13 @@ def valid_compose() -> dict:
         for name in ("dc-identity", "dc-content-aggregate", "dc-discovery", "dc-recommend")
     }
     services["dc-admin"]["environment"]["DC_AUTH_URI"] = "http://dc-identity:8201"
+    services["dc-content-aggregate"]["environment"].update({
+        "DC_USER_URI": "http://dc-user:8102",
+        "DC_INTERACTION_URI": "http://dc-interaction:8105",
+    })
     services["dc-discovery"]["depends_on"] = {
         name: {"condition": "service_healthy"}
-        for name in ("mysql", "elasticsearch", "kafka", "dc-content")
+        for name in ("mysql", "elasticsearch", "kafka", "dc-content-aggregate")
     }
     return {"services": services}
 
@@ -121,10 +125,10 @@ class ProductionResourceBudgetTest(unittest.TestCase):
     def setUp(self) -> None:
         self.compose = valid_compose()
 
-    def test_accepts_the_22_service_production_contract(self) -> None:
+    def test_accepts_the_20_service_production_contract(self) -> None:
         service_count, total_memory = budgets.validate(self.compose)
 
-        self.assertEqual(22, service_count)
+        self.assertEqual(20, service_count)
         self.assertLessEqual(total_memory, 15 * budgets.GIB)
 
     def test_rejects_missing_internal_operations_key(self) -> None:
@@ -181,7 +185,7 @@ class ProductionResourceBudgetTest(unittest.TestCase):
             budgets.validate(self.compose)
 
     def test_rejects_production_fallback_or_api_documentation(self) -> None:
-        self.compose["services"]["dc-content"]["environment"]["DEVCIRCLE_READ_FALLBACK_ENABLED"] = "true"
+        self.compose["services"]["dc-content-aggregate"]["environment"]["DEVCIRCLE_READ_FALLBACK_ENABLED"] = "true"
         with self.assertRaisesRegex(ValueError, "DEVCIRCLE_READ_FALLBACK_ENABLED=false"):
             budgets.validate(self.compose)
 
@@ -215,6 +219,11 @@ class ProductionResourceBudgetTest(unittest.TestCase):
         self.compose = valid_compose()
         del self.compose["services"]["dc-gateway"]["environment"]["DC_USER_URI"]
         with self.assertRaisesRegex(ValueError, "DC_USER_URI"):
+            budgets.validate(self.compose)
+
+        self.compose = valid_compose()
+        del self.compose["services"]["dc-content-aggregate"]["environment"]["DC_INTERACTION_URI"]
+        with self.assertRaisesRegex(ValueError, "DC_INTERACTION_URI"):
             budgets.validate(self.compose)
 
     def test_rejects_a_standalone_or_proxy_search_production_runtime(self) -> None:
@@ -259,6 +268,9 @@ class HelmTopologyContractTest(unittest.TestCase):
         self.template = (
             ROOT / "deploy/helm/devcircle/templates/services.yaml"
         ).read_text(encoding="utf-8")
+
+    def test_all_reliable_messaging_runtimes_bind_the_production_guard(self) -> None:
+        budgets.validate_production_mode_bindings(ROOT)
 
     def test_accepts_identity_as_the_explicit_helm_auth_runtime_without_helm(self) -> None:
         budgets.validate_helm_topology(self.values, self.production, self.template)
@@ -309,6 +321,22 @@ class HelmTopologyContractTest(unittest.TestCase):
         local_origin["publicOrigin"] = "http://localhost:8080"
         with self.assertRaisesRegex(ValueError, "public HTTPS origin"):
             budgets.validate_helm_topology(self.values, local_origin, self.template)
+
+    def test_rejects_internal_or_mismatched_browser_object_storage_endpoints(self) -> None:
+        internal = copy.deepcopy(self.production)
+        internal["env"]["S3_PRESIGN_ENDPOINT"] = "http://minio:9000"
+        with self.assertRaisesRegex(ValueError, "S3_PRESIGN_ENDPOINT"):
+            budgets.validate_helm_topology(self.values, internal, self.template)
+
+        mismatched = copy.deepcopy(self.production)
+        mismatched["env"]["S3_PUBLIC_BASE_URL"] = "https://assets.example.com/devcircle"
+        with self.assertRaisesRegex(ValueError, "S3_PUBLIC_BASE_URL"):
+            budgets.validate_helm_topology(self.values, mismatched, self.template)
+
+    def test_ingress_routes_the_private_bucket_path_to_object_storage(self) -> None:
+        ingress = (ROOT / "deploy/helm/devcircle/templates/ingress.yaml").read_text(encoding="utf-8")
+        self.assertIn("path: {{ .Values.objectStorage.path }}/", ingress)
+        self.assertIn("name: {{ .Values.objectStorage.serviceName }}", ingress)
 
     def test_rejects_missing_or_unsafe_auth_secret_projections(self) -> None:
         missing_ops = copy.deepcopy(self.values)

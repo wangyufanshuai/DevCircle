@@ -39,7 +39,7 @@ docker image inspect "${K6_IMAGE}" >/dev/null 2>&1 || {
 }
 
 if [[ "${BUILD_MODE}" == "true" ]]; then
-  MODULES="dc-identity,dc-content,dc-interaction,dc-discovery,dc-recommend,dc-gateway"
+  MODULES="dc-identity,dc-content-deployment,dc-interaction,dc-discovery,dc-recommend,dc-gateway"
   if command -v java >/dev/null 2>&1; then
     "${ROOT_DIR}/mvnw" -q -pl "${MODULES}" -am -DskipTests package
   elif command -v cmd.exe >/dev/null 2>&1; then

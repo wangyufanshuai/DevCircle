@@ -54,7 +54,7 @@ source "${ROOT_DIR}/scripts/e2e/docker-preflight.sh"
 cleanup() {
   status=$?
   if (( status != 0 )); then
-    "${COMPOSE[@]}" logs --no-color --tail=240 "${SEARCH_SERVICE}" dc-admin dc-content dc-gateway || true
+    "${COMPOSE[@]}" logs --no-color --tail=240 "${SEARCH_SERVICE}" dc-admin dc-content-aggregate dc-gateway || true
     if [[ "${KEEP_ON_FAILURE}" == "true" ]]; then
       echo "Search recovery environment retained for debugging: project=${PROJECT_NAME}" >&2
       exit "${status}"
@@ -146,15 +146,15 @@ require_real_e2e_docker "search recovery E2E"
 
 if command -v java >/dev/null 2>&1; then
   if [[ "${SEARCH_DEPLOYMENT}" == "discovery" ]]; then
-    "${ROOT_DIR}/mvnw" -q -pl dc-identity,dc-content,dc-admin,dc-discovery,dc-gateway -am -DskipTests package
+    "${ROOT_DIR}/mvnw" -q -pl dc-identity,dc-content-deployment,dc-admin,dc-discovery,dc-gateway -am -DskipTests package
   else
-    "${ROOT_DIR}/mvnw" -q -pl dc-identity,dc-content,dc-admin,dc-search,dc-gateway -am -DskipTests package
+    "${ROOT_DIR}/mvnw" -q -pl dc-identity,dc-content-deployment,dc-admin,dc-search,dc-gateway -am -DskipTests package
   fi
 elif command -v cmd.exe >/dev/null 2>&1; then
   if [[ "${SEARCH_DEPLOYMENT}" == "discovery" ]]; then
-    (cd "${ROOT_DIR}" && cmd.exe /d /c "mvnw.cmd -q -pl dc-identity,dc-content,dc-admin,dc-discovery,dc-gateway -am -DskipTests package")
+    (cd "${ROOT_DIR}" && cmd.exe /d /c "mvnw.cmd -q -pl dc-identity,dc-content-deployment,dc-admin,dc-discovery,dc-gateway -am -DskipTests package")
   else
-    (cd "${ROOT_DIR}" && cmd.exe /d /c "mvnw.cmd -q -pl dc-identity,dc-content,dc-admin,dc-search,dc-gateway -am -DskipTests package")
+    (cd "${ROOT_DIR}" && cmd.exe /d /c "mvnw.cmd -q -pl dc-identity,dc-content-deployment,dc-admin,dc-search,dc-gateway -am -DskipTests package")
   fi
 else
   echo "Java 21 is required to package the real E2E services" >&2

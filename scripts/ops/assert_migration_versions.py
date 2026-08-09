@@ -26,30 +26,36 @@ def canonical_version(raw: str) -> tuple[int, ...]:
 
 def validate(root: Path = ROOT) -> list[str]:
     failures: list[str] = []
-    migrations_by_module: dict[str, dict[tuple[int, ...], list[Path]]] = defaultdict(
+    migrations_by_location: dict[tuple[str, str], dict[tuple[int, ...], list[Path]]] = defaultdict(
         lambda: defaultdict(list)
     )
 
-    for migration_dir in sorted(root.glob("dc-*/src/main/resources/db/migration")):
-        module = migration_dir.relative_to(root).parts[0]
-        for migration in sorted(migration_dir.glob("V*.sql")):
-            match = MIGRATION_NAME.fullmatch(migration.name)
-            if match is None:
-                failures.append(
-                    f"{migration.relative_to(root)}: expected V<version>__<description>.sql"
+    for db_dir in sorted(root.glob("dc-*/src/main/resources/db")):
+        if not db_dir.is_dir():
+            continue
+        module = db_dir.relative_to(root).parts[0]
+        for migration_dir in sorted(path for path in db_dir.iterdir() if path.is_dir()):
+            location = migration_dir.relative_to(db_dir).as_posix()
+            location_key = (module, location)
+            for migration in sorted(migration_dir.glob("V*.sql")):
+                match = MIGRATION_NAME.fullmatch(migration.name)
+                if match is None:
+                    failures.append(
+                        f"{migration.relative_to(root)}: expected V<version>__<description>.sql"
+                    )
+                    continue
+                migrations_by_location[location_key][canonical_version(match.group("version"))].append(
+                    migration.relative_to(root)
                 )
-                continue
-            migrations_by_module[module][canonical_version(match.group("version"))].append(
-                migration.relative_to(root)
-            )
 
-    for module, versions in sorted(migrations_by_module.items()):
+    for (module, location), versions in sorted(migrations_by_location.items()):
         for version, migrations in sorted(versions.items()):
             if len(migrations) < 2:
                 continue
             label = ".".join(str(part) for part in version)
             joined = ", ".join(str(path) for path in migrations)
-            failures.append(f"{module}: duplicate Flyway version {label}: {joined}")
+            scope = module if location == "migration" else f"{module}/{location}"
+            failures.append(f"{scope}: duplicate Flyway version {label}: {joined}")
 
     return failures
 

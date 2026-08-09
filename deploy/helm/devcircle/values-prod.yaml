@@ -25,6 +25,8 @@ env:
   DEVCIRCLE_PRODUCTION_MODE: "true"
   DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
   DEVCIRCLE_THEME_CONTENT_SEED_ENABLED: "false"
+  S3_PRESIGN_ENDPOINT: https://mysticverse.example.com
+  S3_PUBLIC_BASE_URL: https://mysticverse.example.com/devcircle
   SPRINGDOC_API_DOCS_ENABLED: "false"
   SPRINGDOC_SWAGGER_UI_ENABLED: "false"
   JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60.0 -XX:InitialRAMPercentage=20.0 -XX:+ExitOnOutOfMemoryError"

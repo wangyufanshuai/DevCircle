@@ -8,6 +8,13 @@ spec:
     - host: {{ .Values.ingress.host }}
       http:
         paths:
+          - path: {{ .Values.objectStorage.path }}/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.objectStorage.serviceName }}
+                port:
+                  number: {{ .Values.objectStorage.servicePort }}
           - path: /
             pathType: Prefix
             backend:

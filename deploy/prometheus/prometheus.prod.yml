@@ -25,8 +25,6 @@ scrape_configs:
         labels: { service: dc-discovery }
       - targets: ["dc-user:8102"]
         labels: { service: dc-user }
-      - targets: ["dc-content:8103"]
-        labels: { service: dc-content }
       - targets: ["dc-comment:8104"]
         labels: { service: dc-comment }
       - targets: ["dc-interaction:8105"]
@@ -35,7 +33,5 @@ scrape_configs:
         labels: { service: dc-recommend }
       - targets: ["dc-notification:8108"]
         labels: { service: dc-notification }
-      - targets: ["dc-file:8109"]
-        labels: { service: dc-file }
       - targets: ["dc-admin:8110"]
         labels: { service: dc-admin }

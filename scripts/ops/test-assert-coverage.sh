@@ -33,6 +33,15 @@ output="$(cd "${TEMP_ROOT}" && REQUIRED_COVERAGE_MODULES=dc-alpha,dc-beta \
   MIN_LINE_COVERAGE=66 MIN_BRANCH_COVERAGE=75 bash "${ASSERT_COVERAGE}")"
 [[ "${output}" == *"line=66.67% branch=75.00% reports=2"* ]]
 
+mkdir -p "${TEMP_ROOT}/dc-branchless/target/site/jacoco"
+cat > "${TEMP_ROOT}/dc-branchless/target/site/jacoco/jacoco.xml" <<'EOF'
+<report name="dc-branchless"><counter type="LINE" missed="0" covered="2"/></report>
+EOF
+output="$(cd "${TEMP_ROOT}" && REQUIRED_COVERAGE_MODULES=dc-alpha,dc-branchless \
+  MIN_LINE_COVERAGE=75 MIN_BRANCH_COVERAGE=75 bash "${ASSERT_COVERAGE}")"
+[[ "${output}" == *"line=75.00% branch=75.00% reports=3"* ]]
+rm -rf -- "${TEMP_ROOT}/dc-branchless"
+
 rm -f "${TEMP_ROOT}/dc-beta/target/site/jacoco/jacoco.xml"
 if (cd "${TEMP_ROOT}" && REQUIRED_COVERAGE_MODULES=dc-alpha,dc-beta \
   bash "${ASSERT_COVERAGE}" >/dev/null 2>"${TEMP_ROOT}/missing.err"); then

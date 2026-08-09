@@ -47,13 +47,14 @@ branch_missed=0
 
 for report in "${reports[@]}"; do
   line_counter="$(grep -oE '<counter type="LINE" missed="[0-9]+" covered="[0-9]+"/>' "${report}" | tail -n 1)"
-  branch_counter="$(grep -oE '<counter type="BRANCH" missed="[0-9]+" covered="[0-9]+"/>' "${report}" | tail -n 1)"
+  branch_counter="$(grep -oE '<counter type="BRANCH" missed="[0-9]+" covered="[0-9]+"/>' "${report}" | tail -n 1 || true)"
   [[ -n "${line_counter}" ]] || { echo "Missing report-level LINE counter in ${report}" >&2; exit 1; }
-  [[ -n "${branch_counter}" ]] || { echo "Missing report-level BRANCH counter in ${report}" >&2; exit 1; }
   line_missed=$((line_missed + $(sed -E 's/.*missed="([0-9]+)".*/\1/' <<<"${line_counter}")))
   line_covered=$((line_covered + $(sed -E 's/.*covered="([0-9]+)".*/\1/' <<<"${line_counter}")))
-  branch_missed=$((branch_missed + $(sed -E 's/.*missed="([0-9]+)".*/\1/' <<<"${branch_counter}")))
-  branch_covered=$((branch_covered + $(sed -E 's/.*covered="([0-9]+)".*/\1/' <<<"${branch_counter}")))
+  if [[ -n "${branch_counter}" ]]; then
+    branch_missed=$((branch_missed + $(sed -E 's/.*missed="([0-9]+)".*/\1/' <<<"${branch_counter}")))
+    branch_covered=$((branch_covered + $(sed -E 's/.*covered="([0-9]+)".*/\1/' <<<"${branch_counter}")))
+  fi
 done
 
 line_percent="$(awk -v covered="${line_covered}" -v missed="${line_missed}" 'BEGIN { printf "%.2f", covered * 100 / (covered + missed) }')"

@@ -29,7 +29,7 @@ community_outbox_runtime_sources() {
   printf '%s\n' \
     "${COMMUNITY_AUTH_SERVICE}:${COMMUNITY_AUTH_PORT}:dc-auth" \
     "dc-user:8102:dc-user" \
-    "dc-content:8103:dc-content" \
+    "dc-content-aggregate:8202:dc-content" \
     "dc-comment:8104:dc-comment" \
     "dc-interaction:8105:dc-interaction"
 }

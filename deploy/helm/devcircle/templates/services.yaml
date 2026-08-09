@@ -6,6 +6,13 @@
 {{- if or (not (regexMatch "^https://[^/]+$" $publicOrigin)) (regexMatch "(?i)(localhost|127\\.0\\.0\\.1|\\[::1\\])" $publicOrigin) }}
 {{- fail "production publicOrigin must be a public HTTPS origin" }}
 {{- end }}
+{{- $globalEnv := (.Values.env | default dict) }}
+{{- if ne (toString (index $globalEnv "S3_PRESIGN_ENDPOINT")) $publicOrigin }}
+{{- fail "production S3_PRESIGN_ENDPOINT must match publicOrigin" }}
+{{- end }}
+{{- if ne (toString (index $globalEnv "S3_PUBLIC_BASE_URL")) (printf "%s/devcircle" $publicOrigin) }}
+{{- fail "production S3_PUBLIC_BASE_URL must derive from publicOrigin" }}
+{{- end }}
 {{- $identity := required "production identity service is required" (index .Values.services "identity") }}
 {{- $identityEnv := ($identity.env | default dict) }}
 {{- if ne (toString (index $identityEnv "AUTH_COOKIE_SECURE")) "true" }}

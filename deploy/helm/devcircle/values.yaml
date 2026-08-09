@@ -22,12 +22,10 @@ services:
   content-aggregate: { port: 8202 }
   discovery: { port: 8203 }
   user: { port: 8102 }
-  content: { port: 8103 }
   comment: { port: 8104 }
   interaction: { port: 8105 }
   recommend: { port: 8107 }
   notification: { port: 8108 }
-  file: { port: 8109 }
   admin:
     port: 8110
     env: { DC_AUTH_URI: http://dc-identity:8201 }
@@ -41,13 +39,12 @@ env:
   ELASTICSEARCH_URIS: http://elasticsearch:9200
   S3_ENDPOINT: http://minio:9000
   S3_BUCKET: devcircle
-  DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
+  DEVCIRCLE_CONTENT_BASE_URL: http://dc-content-aggregate:8202
   DC_USER_URI: http://dc-user:8102
-  DC_CONTENT_URI: http://dc-content:8103
+  DC_CONTENT_URI: http://dc-content-aggregate:8202
   DC_COMMENT_URI: http://dc-comment:8104
   DC_INTERACTION_URI: http://dc-interaction:8105
   DC_NOTIFICATION_URI: http://dc-notification:8108
-  DC_FILE_URI: http://dc-file:8109
   DC_ADMIN_URI: http://dc-admin:8110
 
 secretEnv: {}
@@ -74,3 +71,8 @@ resources:
 ingress:
   enabled: true
   host: devcircle.local
+
+objectStorage:
+  serviceName: minio
+  servicePort: 9000
+  path: /devcircle
