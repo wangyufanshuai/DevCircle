@@ -11,6 +11,7 @@ class LegacyProfileBackfillRepositoryTest {
     void copiesOnlyMissingActiveAccountsAndCanResumeInBatches() {
         DriverManagerDataSource dataSource = new DriverManagerDataSource(
                 "jdbc:h2:mem:legacy-profile-backfill;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1", "sa", "");
+        dataSource.setDriverClassName("org.h2.Driver");
         JdbcClient jdbc = JdbcClient.create(dataSource);
         jdbc.sql("CREATE SCHEMA dc_auth").update();
         jdbc.sql("CREATE TABLE dc_auth.user_account (id BIGINT PRIMARY KEY, display_name VARCHAR(64), status VARCHAR(32))").update();
