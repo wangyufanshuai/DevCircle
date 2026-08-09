@@ -28,7 +28,11 @@ spring:
               uri: ${DC_CONTENT_AGGREGATE_URI:http://localhost:8202}
               predicates:
                 - Path=/api/posts/**,/api/deduction/**,/api/content/**,/api/comments/**,/api/files/**,/api/admin/**
-            - id: discovery
-              uri: ${DC_DISCOVERY_URI:http://localhost:8203}
+            - id: discovery-search
+              uri: ${DC_SEARCH_URI:http://localhost:8203}
               predicates:
-                - Path=/api/search/**,/api/recommend/**
+                - Path=/api/search/**
+            - id: discovery-recommend
+              uri: ${DC_RECOMMEND_URI:http://localhost:8107}
+              predicates:
+                - Path=/api/recommend/**

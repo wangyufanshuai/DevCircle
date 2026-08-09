@@ -4,19 +4,33 @@ server:
 spring:
   application:
     name: dc-discovery
+  main:
+    web-application-type: servlet
   lifecycle:
     timeout-per-shutdown-phase: 30s
-  cloud:
-    gateway:
-      server:
-        webflux:
-          routes:
-            - id: search
-              uri: ${DC_SEARCH_URI:http://localhost:8106}
-              predicates: [Path=/api/search/**]
-            - id: recommend
-              uri: ${DC_RECOMMEND_URI:http://localhost:8107}
-              predicates: [Path=/api/recommend/**]
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${SEARCH_MYSQL_DATABASE:dc_search}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: ${MYSQL_USER:devcircle}
+    password: ${MYSQL_PASSWORD:devcircle}
+  elasticsearch:
+    uris: ${ELASTICSEARCH_URIS:http://localhost:9200}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+    listener:
+      ack-mode: record
+  flyway:
+    locations: classpath:db/migration
 management:
   endpoints:
     web:
@@ -26,3 +40,11 @@ management:
     health:
       probes:
         enabled: true
+logging:
+  pattern:
+    level: "%5p traceId=%X{traceId:-} userId=%X{userId:-}"
+devcircle:
+  search:
+    read-fallback-enabled: ${DEVCIRCLE_READ_FALLBACK_ENABLED:false}
+  content:
+    base-url: ${DEVCIRCLE_CONTENT_BASE_URL:http://localhost:8103}

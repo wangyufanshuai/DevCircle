@@ -3,9 +3,20 @@
     <modelVersion>4.0.0</modelVersion>
     <parent><groupId>io.github.devcircle</groupId><artifactId>devcircle</artifactId><version>0.1.0-SNAPSHOT</version></parent>
     <artifactId>dc-discovery</artifactId>
-    <description>Compatibility deployment facade for search, recommendation and experiments.</description>
+    <description>Discovery deployment containing the search API, projections, Kafka consumers and persistence.</description>
     <dependencies>
-        <dependency><groupId>org.springframework.cloud</groupId><artifactId>spring-cloud-starter-gateway-server-webflux</artifactId></dependency>
+        <dependency><groupId>io.github.devcircle</groupId><artifactId>dc-common</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>io.github.devcircle</groupId><artifactId>dc-messaging-support</artifactId><version>${project.version}</version></dependency>
+        <!-- The ordinary dc-search artifact contributes its API, projection, Kafka and Flyway
+             classes to this single Servlet deployment. The exec classifier remains rollback-only. -->
+        <dependency><groupId>io.github.devcircle</groupId><artifactId>dc-search</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-elasticsearch</artifactId></dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-jdbc</artifactId></dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-flyway</artifactId></dependency>
+        <dependency><groupId>org.springdoc</groupId><artifactId>springdoc-openapi-starter-webmvc-ui</artifactId></dependency>
+        <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-webmvc-test</artifactId><scope>test</scope></dependency>
     </dependencies>
     <build><plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build>
 </project>

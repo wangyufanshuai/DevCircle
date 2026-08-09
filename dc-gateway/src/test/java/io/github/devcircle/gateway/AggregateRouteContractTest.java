@@ -75,6 +75,26 @@ class AggregateRouteContractTest {
                 .contains("APP_SERVICES+=(dc-auth)");
     }
 
+    @Test
+    void searchUsesDiscoveryDirectlyWhileRecommendationsKeepTheirOwnOwner() throws IOException {
+        String configuration;
+        try (InputStream resource = getClass().getClassLoader()
+                .getResourceAsStream("application-aggregate.yml")) {
+            assertThat(resource).as("aggregate Gateway configuration").isNotNull();
+            configuration = new String(resource.readAllBytes(), StandardCharsets.UTF_8);
+        }
+
+        assertThat(configuration)
+                .contains("id: discovery-search")
+                .contains("uri: ${DC_SEARCH_URI:http://localhost:8203}")
+                .contains("Path=/api/search/**")
+                .contains("id: discovery-recommend")
+                .contains("uri: ${DC_RECOMMEND_URI:http://localhost:8107}")
+                .contains("Path=/api/recommend/**")
+                .doesNotContain("id: discovery\n")
+                .doesNotContain("Path=/api/search/**,/api/recommend/**");
+    }
+
     private String repositoryFile(String relativePath) throws IOException {
         Path directory = Path.of("").toAbsolutePath();
         while (directory != null) {
