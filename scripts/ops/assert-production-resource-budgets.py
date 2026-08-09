@@ -35,6 +35,10 @@ PRODUCTION_ENVIRONMENT = {
     "MANAGEMENT_METRICS_DISTRIBUTION_PERCENTILES_HISTOGRAM_HTTP_SERVER_REQUESTS": "true",
     "OTEL_EXPORTER_OTLP_ENDPOINT": "http://jaeger:4318",
 }
+LOGGING_CONTRACT = {
+    "driver": "json-file",
+    "options": {"max-size": "20m", "max-file": "5"},
+}
 
 
 def fail(message: str) -> None:
@@ -74,6 +78,16 @@ def port_contract(service: str, config: dict) -> set[tuple[str | None, int, int,
     return ports
 
 
+def logging_contract(service: str, config: dict) -> None:
+    logging = config.get("logging") or {}
+    if logging.get("driver") != LOGGING_CONTRACT["driver"]:
+        fail(f"{service} must use the json-file logging driver")
+    options = logging.get("options") or {}
+    for key, expected in LOGGING_CONTRACT["options"].items():
+        if str(options.get(key, "")) != expected:
+            fail(f"{service} logging option {key} must equal {expected}")
+
+
 def validate_caddyfile(caddyfile: Path) -> None:
     try:
         text = caddyfile.read_text(encoding="utf-8")
@@ -111,6 +125,7 @@ def validate(data: dict) -> tuple[int, int]:
         if pids > 512:
             fail(f"{name} PID limit exceeds 512")
         port_contract(name, config)
+        logging_contract(name, config)
 
     if total_memory > 15 * GIB:
         fail(f"aggregate container memory ceiling {total_memory / GIB:.2f} GiB exceeds 15 GiB")

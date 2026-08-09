@@ -39,6 +39,7 @@ def service(memory: int = 512 * budgets.MIB) -> dict:
         "mem_limit": memory,
         "cpus": 0.75,
         "pids_limit": 256,
+        "logging": copy.deepcopy(budgets.LOGGING_CONTRACT),
     }
 
 
@@ -116,6 +117,12 @@ class ProductionResourceBudgetTest(unittest.TestCase):
         del self.compose["services"]["dc-auth"]["mem_limit"]
 
         with self.assertRaisesRegex(ValueError, "dc-auth must define numeric mem_limit"):
+            budgets.validate(self.compose)
+
+    def test_rejects_a_service_without_bounded_log_rotation(self) -> None:
+        del self.compose["services"]["elasticsearch"]["logging"]["options"]["max-size"]
+
+        with self.assertRaisesRegex(ValueError, "elasticsearch logging option max-size"):
             budgets.validate(self.compose)
 
     def test_rejects_a_private_service_with_a_published_port(self) -> None:

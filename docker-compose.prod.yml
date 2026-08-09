@@ -1,5 +1,11 @@
 name: devcircle-prod
 
+x-json-logging: &json-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 x-app-env: &app-env
   MYSQL_HOST: mysql
   MYSQL_PORT: 3306
@@ -52,9 +58,7 @@ x-app-defaults: &app-defaults
   pids_limit: 256
   networks: [devcircle]
   security_opt: [no-new-privileges:true]
-  logging:
-    driver: json-file
-    options: { max-size: "20m", max-file: "5" }
+  logging: *json-logging
 
 services:
   mysql:
@@ -77,6 +81,7 @@ services:
       timeout: 5s
       retries: 20
     networks: [devcircle]
+    logging: *json-logging
 
   redis:
     image: redis:8.2.3-alpine
@@ -94,6 +99,7 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     networks: [devcircle]
+    logging: *json-logging
 
   kafka:
     image: apache/kafka:4.1.1
@@ -120,6 +126,7 @@ services:
       timeout: 10s
       retries: 20
     networks: [devcircle]
+    logging: *json-logging
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:9.2.2
@@ -138,6 +145,7 @@ services:
       timeout: 10s
       retries: 30
     networks: [devcircle]
+    logging: *json-logging
 
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
@@ -156,6 +164,7 @@ services:
       timeout: 10s
       retries: 20
     networks: [devcircle]
+    logging: *json-logging
 
   prometheus:
     image: prom/prometheus:v3.7.3
@@ -178,6 +187,7 @@ services:
     networks: [devcircle]
     security_opt: [no-new-privileges:true]
     healthcheck: { test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/ready"], interval: 15s, timeout: 5s, retries: 12 }
+    logging: *json-logging
 
   alertmanager:
     image: prom/alertmanager:v0.29.0
@@ -191,6 +201,7 @@ services:
     networks: [devcircle]
     security_opt: [no-new-privileges:true]
     healthcheck: { test: ["CMD", "wget", "-qO-", "http://localhost:9093/-/ready"], interval: 15s, timeout: 5s, retries: 12 }
+    logging: *json-logging
 
   jaeger:
     image: jaegertracing/all-in-one:1.67.0
@@ -213,6 +224,7 @@ services:
     read_only: true
     tmpfs: [/tmp]
     healthcheck: { test: ["CMD", "wget", "-qO-", "http://localhost:14269/"], interval: 15s, timeout: 5s, retries: 12 }
+    logging: *json-logging
 
   minio-maintenance:
     image: alpine:3.22.2
@@ -226,6 +238,7 @@ services:
     security_opt: [no-new-privileges:true]
     read_only: true
     tmpfs: [/tmp]
+    logging: *json-logging
 
   dc-auth:
     <<: *app-defaults
@@ -425,6 +438,7 @@ services:
       - /var/cache/nginx
       - /var/run
     healthcheck: { test: ["CMD", "wget", "-qO-", "http://localhost/"], interval: 15s, timeout: 5s, retries: 12 }
+    logging: *json-logging
 
   web:
     image: caddy:2.10.2-alpine
@@ -445,6 +459,7 @@ services:
     networks: [devcircle]
     security_opt: [no-new-privileges:true]
     healthcheck: { test: ["CMD", "wget", "-qO-", "http://localhost:2019/config/"], interval: 15s, timeout: 5s, retries: 12 }
+    logging: *json-logging
 
 networks:
   devcircle:

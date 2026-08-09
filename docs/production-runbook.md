@@ -22,7 +22,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d mysql
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 ```
 
-生产 Compose 将24个容器的内存上限控制在约14.63 GiB，只允许 `web` 与 `dc-gateway` 发布宿主机端口。14个 JVM 服务单实例限制为512 MiB、0.75 CPU和256个 PID，Java 最大堆按容器内存的60%计算；数据库连接池默认每服务最多8个连接。内部 Prometheus 保留35天/最多1GB指标，Alertmanager使用宿主机私有路由配置，Jaeger使用持久化Badger存储。该预算是防止资源失控的上限，不代表性能验收已经通过；发布前仍必须执行50并发 k6 和目标主机观测。
+生产 Compose 将24个容器的内存上限控制在约14.63 GiB，只允许 `web` 与 `dc-gateway` 发布宿主机端口。14个 JVM 服务单实例限制为512 MiB、0.75 CPU和256个 PID，Java 最大堆按容器内存的60%计算；数据库连接池默认每服务最多8个连接。全部生产容器统一使用 `json-file` 日志驱动，每个日志文件最多20 MiB并保留5份；资源门禁会拒绝任何服务缺少该轮转契约。内部 Prometheus 保留35天/最多1GB指标，Alertmanager使用宿主机私有路由配置，Jaeger使用持久化Badger存储。该预算是防止资源失控的上限，不代表性能验收已经通过；发布前仍必须执行50并发 k6 和目标主机观测。
 
 生产编排发布 Caddy Web 的 80/443，并仅把 Gateway 的 8080 绑定到宿主机 `127.0.0.1`，供本机诊断使用。公网 API 统一经过 Caddy 与 Web Nginx 转发；MySQL、Redis、Kafka、Elasticsearch、MinIO、Gateway Actuator 与领域服务均不能从公网直接访问。Caddy 管理 API 同样只监听容器内 localhost。
 
@@ -109,6 +109,7 @@ curl -fsS -X POST https://<domain>/api/admin/ops/dlt/replay \
 - Outbox 每批数量、最大尝试次数和发送等待分别由 `OUTBOX_BATCH_SIZE`（默认 50）、`OUTBOX_MAX_ATTEMPTS`（默认 8）和 `OUTBOX_SEND_TIMEOUT_MS`（默认 15000ms）注入。调整重试上限前必须评估故障持续时间与告警响应时间。
 - DLT 发布等待时间由 `KAFKA_DLT_PUBLISH_TIMEOUT_MS` 控制（默认 5000ms）；DLT broker 未确认时源消息不得提交 offset。
 - 磁盘低于 80%，备份校验和每天成功，证书续期无错误。
+- 抽查 `docker inspect` 的 `HostConfig.LogConfig`，所有生产容器均为 `json-file`、`max-size=20m`、`max-file=5`；日志策略漂移必须阻断发布。
 - 写接口失败时必须带公开错误码和 `traceId`，日志中按 `traceId` 关联，禁止向页面暴露内部服务名或堆栈。
 - `devcircle:gateway_availability:ratio30d` 不低于 0.995，读取/写入 P95 分别低于 0.3/0.6 秒；燃烧率告警按 [`observability-runbook.md`](observability-runbook.md) 处置。
 - Alertmanager 必须有真实通知接收方并完成一次测试告警；生产不得使用仓库中的 `dev-null` 或 `.invalid` 示例接收器。
