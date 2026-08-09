@@ -1,33 +1,42 @@
 package io.github.devcircle.content.application;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.content.api.DeductionAnswerResult;
 import io.github.devcircle.content.api.DeductionStatsView;
 import io.github.devcircle.content.api.LeaderboardEntry;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.text.Normalizer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
 import java.util.HexFormat;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
-import java.util.Set;
 
 @Service
 public class DeductionService {
     private static final String LEGACY_REQUEST_FINGERPRINT = "0".repeat(64);
     private final JdbcClient jdbcClient;
+    private final AnswerKeywordPolicy answerKeywordPolicy;
 
+    @Autowired
+    public DeductionService(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+        this(jdbcClient, new AnswerKeywordPolicy(objectMapper));
+    }
+
+    /** Compatibility constructor retained for focused unit tests and legacy embedders. */
     public DeductionService(JdbcClient jdbcClient) {
+        this(jdbcClient, new AnswerKeywordPolicy(new ObjectMapper()));
+    }
+
+    DeductionService(JdbcClient jdbcClient, AnswerKeywordPolicy answerKeywordPolicy) {
         this.jdbcClient = jdbcClient;
+        this.answerKeywordPolicy = answerKeywordPolicy;
     }
 
     @Transactional
@@ -35,7 +44,7 @@ public class DeductionService {
         requireRequest(userId, postId, idempotencyKey);
         requireAnswer(answer);
         requirePublishedCase(postId);
-        String requestFingerprint = requestFingerprint("deduction-answer-v1", normalize(answer));
+        String requestFingerprint = requestFingerprint("deduction-answer-v1", answerKeywordPolicy.normalize(answer));
         if (!claim(userId, postId, "ANSWER", idempotencyKey, requestFingerprint)) {
             return existingAttempt(userId, postId, true);
         }
@@ -250,14 +259,7 @@ public class DeductionService {
     }
 
     private boolean isCorrect(Long postId, String answer) {
-        String normalizedAnswer = normalize(answer);
-        List<String> keywords = answerKeywords(postId);
-        Set<String> normalizedKeywords = expandKeywords(keywords);
-        long hits = normalizedKeywords.stream().filter(normalizedAnswer::contains).count();
-        boolean decisiveHit = normalizedKeywords.stream().filter(keyword -> keyword.length() >= 2)
-                .anyMatch(keyword -> normalizedAnswer.contains(keyword) && decisiveKeywords().contains(keyword));
-        int requiredHits = Math.min(2, Math.max(1, normalizedKeywords.size()));
-        return decisiveHit || hits >= requiredHits;
+        return answerKeywordPolicy.matches(answer, answerKeywords(postId));
     }
 
     private List<String> answerKeywords(Long postId) {
@@ -268,46 +270,7 @@ public class DeductionService {
                 .param("postId", postId)
                 .query(String.class)
                 .single();
-        return Arrays.stream(json.replace("[", "").replace("]", "").replace("\"", "").split(","))
-                .map(String::trim).filter(value -> !value.isBlank()).toList();
-    }
-
-    private Set<String> expandKeywords(List<String> keywords) {
-        LinkedHashSet<String> values = new LinkedHashSet<>();
-        for (String keyword : keywords) {
-            String normalized = normalize(keyword);
-            if (!normalized.isBlank()) {
-                values.add(normalized);
-                values.addAll(synonyms(normalized));
-            }
-        }
-        return values;
-    }
-
-    private Set<String> synonyms(String keyword) {
-        return switch (keyword) {
-            case "夹层", "夹层藏身" -> Set.of("暗层", "隔层", "钟楼夹层", "钟楼暗层", "藏身层");
-            case "调换时钟" -> Set.of("改表", "拨快时钟", "拨慢时钟", "改动钟表", "伪造时间");
-            case "伪造脚印" -> Set.of("假脚印", "制造脚印", "鞋印伪造");
-            case "镜面反射" -> Set.of("镜像", "反射", "倒影");
-            case "潮汐延迟" -> Set.of("潮汐", "涨潮", "退潮");
-            case "证词串供" -> Set.of("串供", "证词矛盾", "伪证");
-            case "密码替换" -> Set.of("替换密码", "暗号", "换码");
-            case "灯塔盲区" -> Set.of("盲区", "灯光死角", "照明死角");
-            case "列车换厢" -> Set.of("换车厢", "换厢", "调换车厢");
-            case "档案重排" -> Set.of("重排档案", "调换卷宗", "记录重排");
-            default -> Set.of();
-        };
-    }
-
-    private Set<String> decisiveKeywords() {
-        return Set.of("夹层", "夹层藏身", "暗层", "钟楼夹层", "钟楼暗层", "调换时钟", "伪造时间",
-                "伪造脚印", "镜面反射", "潮汐延迟", "证词串供", "密码替换", "灯塔盲区", "列车换厢", "档案重排");
-    }
-
-    private String normalize(String value) {
-        return Normalizer.normalize(value, Normalizer.Form.NFKC).toLowerCase(Locale.ROOT)
-                .replaceAll("[\\s\\p{Punct}\\p{P}]", "");
+        return answerKeywordPolicy.parse(json);
     }
 
     private String explanation(Long postId, boolean correct, boolean revealed) {
