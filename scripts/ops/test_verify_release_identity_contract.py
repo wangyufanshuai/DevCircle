@@ -34,7 +34,7 @@ class VerifyReleaseIdentityContractTest(unittest.TestCase):
     def test_ci_verifies_each_backend_and_web_digest_after_attestation(self) -> None:
         invocation = 'bash scripts/ops/verify-image-identity.sh "${IMAGE_REF}@${IMAGE_DIGEST}"'
         self.assertEqual(2, WORKFLOW.count(invocation))
-        self.assertLess(WORKFLOW.index("actions/attest-build-provenance@v3"), WORKFLOW.index(invocation))
+        self.assertLess(WORKFLOW.index("actions/attest-build-provenance@"), WORKFLOW.index(invocation))
 
 
 if __name__ == "__main__":
