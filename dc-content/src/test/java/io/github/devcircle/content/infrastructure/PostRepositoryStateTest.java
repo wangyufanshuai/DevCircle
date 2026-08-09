@@ -608,28 +608,29 @@ class PostRepositoryStateTest {
 
         @Bean("normalRepository")
         PostRepository postRepository(JdbcTemplate jdbcTemplate, PostQueryRepository postQueryRepository,
-                                       DraftMediaRepository draftMediaRepository,
-                                      ContentIdempotencyStore idempotencyStore,
-                                      ContentEventStore eventStore,
-                                      ContentModerationStore moderationStore) {
+                                       DraftRepository draftRepository, DraftMediaRepository draftMediaRepository,
+                                       PostTagStore postTagStore, ContentIdempotencyStore idempotencyStore,
+                                       ContentEventStore eventStore, ContentModerationStore moderationStore) {
             return new PostRepository(jdbcTemplate, new ObjectMapper().findAndRegisterModules(),
-                    postQueryRepository, draftMediaRepository, idempotencyStore, eventStore, moderationStore);
+                    postQueryRepository, draftRepository, draftMediaRepository, postTagStore,
+                    idempotencyStore, eventStore, moderationStore);
         }
 
         @Bean("failingRepository")
         PostRepository failingRepository(JdbcTemplate jdbcTemplate, PostQueryRepository postQueryRepository,
-                                          DraftMediaRepository draftMediaRepository,
-                                         ContentIdempotencyStore idempotencyStore,
-                                         ContentEventStore eventStore,
-                                         ContentModerationStore moderationStore) {
+                                          DraftMediaRepository draftMediaRepository, PostTagStore postTagStore,
+                                          ContentIdempotencyStore idempotencyStore, ContentEventStore eventStore,
+                                          ContentModerationStore moderationStore) {
             ObjectMapper failingMapper = new ObjectMapper() {
                 @Override
                 public String writeValueAsString(Object value) throws JsonProcessingException {
                     throw new JsonProcessingException("structured content serializer unavailable") { };
                 }
             };
-            return new PostRepository(jdbcTemplate, failingMapper, postQueryRepository, draftMediaRepository, idempotencyStore,
-                    eventStore, moderationStore);
+            DraftRepository failingDraftRepository = new DraftRepository(jdbcTemplate, failingMapper,
+                    draftMediaRepository, postTagStore, idempotencyStore, eventStore, moderationStore);
+            return new PostRepository(jdbcTemplate, failingMapper, postQueryRepository, failingDraftRepository,
+                    draftMediaRepository, postTagStore, idempotencyStore, eventStore, moderationStore);
         }
 
         @Bean
@@ -640,6 +641,19 @@ class PostRepositoryStateTest {
         @Bean
         DraftMediaRepository draftMediaRepository(JdbcTemplate jdbcTemplate) {
             return new DraftMediaRepository(jdbcTemplate);
+        }
+
+        @Bean
+        PostTagStore postTagStore(JdbcTemplate jdbcTemplate) {
+            return new PostTagStore(jdbcTemplate);
+        }
+
+        @Bean
+        DraftRepository draftRepository(JdbcTemplate jdbcTemplate, DraftMediaRepository draftMediaRepository,
+                                        PostTagStore postTagStore, ContentIdempotencyStore idempotencyStore,
+                                        ContentEventStore eventStore, ContentModerationStore moderationStore) {
+            return new DraftRepository(jdbcTemplate, new ObjectMapper().findAndRegisterModules(),
+                    draftMediaRepository, postTagStore, idempotencyStore, eventStore, moderationStore);
         }
 
         @Bean
