@@ -178,6 +178,7 @@ jobs:
       - run: bash scripts/ops/test-assert-coverage.sh
       - run: bash scripts/ops/test-validate-production-env.sh
       - run: bash scripts/ops/test-backup-restore.sh
+      - run: bash scripts/ops/test-verify-image-identity.sh
       - run: helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-dev.yaml
       - run: helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-prod.yaml --set image.tag=0123456789abcdef0123456789abcdef01234567
       - run: docker compose --profile infra config
@@ -294,6 +295,11 @@ jobs:
           subject-name: ghcr.io/wangyufanshuai/devcircle/${{ matrix.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+      - name: Verify signed image and provenance
+        env:
+          IMAGE_REF: ghcr.io/wangyufanshuai/devcircle/${{ matrix.image }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: bash scripts/ops/verify-image-identity.sh "${IMAGE_REF}@${IMAGE_DIGEST}"
       - uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: ghcr.io/wangyufanshuai/devcircle/${{ matrix.image }}:${{ github.sha }}
@@ -339,6 +345,11 @@ jobs:
           subject-name: ghcr.io/wangyufanshuai/devcircle/web
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+      - name: Verify signed image and provenance
+        env:
+          IMAGE_REF: ghcr.io/wangyufanshuai/devcircle/web
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: bash scripts/ops/verify-image-identity.sh "${IMAGE_REF}@${IMAGE_DIGEST}"
       - uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: ghcr.io/wangyufanshuai/devcircle/web:${{ github.sha }}
