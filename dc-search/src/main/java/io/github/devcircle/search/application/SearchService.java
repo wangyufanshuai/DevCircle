@@ -2,8 +2,6 @@ package io.github.devcircle.search.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
 import io.github.devcircle.common.api.ApiResponse;
 import io.github.devcircle.common.api.PageResponse;
 import io.github.devcircle.common.error.BusinessException;
@@ -18,56 +16,21 @@ import io.github.devcircle.search.infrastructure.PostSearchDocument;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.elasticsearch.client.elc.NativeQuery;
-import org.springframework.data.elasticsearch.core.document.Document;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
-import org.springframework.data.elasticsearch.core.SearchHit;
-import org.springframework.data.elasticsearch.core.mapping.IndexCoordinates;
-import org.springframework.data.elasticsearch.core.query.UpdateQuery;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import co.elastic.clients.elasticsearch._types.SortOptions;
 import co.elastic.clients.elasticsearch._types.SortOrder;
-
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Instant;
-import java.time.temporal.TemporalAccessor;
 import java.util.ArrayList;
-import java.util.Base64;
-import java.util.LinkedHashMap;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 @Service
 public class SearchService {
-    private static final IndexCoordinates POST_INDEX = IndexCoordinates.of("devcircle-posts");
-    private static final String MONOTONIC_UPSERT_SCRIPT = """
-            long incoming = params.projectionVersion;
-            long current = ctx._source.projectionVersion == null ? Long.MIN_VALUE : ctx._source.projectionVersion;
-            String currentEventId = ctx._source.projectionEventId;
-            boolean newer = incoming > current
-                    || (incoming == current && (currentEventId == null
-                        || params.projectionEventId.compareTo(currentEventId) > 0));
-            if (newer) {
-                ctx._source.putAll(params.document);
-            }
-            """;
-    private static final String MONOTONIC_REMOVE_SCRIPT = """
-            long incoming = params.projectionVersion;
-            long current = ctx._source.projectionVersion == null ? Long.MIN_VALUE : ctx._source.projectionVersion;
-            String currentEventId = ctx._source.projectionEventId;
-            boolean newer = incoming > current
-                    || (incoming == current && (currentEventId == null
-                        || params.projectionEventId.compareTo(currentEventId) > 0));
-            if (newer) {
-                ctx._source.clear();
-                ctx._source.putAll(params.tombstone);
-            }
-            """;
     private static final Map<String, Set<String>> UPSERT_EVENT_CONTRACTS = Map.of(
             EventTopics.POST_CREATED, Set.of("dc-content"),
             EventTopics.POST_UPDATED, Set.of("dc-content"),
@@ -81,19 +44,32 @@ public class SearchService {
     private final EventEnvelopeValidator envelopeValidator;
     private final RestClient contentClient;
     private final SearchEventCoordinator eventCoordinator;
+    private final SearchCursorCodec cursorCodec;
+    private final SearchProjectionStore projectionStore;
 
     @Value("${devcircle.search.read-fallback-enabled:false}")
     private boolean readFallbackEnabled;
 
+    @Autowired
     public SearchService(ElasticsearchOperations elasticsearchOperations,
                          ObjectMapper objectMapper,
                          @Value("${devcircle.content.base-url:http://localhost:8103}") String contentBaseUrl,
-                         SearchEventCoordinator eventCoordinator) {
+                         SearchEventCoordinator eventCoordinator,
+                         SearchProjectionStore projectionStore) {
         this.elasticsearchOperations = elasticsearchOperations;
         this.objectMapper = objectMapper;
         this.envelopeValidator = new EventEnvelopeValidator(objectMapper);
         this.contentClient = BoundedRestClientFactory.create(contentBaseUrl);
         this.eventCoordinator = eventCoordinator;
+        this.cursorCodec = new SearchCursorCodec(objectMapper);
+        this.projectionStore = projectionStore;
+    }
+
+    SearchService(ElasticsearchOperations elasticsearchOperations,
+                  ObjectMapper objectMapper, String contentBaseUrl,
+                  SearchEventCoordinator eventCoordinator) {
+        this(elasticsearchOperations, objectMapper, contentBaseUrl, eventCoordinator,
+                new SearchProjectionStore(elasticsearchOperations));
     }
 
     public PageResponse<PostSummary> search(String keyword, String tag, String sort) {
@@ -109,10 +85,10 @@ public class SearchService {
                                     String difficulty, String cursor, int requestedSize) {
         int size = Math.max(1, Math.min(requestedSize, 50));
         String normalizedSort = normalizeSort(sort);
-        String fingerprint = cursorFingerprint(keyword, tag, normalizedSort, theme, contentKind, difficulty);
-        SearchCursor position = decodeCursor(cursor, normalizedSort, fingerprint);
+        String fingerprint = cursorCodec.fingerprint(keyword, tag, normalizedSort, theme, contentKind, difficulty);
+        SearchCursorCodec.Position position = cursorCodec.decode(cursor, normalizedSort, fingerprint);
         try {
-            var queryBuilder = NativeQuery.builder()
+            var queryBuilder = org.springframework.data.elasticsearch.client.elc.NativeQuery.builder()
                     .withQuery(q -> q.bool(b -> {
                         if (keyword != null && !keyword.isBlank()) {
                             b.must(m -> m.multiMatch(mm -> mm.fields("title", "excerpt").query(keyword)));
@@ -131,24 +107,25 @@ public class SearchService {
                     }))
                     .withPageable(PageRequest.of(0, size + 1))
                     .withSort(sortOptions(normalizedSort));
-            if (position.source() == CursorSource.ELASTICSEARCH && !position.values().isEmpty()) {
+            if (position.source() == SearchCursorCodec.Source.ELASTICSEARCH && !position.values().isEmpty()) {
                 queryBuilder.withSearchAfter(position.values());
             }
             var hits = elasticsearchOperations.search(queryBuilder.build(), PostSearchDocument.class);
-            List<SearchHit<PostSearchDocument>> pageHits = hits.getSearchHits();
+            List<org.springframework.data.elasticsearch.core.SearchHit<PostSearchDocument>> pageHits = hits.getSearchHits();
             boolean hasMore = pageHits.size() > size;
-            List<SearchHit<PostSearchDocument>> visibleHits = hasMore ? pageHits.subList(0, size) : pageHits;
+            List<org.springframework.data.elasticsearch.core.SearchHit<PostSearchDocument>> visibleHits =
+                    hasMore ? pageHits.subList(0, size) : pageHits;
             List<PostSummary> records = visibleHits.stream()
-                    .map(SearchHit::getContent)
+                    .map(org.springframework.data.elasticsearch.core.SearchHit::getContent)
                     .map(this::toSummary)
                     .toList();
             String nextCursor = hasMore
-                    ? encodeElasticsearchCursor(normalizedSort, fingerprint, visibleHits.getLast().getSortValues())
+                    ? cursorCodec.encodeElasticsearch(normalizedSort, fingerprint, visibleHits.getLast().getSortValues())
                     : "";
             return new SearchSlice(records, nextCursor, hasMore);
         } catch (RuntimeException ex) {
             if (ex instanceof BusinessException) throw ex;
-            if (!readFallbackEnabled || position.source() == CursorSource.ELASTICSEARCH) {
+            if (!readFallbackEnabled || position.source() == SearchCursorCodec.Source.ELASTICSEARCH) {
                 throw dependency("搜索服务暂时不可用", ex);
             }
             List<PostSummary> matches = ThemeContentLibrary.search(keyword, theme, contentKind, difficulty);
@@ -156,7 +133,7 @@ public class SearchService {
             int to = Math.min(from + size, matches.size());
             boolean hasMore = to < matches.size();
             return new SearchSlice(List.copyOf(matches.subList(from, to)),
-                    hasMore ? encodeSeedCursor(to, normalizedSort, fingerprint) : "", hasMore);
+                    hasMore ? cursorCodec.encodeSeed(to, normalizedSort, fingerprint) : "", hasMore);
         }
     }
 
@@ -174,70 +151,6 @@ public class SearchService {
         return options;
     }
 
-    private String cursorFingerprint(String keyword, String tag, String sort, String theme,
-                                     String contentKind, String difficulty) {
-        String canonical = String.join("\u001f", normalizeFilter(keyword), normalizeFilter(tag), sort,
-                normalizeFilter(theme), normalizeFilter(contentKind), normalizeFilter(difficulty));
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-                    .digest(canonical.getBytes(StandardCharsets.UTF_8)));
-        } catch (java.security.NoSuchAlgorithmException ex) {
-            throw new IllegalStateException("SHA-256 is unavailable", ex);
-        }
-    }
-
-    private String normalizeFilter(String value) {
-        return value == null ? "" : value.trim().toUpperCase();
-    }
-
-    private SearchCursor decodeCursor(String cursor, String sort, String fingerprint) {
-        if (cursor == null || cursor.isBlank()) return SearchCursor.first();
-        try {
-            String decoded = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
-            JsonNode root = objectMapper.readTree(decoded);
-            if (root.path("version").asInt() != 2
-                    || !sort.equals(root.path("sort").asText())
-                    || !fingerprint.equals(root.path("fingerprint").asText())) {
-                throw new IllegalArgumentException();
-            }
-            CursorSource source = CursorSource.valueOf(root.path("source").asText());
-            if (source == CursorSource.SEED) {
-                int offset = root.path("offset").asInt(-1);
-                if (offset < 0) throw new IllegalArgumentException();
-                return new SearchCursor(source, offset, List.of());
-            }
-            if (!root.path("values").isArray() || root.path("values").isEmpty()) {
-                throw new IllegalArgumentException();
-            }
-            List<Object> values = objectMapper.convertValue(root.path("values"), new TypeReference<>() {});
-            return new SearchCursor(source, 0, values);
-        } catch (RuntimeException | JsonProcessingException ex) {
-            throw new BusinessException(ErrorCode.VALIDATION_FAILED, "搜索游标无效或与当前筛选条件不匹配");
-        }
-    }
-
-    private String encodeElasticsearchCursor(String sort, String fingerprint, List<Object> values) {
-        return encodeCursor(new CursorPayload(2, CursorSource.ELASTICSEARCH.name(), sort, fingerprint,
-                normalizeSortValues(values), null));
-    }
-
-    private String encodeSeedCursor(int offset, String sort, String fingerprint) {
-        return encodeCursor(new CursorPayload(2, CursorSource.SEED.name(), sort, fingerprint, List.of(), offset));
-    }
-
-    private String encodeCursor(CursorPayload payload) {
-        try {
-            return Base64.getUrlEncoder().withoutPadding().encodeToString(
-                    objectMapper.writeValueAsBytes(payload));
-        } catch (JsonProcessingException ex) {
-            throw new IllegalStateException("Unable to encode search cursor", ex);
-        }
-    }
-
-    private List<Object> normalizeSortValues(List<Object> values) {
-        return values.stream().map(value -> value instanceof TemporalAccessor ? value.toString() : value).toList();
-    }
-
     public int reindexSeedPosts() {
         List<PostSummary> posts;
         try {
@@ -250,10 +163,9 @@ public class SearchService {
             posts = ThemeContentLibrary.summaries();
         }
         try {
-            elasticsearchOperations.save(posts.stream()
+            projectionStore.save(posts.stream()
                     .map(post -> document(post, post.createdAt()))
                     .toList());
-            elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
             return posts.size();
         } catch (RuntimeException ex) {
             if (ex instanceof BusinessException) throw ex;
@@ -285,8 +197,8 @@ public class SearchService {
             String eventStatus = optionalText(payload, "status", "");
             if (EventTopics.CONTENT_REJECTED.equals(topic)
                     || (!eventStatus.isBlank() && !"PUBLISHED".equals(eventStatus))) {
-                removeProjection(postId, occurredAt, eventId);
-                elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
+                projectionStore.remove(postId, occurredAt, eventId);
+                projectionStore.refresh();
                 eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE", claim.leaseToken());
                 return;
             }
@@ -304,13 +216,13 @@ public class SearchService {
                 post = loadPost(postId);
             }
             if (!"PUBLISHED".equals(post.status())) {
-                removeProjection(postId, occurredAt, eventId);
-                elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
+                projectionStore.remove(postId, occurredAt, eventId);
+                projectionStore.refresh();
                 eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE", claim.leaseToken());
                 return;
             }
-            upsertProjection(document(post, occurredAt, eventId));
-            elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
+            projectionStore.upsert(document(post, occurredAt, eventId));
+            projectionStore.refresh();
             eventCoordinator.complete(eventId, postId, occurredAt, "UPSERT", claim.leaseToken());
         } catch (Exception ex) {
             try {
@@ -337,8 +249,8 @@ public class SearchService {
             return;
         }
         try {
-            removeProjection(postId, occurredAt, eventId);
-            elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
+            projectionStore.remove(postId, occurredAt, eventId);
+            projectionStore.refresh();
             eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE", claim.leaseToken());
         } catch (RuntimeException ex) {
             try {
@@ -457,69 +369,6 @@ public class SearchService {
                 occurredAt == null ? null : occurredAt.toEpochMilli(), eventId);
     }
 
-    private void upsertProjection(PostSearchDocument document) {
-        if (document.getProjectionVersion() == null || document.getProjectionEventId() == null) {
-            throw new IllegalArgumentException("Search projection document is missing its ordering metadata");
-        }
-        Map<String, Object> source = projectionSource(document);
-        UpdateQuery query = UpdateQuery.builder(String.valueOf(document.getId()))
-                .withScript(MONOTONIC_UPSERT_SCRIPT)
-                .withLang("painless")
-                .withParams(Map.of(
-                        "projectionVersion", document.getProjectionVersion(),
-                        "projectionEventId", document.getProjectionEventId(),
-                        "document", source))
-                .withUpsert(Document.create())
-                .withScriptedUpsert(true)
-                .withRetryOnConflict(3)
-                .build();
-        elasticsearchOperations.update(query, POST_INDEX);
-    }
-
-    private void removeProjection(long postId, Instant occurredAt, String eventId) {
-        if (occurredAt == null || eventId == null || eventId.isBlank()) {
-            throw new IllegalArgumentException("Search removal is missing its ordering metadata");
-        }
-        Map<String, Object> tombstone = new LinkedHashMap<>();
-        tombstone.put("id", postId);
-        tombstone.put("status", "DELETED");
-        tombstone.put("eventOccurredAt", occurredAt.toEpochMilli());
-        tombstone.put("projectionVersion", occurredAt.toEpochMilli());
-        tombstone.put("projectionEventId", eventId);
-        UpdateQuery query = UpdateQuery.builder(String.valueOf(postId))
-                .withScript(MONOTONIC_REMOVE_SCRIPT)
-                .withLang("painless")
-                .withParams(Map.of(
-                        "projectionVersion", occurredAt.toEpochMilli(),
-                        "projectionEventId", eventId,
-                        "tombstone", tombstone))
-                .withUpsert(Document.create())
-                .withScriptedUpsert(true)
-                .withRetryOnConflict(3)
-                .build();
-        elasticsearchOperations.update(query, POST_INDEX);
-    }
-
-    private Map<String, Object> projectionSource(PostSearchDocument document) {
-        Map<String, Object> source = new LinkedHashMap<>();
-        source.put("id", document.getId());
-        source.put("title", document.getTitle());
-        source.put("excerpt", document.getExcerpt());
-        source.put("author", document.getAuthor());
-        source.put("authorId", document.getAuthorId());
-        source.put("tags", document.getTags());
-        source.put("status", document.getStatus());
-        source.put("theme", document.getTheme());
-        source.put("contentKind", document.getContentKind());
-        source.put("difficulty", document.getDifficulty());
-        source.put("createdAt", document.getCreatedAt() == null ? null : document.getCreatedAt().toEpochMilli());
-        source.put("eventOccurredAt", document.getEventOccurredAt() == null ? null : document.getEventOccurredAt().toEpochMilli());
-        source.put("projectionVersion", document.getProjectionVersion());
-        source.put("projectionEventId", document.getProjectionEventId());
-        source.values().removeIf(java.util.Objects::isNull);
-        return source;
-    }
-
     private BusinessException dependency(String message, RuntimeException cause) {
         BusinessException failure = new BusinessException(ErrorCode.DEPENDENCY_UNAVAILABLE, message);
         failure.initCause(cause);
@@ -527,20 +376,6 @@ public class SearchService {
     }
 
     public record SearchSlice(List<PostSummary> records, String nextCursor, boolean hasMore) {
-    }
-
-    private enum CursorSource {
-        FIRST, ELASTICSEARCH, SEED
-    }
-
-    private record SearchCursor(CursorSource source, int offset, List<Object> values) {
-        private static SearchCursor first() {
-            return new SearchCursor(CursorSource.FIRST, 0, List.of());
-        }
-    }
-
-    private record CursorPayload(int version, String source, String sort, String fingerprint,
-                                 List<Object> values, Integer offset) {
     }
 
     void enableReadFallbackForTests() {
