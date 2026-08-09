@@ -1,6 +1,7 @@
 package io.github.devcircle.admin.api;
 
 import io.github.devcircle.admin.application.AdminOpsQueryService;
+import io.github.devcircle.admin.application.AdminModerationService;
 import io.github.devcircle.admin.application.AdminReadService;
 import io.github.devcircle.admin.application.query.DegradationView;
 import io.github.devcircle.admin.application.query.OpsHealthView;
@@ -19,15 +20,17 @@ import static org.mockito.Mockito.when;
 
 class AdminControllerTest {
     private final AdminService service = mock(AdminService.class);
+    private final AdminModerationService moderationService = mock(AdminModerationService.class);
     private final AdminReadService readService = mock(AdminReadService.class);
     private final DltReplayService dltReplayService = mock(DltReplayService.class);
     private final AdminOpsQueryService opsQueryService = mock(AdminOpsQueryService.class);
-    private final AdminController controller = new AdminController(service, readService, dltReplayService, opsQueryService);
+    private final AdminController controller = new AdminController(
+            service, moderationService, readService, dltReplayService, opsQueryService);
 
     @Test
     void governanceDecisionsForwardIdentityReasonsAndIdempotencyKeys() {
         ModerationDecisionRequest request = new ModerationDecisionRequest("证据有效，重新进入人工复审队列");
-        when(service.requireChanges(7L, 9L, "trace-1", request.reason(), "moderate-7"))
+        when(moderationService.requireChanges(7L, 9L, "trace-1", request.reason(), "moderate-7"))
                 .thenReturn(new AdminActionResult("REQUIRE_CHANGES", Map.of()));
         when(service.resolveAppeal(5L, 9L, "trace-2", request.reason(), true, "appeal-5"))
                 .thenReturn(new AdminActionResult("APPEAL_APPROVED", Map.of()));
@@ -63,7 +66,7 @@ class AdminControllerTest {
         controller.replayDlt(9L, "dlt-replay", "trace-dlt", dltReplay);
         controller.createTag(9L, "tag-create", "trace-9", tag);
 
-        verify(service).requireChanges(7L, 9L, "trace-1", request.reason(), "moderate-7");
+        verify(moderationService).requireChanges(7L, 9L, "trace-1", request.reason(), "moderate-7");
         verify(service).resolveAppeal(5L, 9L, "trace-2", request.reason(), true, "appeal-5");
         verify(service).restrictUser(12L, 9L, "trace-3", "NO_POST", request.reason(), "restrict-12");
         verify(service).unrestrictUser(12L, 9L, "trace-4", request.reason(), "unrestrict-12");

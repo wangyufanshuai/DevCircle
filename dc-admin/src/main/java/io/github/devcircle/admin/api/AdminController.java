@@ -2,6 +2,7 @@ package io.github.devcircle.admin.api;
 
 import io.github.devcircle.common.api.ApiResponse;
 import io.github.devcircle.admin.application.AdminOpsQueryService;
+import io.github.devcircle.admin.application.AdminModerationService;
 import io.github.devcircle.admin.application.AdminReadService;
 import io.github.devcircle.admin.application.AdminService;
 import io.github.devcircle.admin.application.DltReplayService;
@@ -25,13 +26,16 @@ import java.util.Map;
 @RequestMapping("/api/admin")
 class AdminController {
     private final AdminService adminService;
+    private final AdminModerationService moderationService;
     private final AdminReadService adminReadService;
     private final DltReplayService dltReplayService;
     private final AdminOpsQueryService adminOpsQueryService;
 
-    AdminController(AdminService adminService, AdminReadService adminReadService, DltReplayService dltReplayService,
+    AdminController(AdminService adminService, AdminModerationService moderationService,
+                    AdminReadService adminReadService, DltReplayService dltReplayService,
                     AdminOpsQueryService adminOpsQueryService) {
         this.adminService = adminService;
+        this.moderationService = moderationService;
         this.adminReadService = adminReadService;
         this.dltReplayService = dltReplayService;
         this.adminOpsQueryService = adminOpsQueryService;
@@ -48,7 +52,7 @@ class AdminController {
                                            @RequestHeader("Idempotency-Key") String idempotencyKey,
                                            @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
                                            @Valid @RequestBody ModerationDecisionRequest request) {
-        return ApiResponse.ok(adminService.approve(id, userId, traceId, request.reason(), idempotencyKey));
+        return ApiResponse.ok(moderationService.approve(id, userId, traceId, request.reason(), idempotencyKey));
     }
 
     @PostMapping("/audits/posts/{id}/reject")
@@ -57,7 +61,7 @@ class AdminController {
                                           @RequestHeader("Idempotency-Key") String idempotencyKey,
                                           @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
                                           @Valid @RequestBody ModerationDecisionRequest request) {
-        return ApiResponse.ok(adminService.reject(id, userId, traceId, request.reason(), idempotencyKey));
+        return ApiResponse.ok(moderationService.reject(id, userId, traceId, request.reason(), idempotencyKey));
     }
 
     @GetMapping("/moderation/tasks")
@@ -75,7 +79,7 @@ class AdminController {
                                                @RequestHeader("Idempotency-Key") String idempotencyKey,
                                                @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
                                                @Valid @RequestBody ModerationDecisionRequest request) {
-        return ApiResponse.ok(adminService.approveModerationTask(id, userId, traceId, request.reason(), idempotencyKey));
+        return ApiResponse.ok(moderationService.approveModerationTask(id, userId, traceId, request.reason(), idempotencyKey));
     }
 
     @PostMapping("/moderation/tasks/{id}/reject")
@@ -84,7 +88,7 @@ class AdminController {
                                               @RequestHeader("Idempotency-Key") String idempotencyKey,
                                               @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
                                               @Valid @RequestBody ModerationDecisionRequest request) {
-        return ApiResponse.ok(adminService.rejectModerationTask(id, userId, traceId, request.reason(), idempotencyKey));
+        return ApiResponse.ok(moderationService.rejectModerationTask(id, userId, traceId, request.reason(), idempotencyKey));
     }
 
     @PostMapping("/moderation/tasks/{id}/escalate")
@@ -93,7 +97,7 @@ class AdminController {
                                                 @RequestHeader("Idempotency-Key") String idempotencyKey,
                                                 @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
                                                 @Valid @RequestBody ModerationDecisionRequest request) {
-        return ApiResponse.ok(adminService.escalateModerationTask(id, userId, traceId, request.reason(), idempotencyKey));
+        return ApiResponse.ok(moderationService.escalateModerationTask(id, userId, traceId, request.reason(), idempotencyKey));
     }
 
     @PostMapping("/moderation/tasks/{id}/require-changes")
@@ -102,7 +106,7 @@ class AdminController {
                                                   @RequestHeader("Idempotency-Key") String idempotencyKey,
                                                   @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
                                                   @Valid @RequestBody ModerationDecisionRequest request) {
-        return ApiResponse.ok(adminService.requireChanges(id, userId, traceId, request.reason(), idempotencyKey));
+        return ApiResponse.ok(moderationService.requireChanges(id, userId, traceId, request.reason(), idempotencyKey));
     }
 
     @GetMapping("/appeals")
