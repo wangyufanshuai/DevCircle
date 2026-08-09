@@ -3,79 +3,101 @@ package io.github.devcircle.identity.api;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
-import org.springframework.web.reactive.function.client.ClientResponse;
-import org.springframework.web.reactive.function.client.ExchangeFunction;
-import org.springframework.web.reactive.function.client.WebClient;
-import reactor.core.publisher.Mono;
-import tools.jackson.databind.ObjectMapper;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestClient;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.client.ExpectedCount.once;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+import static org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
 
 class DashboardControllerTest {
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private static final String TRACE_ID = "trace-dashboard-1";
 
     @Test
-    void aggregatesProfileProgressFavoritesAndStatsWithJackson3Responses() {
-        DashboardController controller = controller(request -> {
-            String path = request.url().getRawPath();
-            if (path.equals("/api/users/2")) return ok("{\"id\":2,\"username\":\"观测者\"}");
-            if (path.equals("/api/me/reading-progress")) return ok("""
-                    [{"postId":1001,"title":"钟楼档案","theme":"DEDUCTION","progressPercent":42,
-                      "completed":false,"available":true,"trackState":"IN_PROGRESS"}]
-                    """);
-            if (path.equals("/api/me/submissions")) return ok("[]");
-            if (path.equals("/api/me/favorites")) return ok("[1001]");
-            if (path.equals("/api/posts/summaries")) return ok("[{\"id\":1001,\"title\":\"雾港钟楼失踪案\"}]");
-            if (path.equals("/api/notifications/unread-count")) return ok("2");
-            if (path.equals("/api/deduction/me/stats")) return ok("{\"attempts\":3,\"correctCount\":2,\"revealedCount\":0,\"totalPoints\":40}");
-            return failure(HttpStatus.NOT_FOUND);
-        });
+    void aggregatesProfileProgressFavoritesAndStatsForAuthenticatedPrincipal() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        expect(server, "https://user.test/api/users/2", "{\"id\":2,\"username\":\"Observer\"}");
+        expect(server, "https://content.test/api/me/reading-progress", """
+                [{"postId":1001,"title":"Clocktower","theme":"DEDUCTION","progressPercent":42,
+                  "completed":false,"available":true,"trackState":"IN_PROGRESS"}]
+                """);
+        expect(server, "https://content.test/api/me/submissions", "[]");
+        expect(server, "https://interaction.test/api/me/favorites", "[1001]");
+        expect(server, "https://content.test/api/posts/summaries?ids=1001",
+                "[{\"id\":1001,\"title\":\"Clocktower Case\"}]");
+        expect(server, "https://notification.test/api/notifications/unread-count", "2");
+        expect(server, "https://content.test/api/deduction/me/stats",
+                "{\"attempts\":3,\"correctCount\":2,\"revealedCount\":0,\"totalPoints\":40}");
+        DashboardController controller = controller(builder);
 
-        var response = controller.dashboard(2L).block();
+        var authentication = UsernamePasswordAuthenticationToken.authenticated("2", null, List.of());
+        var response = controller.dashboard(authentication, TRACE_ID);
 
-        assertThat(response).isNotNull();
-        assertThat(response.data().get("profile").path("username").asText()).isEqualTo("观测者");
-        assertThat(response.data().get("favorites").get(0).path("title").asText()).isEqualTo("雾港钟楼失踪案");
+        assertThat(response.data().get("profile").path("username").asText()).isEqualTo("Observer");
+        assertThat(response.data().get("favorites").get(0).path("title").asText()).isEqualTo("Clocktower Case");
         assertThat(response.data().get("unreadNotifications").asInt()).isEqualTo(2);
         assertThat(response.data().get("deductionStats").path("totalPoints").asInt()).isEqualTo(40);
         assertThat(response.data().get("readingProgress").get(0).path("trackState").asText())
                 .isEqualTo("IN_PROGRESS");
+        server.verify();
     }
 
     @Test
     void requiredSourceFailureIsReturnedAsDependencyUnavailable() {
-        DashboardController controller = controller(request -> {
-            if (request.url().getRawPath().equals("/api/users/2")) return failure(HttpStatus.SERVICE_UNAVAILABLE);
-            return ok("[]");
-        });
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(once(), requestTo("https://user.test/api/users/2"))
+                .andRespond(withStatus(SERVICE_UNAVAILABLE)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"code\":\"DEPENDENCY_UNAVAILABLE\",\"data\":null}"));
+        expect(server, "https://content.test/api/me/reading-progress", "[]");
+        expect(server, "https://content.test/api/me/submissions", "[]");
+        expect(server, "https://interaction.test/api/me/favorites", "[1001]");
+        expect(server, "https://content.test/api/posts/summaries?ids=1001", "[]");
+        expect(server, "https://notification.test/api/notifications/unread-count", "0");
+        expect(server, "https://content.test/api/deduction/me/stats", "{}");
+        DashboardController controller = controller(builder);
+        var authentication = UsernamePasswordAuthenticationToken.authenticated("2", null, List.of());
 
-        assertThatThrownBy(() -> controller.dashboard(2L).block())
+        assertThatThrownBy(() -> controller.dashboard(authentication, TRACE_ID))
                 .isInstanceOfSatisfying(BusinessException.class,
                         error -> assertThat(error.code()).isEqualTo(ErrorCode.DEPENDENCY_UNAVAILABLE));
+        server.verify();
     }
 
-    private DashboardController controller(ExchangeFunction exchangeFunction) {
-        WebClient.Builder builder = WebClient.builder().exchangeFunction(exchangeFunction);
+    @Test
+    void rejectsAnInvalidAuthenticatedPrincipalBeforeCallingDependencies() {
+        DashboardController controller = controller(RestClient.builder());
+        var authentication = UsernamePasswordAuthenticationToken.authenticated("not-a-user", null, List.of());
+
+        assertThatThrownBy(() -> controller.dashboard(authentication, TRACE_ID))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.code()).isEqualTo(ErrorCode.UNAUTHORIZED));
+    }
+
+    private DashboardController controller(RestClient.Builder builder) {
         return new DashboardController(builder, "https://user.test", "https://content.test",
-                "https://interaction.test", "https://notification.test");
+                "https://interaction.test", "https://notification.test", Runnable::run);
     }
 
-    private Mono<ClientResponse> ok(String data) {
-        return response(HttpStatus.OK, "{\"code\":\"OK\",\"message\":\"success\",\"data\":" + data + "}");
-    }
-
-    private Mono<ClientResponse> failure(HttpStatus status) {
-        return response(status, "{\"code\":\"DEPENDENCY_UNAVAILABLE\",\"message\":\"failed\",\"data\":null}");
-    }
-
-    private Mono<ClientResponse> response(HttpStatus status, String body) {
-        return Mono.just(ClientResponse.create(status)
-                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                .body(body)
-                .build());
+    private void expect(MockRestServiceServer server, String uri, String data) {
+        server.expect(once(), requestTo(uri))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(header("X-User-Id", "2"))
+                .andExpect(header("X-Trace-Id", TRACE_ID))
+                .andRespond(withSuccess("{\"code\":\"OK\",\"message\":\"success\",\"data\":" + data + "}",
+                        MediaType.APPLICATION_JSON));
     }
 }

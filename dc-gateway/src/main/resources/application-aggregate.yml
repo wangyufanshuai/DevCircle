@@ -4,10 +4,26 @@ spring:
       server:
         webflux:
           routes:
-            - id: identity
+            - id: identity-auth
+              uri: ${DC_AUTH_URI:http://localhost:8201}
+              predicates:
+                - Path=/api/auth/**
+            - id: identity-dashboard
               uri: ${DC_IDENTITY_URI:http://localhost:8201}
               predicates:
-                - Path=/api/auth/**,/api/users/**,/api/notifications/**,/ws/notifications/**,/api/posts/*/like,/api/posts/*/favorite,/api/posts/*/interaction-state,/api/me/**
+                - Path=/api/me/**
+            - id: identity-user-compatibility
+              uri: ${DC_USER_URI:http://localhost:8102}
+              predicates:
+                - Path=/api/users/**
+            - id: identity-interaction-compatibility
+              uri: ${DC_INTERACTION_URI:http://localhost:8105}
+              predicates:
+                - Path=/api/posts/*/like,/api/posts/*/favorite,/api/posts/*/interaction-state
+            - id: identity-notification-compatibility
+              uri: ${DC_NOTIFICATION_URI:http://localhost:8108}
+              predicates:
+                - Path=/api/notifications/**,/ws/notifications/**
             - id: content-aggregate
               uri: ${DC_CONTENT_AGGREGATE_URI:http://localhost:8202}
               predicates:
