@@ -200,6 +200,7 @@ jobs:
       - run: python -m unittest scripts/ops/test_k6_contract.py
       - run: python -m unittest scripts/ops/test_linux_acceptance_contract.py
       - run: python scripts/ops/assert-actions-pinned.py
+      - run: python scripts/ops/assert-observability-runbooks.py
       - run: python scripts/ops/assert-production-resource-budgets.py
 
   source-sbom:
