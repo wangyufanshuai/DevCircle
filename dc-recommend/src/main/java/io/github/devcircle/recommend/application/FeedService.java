@@ -1,19 +1,13 @@
 package io.github.devcircle.recommend.application;
 
-import io.github.devcircle.common.api.ApiResponse;
 import io.github.devcircle.common.api.CursorPage;
-import io.github.devcircle.common.api.PageResponse;
 import io.github.devcircle.content.contract.PostSummary;
-import io.github.devcircle.seed.ThemeContentLibrary;
 import io.github.devcircle.recommend.model.ExposureRequest;
 import io.github.devcircle.recommend.model.FeedItem;
-import io.github.devcircle.common.http.BoundedRestClientFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestClient;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -29,16 +23,14 @@ public class FeedService {
     private final RecommendationImpressionRepository impressionRepository;
     private final RecommendationTelemetryService telemetryService;
     private final RecommendationScenePolicy scenePolicy;
+    private final RecommendationCandidateLoader candidateLoader;
     private final FollowSignalStore followSignalStore;
-    private final RestClient contentClient;
-    private final List<PostSummary> seedPosts = ThemeContentLibrary.summaries();
 
     @Value("${devcircle.recommend.read-fallback-enabled:false}")
     private boolean readFallbackEnabled;
 
     public FeedService(RecommendationScorer scorer, StringRedisTemplate redisTemplate) {
-        this(scorer, redisTemplate, null, "http://localhost:8103", null,
-                new RecommendationTelemetryService(redisTemplate, null), new RecommendationScenePolicy());
+        this(scorer, redisTemplate, null, "http://localhost:8103", null);
         this.readFallbackEnabled = true;
     }
 
@@ -46,9 +38,7 @@ public class FeedService {
                        StringRedisTemplate redisTemplate,
                        RecommendationImpressionRepository impressionRepository,
                        String contentBaseUrl) {
-        this(scorer, redisTemplate, impressionRepository, contentBaseUrl, null,
-                new RecommendationTelemetryService(redisTemplate, impressionRepository),
-                new RecommendationScenePolicy());
+        this(scorer, redisTemplate, impressionRepository, contentBaseUrl, null);
     }
 
     public FeedService(RecommendationScorer scorer,
@@ -56,26 +46,31 @@ public class FeedService {
                        RecommendationImpressionRepository impressionRepository,
                        String contentBaseUrl,
                        FollowSignalStore followSignalStore) {
-        this(scorer, redisTemplate, impressionRepository, contentBaseUrl, followSignalStore,
-                new RecommendationTelemetryService(redisTemplate, impressionRepository),
-                new RecommendationScenePolicy());
+        RecommendationScenePolicy policy = new RecommendationScenePolicy();
+        this.scorer = scorer;
+        this.redisTemplate = redisTemplate;
+        this.impressionRepository = impressionRepository;
+        this.telemetryService = new RecommendationTelemetryService(redisTemplate, impressionRepository);
+        this.scenePolicy = policy;
+        this.candidateLoader = new RecommendationCandidateLoader(contentBaseUrl);
+        this.followSignalStore = followSignalStore;
     }
 
     @Autowired
     public FeedService(RecommendationScorer scorer,
                        StringRedisTemplate redisTemplate,
                        RecommendationImpressionRepository impressionRepository,
-                       @Value("${devcircle.content.base-url:http://localhost:8103}") String contentBaseUrl,
                        FollowSignalStore followSignalStore,
                        RecommendationTelemetryService telemetryService,
-                       RecommendationScenePolicy scenePolicy) {
+                       RecommendationScenePolicy scenePolicy,
+                       RecommendationCandidateLoader candidateLoader) {
         this.scorer = scorer;
         this.redisTemplate = redisTemplate;
         this.impressionRepository = impressionRepository;
         this.telemetryService = telemetryService;
         this.scenePolicy = scenePolicy;
+        this.candidateLoader = candidateLoader;
         this.followSignalStore = followSignalStore;
-        this.contentClient = BoundedRestClientFactory.create(contentBaseUrl);
     }
 
     public CursorPage<FeedItem> feed(Long userId, String cursor, int size) {
@@ -84,10 +79,11 @@ public class FeedService {
 
     public CursorPage<FeedItem> feed(Long userId, String cursor, int size, String scene) {
         int safeSize = safePageSize(size);
-        CandidateSet candidates = loadCandidates(scene, Math.max(safeSize * 4, 80));
+        RecommendationCandidateLoader.CandidateBatch candidates = candidateLoader.load(
+                scenePolicy.queryTheme(scene), Math.max(safeSize * 4, 80), readFallbackEnabled);
         CursorPage<FeedItem> page = feedFromPosts(userId, candidates.posts(), cursor, safeSize, scene, candidates.source(), candidates.degraded());
         if (readFallbackEnabled && page.records().isEmpty() && !"SEED_FALLBACK".equals(candidates.source())) {
-            return feedFromPosts(userId, seedPosts, cursor, safeSize, scene, "SEED_FALLBACK", true);
+            return feedFromPosts(userId, candidateLoader.seedPosts(), cursor, safeSize, scene, "SEED_FALLBACK", true);
         }
         return page;
     }
@@ -144,31 +140,6 @@ public class FeedService {
         return telemetryService.recordRecommendEvent(
                 userId, postId, eventType, scenePolicy.normalize(scene), experimentId, bucket,
                 requestId, readFallbackEnabled);
-    }
-
-    private CandidateSet loadCandidates(String scene, int size) {
-        try {
-            String theme = scenePolicy.queryTheme(scene);
-            ApiResponse<PageResponse<PostSummary>> response = contentClient.get()
-                    .uri(uriBuilder -> uriBuilder.path("/api/posts")
-                            .queryParam("page", 1)
-                            .queryParam("size", size)
-                            .queryParamIfPresent("theme", java.util.Optional.ofNullable(theme))
-                            .build())
-                    .retrieve()
-                    .body(new ParameterizedTypeReference<>() {
-                    });
-            if (response != null && response.data() != null && !response.data().records().isEmpty()) {
-                return new CandidateSet(response.data().records(), "DB", false);
-            }
-        } catch (RuntimeException ex) {
-            if (!readFallbackEnabled) {
-                throw dependency("内容服务暂时不可用", ex);
-            }
-        }
-        return readFallbackEnabled
-                ? new CandidateSet(seedPosts, "SEED_FALLBACK", true)
-                : new CandidateSet(List.of(), "DB", false);
     }
 
     private FeedItem toFeedItem(PostSummary post, Set<String> interests, Set<Long> followedAuthors,
@@ -290,9 +261,6 @@ public class FeedService {
         if (!readFallbackEnabled) {
             throw dependency(message, cause);
         }
-    }
-
-    private record CandidateSet(List<PostSummary> posts, String source, boolean degraded) {
     }
 
     private record ExperimentContext(String experimentId, String bucket) {
