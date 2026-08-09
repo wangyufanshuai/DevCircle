@@ -58,6 +58,7 @@ MINIO_ROOT_USER=mv_object_admin
 MINIO_ROOT_PASSWORD=Object-9z!D2@rM7#pL4~xC6vB
 DEVCIRCLE_JWT_SECRET=Aa1!Bb2@Cc3#Dd4~Ee5%Ff6^Gg7&Hh8*Ii9(Jj0)Kk1_Ll2+Mm3-Nn4=Oo5?Pp6Qq7~
 DEVCIRCLE_INTERNAL_OPS_KEY=Ops-4w-N8-kR2-sV7-xM5-qL9-cD1-pT6-yH
+ALERTMANAGER_CONFIG_PATH=/srv/devcircle/secrets/alertmanager.yml
 EOF
 
 export PATH="${FAKE_BIN}:${PATH}"
