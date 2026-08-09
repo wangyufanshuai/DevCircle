@@ -11,6 +11,9 @@ DURATION="${DURATION:-3m}"
 MIN_CPU="${MIN_CPU:-4}"
 MIN_MEMORY_GIB="${MIN_MEMORY_GIB:-15}"
 MIN_DISK_GIB="${MIN_DISK_GIB:-180}"
+MIN_AVAILABILITY="${MIN_AVAILABILITY:-0.99}"
+MAX_READ_P95_SECONDS="${MAX_READ_P95_SECONDS:-0.3}"
+MAX_WRITE_P95_SECONDS="${MAX_WRITE_P95_SECONDS:-0.6}"
 COMPOSE=(docker compose --env-file "${ENV_FILE}" -f "${ROOT_DIR}/docker-compose.prod.yml")
 
 require_value() {
@@ -33,6 +36,7 @@ require_command curl
 require_command git
 require_command k6
 require_command sha256sum
+require_command jq
 require_value POST_ID
 require_value TOKENS
 require_value ADMIN_TOKEN
@@ -85,7 +89,12 @@ cat > "${evidence_dir}/host.json" <<EOF
   "readVus": ${READ_VUS},
   "writeVus": ${WRITE_VUS},
   "duration": "${DURATION}",
-  "baseUrl": "${BASE_URL}"
+  "baseUrl": "${BASE_URL}",
+  "thresholds": {
+    "minimumAvailability": ${MIN_AVAILABILITY},
+    "maximumReadP95Seconds": ${MAX_READ_P95_SECONDS},
+    "maximumWriteP95Seconds": ${MAX_WRITE_P95_SECONDS}
+  }
 }
 EOF
 
@@ -117,14 +126,117 @@ prometheus_query() {
     > "${evidence_dir}/prometheus-${name}.txt"
 }
 
+prometheus_scalar() {
+  local name="$1"
+  local file="${evidence_dir}/prometheus-${name}.txt"
+  local value
+  value="$(awk '
+    BEGIN {
+      numeric = "^[-+]?[0-9]+([.][0-9]*)?([eE][-+]?[0-9]+)?$|^[-+]?([.][0-9]+)([eE][-+]?[0-9]+)?$"
+    }
+    NF {
+      token = $NF
+      if (token == "NaN" || token == "nan" || token == "+Inf" || token == "-Inf" || token == "Inf") {
+        invalid = 1
+      } else if (token ~ numeric) {
+        value = token
+        count++
+      }
+    }
+    END {
+      if (invalid || count != 1) exit 1
+      print value
+    }
+  ' "${file}")" || {
+    echo "Prometheus query ${name} did not return exactly one finite numeric value" >&2
+    exit 1
+  }
+  printf '%s' "${value}"
+}
+
+assert_metric_at_least() {
+  local name="$1"
+  local value="$2"
+  local threshold="$3"
+  awk -v value="${value}" -v threshold="${threshold}" \
+    'BEGIN { exit !(value == value && value + 0 >= threshold + 0) }' || {
+      echo "Prometheus threshold failed: ${name}=${value}, expected >= ${threshold}" >&2
+      exit 1
+    }
+}
+
+assert_metric_at_most() {
+  local name="$1"
+  local value="$2"
+  local threshold="$3"
+  awk -v value="${value}" -v threshold="${threshold}" \
+    'BEGIN { exit !(value == value && value + 0 <= threshold + 0) }' || {
+      echo "Prometheus threshold failed: ${name}=${value}, expected <= ${threshold}" >&2
+      exit 1
+    }
+}
+
+validate_outbox_health() {
+  jq -e '
+    .data as $data |
+    (.code == "OK")
+    and ($data.outboxScope == "FLEET")
+    and ($data.outboxComplete == true)
+    and (($data.outboxDead // -1) == 0)
+    and (($data.outboxBlockedByDead // -1) == 0)
+    and (($data.unavailableOutboxSources // ["missing"]) | length == 0)
+    and (($data.outboxSources | type) == "array")
+    and (($data.outboxSources | length) > 0)
+    and ([$data.outboxSources[] | .status] | all(. == "UP"))
+  ' "${evidence_dir}/outbox-fleet-health.json" >/dev/null || {
+    echo "Outbox fleet health is incomplete or unhealthy; see outbox-fleet-health.json" >&2
+    exit 1
+  }
+}
+
 prometheus_query availability_5m \
-  '1 - (sum(rate(http_server_requests_seconds_count{application="dc-gateway",status=~"5.."}[5m])) / clamp_min(sum(rate(http_server_requests_seconds_count{application="dc-gateway"}[5m])), 0.000001))'
+  '1 - (sum(rate(http_server_requests_seconds_count{job="devcircle",service="dc-gateway",status=~"5.."}[5m])) / clamp_min(sum(rate(http_server_requests_seconds_count{job="devcircle",service="dc-gateway"}[5m])), 0.000001))'
 prometheus_query read_p95_5m \
-  'histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{application="dc-gateway",method=~"GET|HEAD|OPTIONS"}[5m])))'
+  'histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{job="devcircle",service="dc-gateway",method=~"GET|HEAD|OPTIONS"}[5m])))'
 prometheus_query write_p95_5m \
-  'histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{application="dc-gateway",method=~"POST|PUT|PATCH|DELETE"}[5m])))'
-prometheus_query outbox_complete 'devcircle_outbox_fleet_complete'
-prometheus_query outbox_backlog 'devcircle_outbox_fleet_backlog'
+  'histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{job="devcircle",service="dc-gateway",method=~"POST|PUT|PATCH|DELETE"}[5m])))'
+prometheus_query outbox_complete 'devcircle_outbox_fleet_complete{service="dc-admin"}'
+prometheus_query outbox_dead 'devcircle_outbox_fleet_dead{service="dc-admin"}'
+prometheus_query outbox_blocked 'devcircle_outbox_fleet_blocked{service="dc-admin"}'
+prometheus_query outbox_backlog 'devcircle_outbox_fleet_backlog{service="dc-admin"}'
+
+availability="$(prometheus_scalar availability_5m)"
+read_p95_seconds="$(prometheus_scalar read_p95_5m)"
+write_p95_seconds="$(prometheus_scalar write_p95_5m)"
+outbox_complete="$(prometheus_scalar outbox_complete)"
+outbox_dead="$(prometheus_scalar outbox_dead)"
+outbox_blocked="$(prometheus_scalar outbox_blocked)"
+outbox_backlog="$(prometheus_scalar outbox_backlog)"
+
+assert_metric_at_least availability_5m "${availability}" "${MIN_AVAILABILITY}"
+assert_metric_at_most read_p95_5m "${read_p95_seconds}" "${MAX_READ_P95_SECONDS}"
+assert_metric_at_most write_p95_5m "${write_p95_seconds}" "${MAX_WRITE_P95_SECONDS}"
+assert_metric_at_least outbox_complete "${outbox_complete}" 1
+assert_metric_at_most outbox_dead "${outbox_dead}" 0
+assert_metric_at_most outbox_blocked "${outbox_blocked}" 0
+validate_outbox_health
+
+cat > "${evidence_dir}/prometheus-summary.json" <<EOF
+{
+  "availability5m": ${availability},
+  "readP95Seconds5m": ${read_p95_seconds},
+  "writeP95Seconds5m": ${write_p95_seconds},
+  "outboxComplete": ${outbox_complete},
+  "outboxDead": ${outbox_dead},
+  "outboxBlocked": ${outbox_blocked},
+  "outboxBacklog": ${outbox_backlog},
+  "thresholds": {
+    "minimumAvailability": ${MIN_AVAILABILITY},
+    "maximumReadP95Seconds": ${MAX_READ_P95_SECONDS},
+    "maximumWriteP95Seconds": ${MAX_WRITE_P95_SECONDS}
+  }
+}
+EOF
 
 printf '%s\n' "${k6_status}" > "${evidence_dir}/k6-exit-code.txt"
 if (( k6_status != 0 )); then
