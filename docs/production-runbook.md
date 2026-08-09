@@ -17,6 +17,7 @@ scripts/ops/validate-production-env.sh .env.production
 docker compose --env-file .env.production -f docker-compose.prod.yml config --quiet
 python scripts/ops/assert-production-resource-budgets.py --env-file .env.production
 docker compose --env-file .env.production -f docker-compose.prod.yml pull
+scripts/ops/verify-release-identity.sh .env.production
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d mysql redis kafka elasticsearch minio
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 ```
@@ -68,6 +69,7 @@ BACKUP_MANIFEST=/srv/backups/devcircle/<timestamp>/backup-manifest.json \
 
 ```bash
 docker compose --env-file .env.production -f docker-compose.prod.yml pull
+scripts/ops/verify-release-identity.sh .env.production
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 ```
 

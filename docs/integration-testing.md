@@ -2,9 +2,13 @@
 
 DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测试会启动临时 MySQL、Redis、Kafka、Elasticsearch 和 MinIO 容器，执行结束后自动清理。
 
+## 当前证据边界
+
+截至 2026-08-09，当前 HEAD 为 `7da4fd9`。Windows 本机已证明内容写侧切片编译成功，`PostRepositoryStateTest` 15 项和元数据策略测试 2 项通过；此前执行内容模块全量命令时发生环境超时，最新 HEAD 的完整 `clean verify -Pcoverage` 尚未证明通过。因此本文下方带日期的全仓、Testcontainers 和 Compose 结果均为历史证据，不能当作当前 HEAD 的全仓通过结论。
+
 ## 验证证据时间线
 
-### 2026-08-08 可执行基线
+### 2026-08-08 可执行基线（历史提交记录）
 
 Docker Desktop 的 WSL 配额已从 2GB 调整为 6GB，Testcontainers 实测可用内存约 5930MB。当前工作树执行 `./mvnw.cmd -B verify -Pcoverage` 后，16/16 个 Maven 模块成功，117 个测试套件共 482 个测试，0 failures、0 errors、0 skipped；MySQL 8.4、Redis、Kafka、Elasticsearch 和 MinIO 容器均实际启动。聚合 JaCoCo 行覆盖率为 85.39%、分支覆盖率为 75.10%，14 个关键状态类全部通过 85% 分支门禁，Flyway 迁移版本门禁通过。
 
