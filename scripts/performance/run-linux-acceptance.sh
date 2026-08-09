@@ -75,6 +75,7 @@ trap cleanup EXIT
 
 cat > "${evidence_dir}/host.json" <<EOF
 {
+  "os": "Linux",
   "capturedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "gitSha": "${git_sha}",
   "imageTag": "${image_tag}",

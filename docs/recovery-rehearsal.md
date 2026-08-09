@@ -46,3 +46,24 @@
 - 迁移校验原先只检查 ES 中非公开文档数量，空索引可能被误判为通过；现在使用实际索引名 `devcircle-posts`，同时要求数据库 `PUBLISHED` 数量与 ES 总文档数一致，并保留非公开文档为零的约束。
 
 尚需在目标 Linux 主机完成包含 Elasticsearch 重建、Kafka 追平和全部应用服务的正式恢复演练，并记录实际 RTO、磁盘吞吐和服务恢复时间。
+
+## 目标 Linux 正式演练入口（尚未执行）
+
+正式演练必须在与生产等价的 Linux 主机执行，不能用 Windows Docker、局部测试报告或旧的 `target` 目录替代。主机最低要求为 4 CPU、15 GiB 内存、180 GiB 可用文件系统；工作区必须干净，`IMAGE_TAG` 必须等于当前 Git SHA。
+
+建议按以下顺序操作，并把每一步的原始输出写入同一个证据目录：
+
+1. 使用 `scripts/performance/run-linux-acceptance.sh` 先采集宿主机、Compose、容器资源、k6 和 Prometheus 基线。
+2. 使用 `scripts/ops/backup.sh` 生成带 `backup-manifest.json` 与 `SHA256SUMS` 的备份，并记录开始/结束时间。
+3. 在维护窗口停止应用服务，按 `scripts/ops/restore.sh` 从指定备份恢复 MySQL 与 MinIO。
+4. 执行 `scripts/ops/verify-migration.sh`，随后记录 Elasticsearch 全量重建、文档数量与非公开文档为零的校验结果。
+5. 恢复 Kafka 消费，记录 Outbox backlog、消费追平时间；如果进入 DLT，使用管理员接口人工重放并保存请求/响应摘要。
+6. 启动全部应用服务，保存每个聚合门面和公网 Web 的 readiness/health 响应，再执行匿名浏览与登录写操作探测。
+7. 将证据文件放入统一目录后执行：
+
+   ```bash
+   RECOVERY_EVIDENCE_CONFIRM=CONFIRM \
+   scripts/ops/finalize-linux-recovery-evidence.sh /var/lib/devcircle/evidence/<run-id>
+   ```
+
+该校验器只验证证据，不会启动、停止或恢复任何服务。它要求 `host.json`、前后 Compose 状态、备份 Manifest、迁移校验、ES 重建、Kafka 追平、DLT 重放、服务健康、公网探测和 `recovery-timeline.json` 全部为 `PASS`，并重新生成 `recovery-summary.json` 与 `SHA256SUMS`。在该命令成功前，不能宣称正式 RTO/RPO 已达标。
