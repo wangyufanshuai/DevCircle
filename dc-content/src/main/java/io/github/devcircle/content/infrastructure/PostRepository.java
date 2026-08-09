@@ -2,16 +2,14 @@ package io.github.devcircle.content.infrastructure;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.devcircle.seed.ThemeContentLibrary;
 import io.github.devcircle.seed.ThemeSeedPost;
-import io.github.devcircle.common.error.BusinessException;
-import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.content.contract.MediaAssetView;
 import io.github.devcircle.content.contract.PostSummary;
 import io.github.devcircle.content.api.CreatePostRequest;
 import io.github.devcircle.content.api.DraftView;
 import io.github.devcircle.content.api.SaveDraftRequest;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -44,7 +42,10 @@ public class PostRepository {
     private final ContentIdempotencyStore idempotencyStore;
     private final ContentEventStore eventStore;
     private final ContentModerationStore moderationStore;
+    private final PostSeedImporter seedImporter;
+    private final PostAppealRepository appealRepository;
 
+    @Autowired
     public PostRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper,
                           PostQueryRepository postQueryRepository,
                           DraftRepository draftRepository,
@@ -52,7 +53,9 @@ public class PostRepository {
                           PostTagStore postTagStore,
                           ContentIdempotencyStore idempotencyStore,
                           ContentEventStore eventStore,
-                          ContentModerationStore moderationStore) {
+                          ContentModerationStore moderationStore,
+                          PostSeedImporter seedImporter,
+                          PostAppealRepository appealRepository) {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.objectMapper = objectMapper;
@@ -63,6 +66,23 @@ public class PostRepository {
         this.idempotencyStore = idempotencyStore;
         this.eventStore = eventStore;
         this.moderationStore = moderationStore;
+        this.seedImporter = seedImporter;
+        this.appealRepository = appealRepository;
+    }
+
+    /** Compatibility constructor retained for content repository tests during aggregate migration. */
+    public PostRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper,
+                          PostQueryRepository postQueryRepository,
+                          DraftRepository draftRepository,
+                          DraftMediaRepository draftMediaRepository,
+                          PostTagStore postTagStore,
+                          ContentIdempotencyStore idempotencyStore,
+                          ContentEventStore eventStore,
+                          ContentModerationStore moderationStore) {
+        this(jdbcTemplate, objectMapper, postQueryRepository, draftRepository, draftMediaRepository, postTagStore,
+                idempotencyStore, eventStore, moderationStore,
+                new PostSeedImporter(jdbcTemplate, objectMapper, postTagStore),
+                new PostAppealRepository(jdbcTemplate, idempotencyStore, eventStore));
     }
 
     public PostSummary create(Long authorId, CreatePostRequest request) {
@@ -155,124 +175,16 @@ public class PostRepository {
 
     @Transactional
     public int importSeedsIfEmpty(List<ThemeSeedPost> seeds) {
-        int imported = 0;
-        for (ThemeSeedPost seed : seeds) {
-            Long existing = jdbcClient.sql("SELECT COUNT(*) FROM post WHERE id = :id")
-                    .param("id", seed.id())
-                    .query(Long.class)
-                    .single();
-            if (existing != null && existing > 0) {
-                continue;
-            }
-            jdbcClient.sql("""
-                            INSERT INTO post(id, author_id, type, theme, content_kind, difficulty, solvable, solved_count,
-                                             title, status, like_count, comment_count, view_count, created_at)
-                            VALUES (:id, :authorId, :type, :theme, :contentKind, :difficulty, :solvable, :solvedCount,
-                                    :title, 'PUBLISHED', :likes, :comments, :views, :createdAt)
-                            """)
-                    .param("id", seed.id())
-                    .param("authorId", ThemeContentLibrary.authorId(seed.author()))
-                    .param("type", seed.type())
-                    .param("theme", seed.theme())
-                    .param("contentKind", seed.contentKind())
-                    .param("difficulty", seed.difficulty())
-                    .param("solvable", seed.solvable())
-                    .param("solvedCount", seed.solvedCount())
-                    .param("title", seed.title())
-                    .param("likes", seed.likes())
-                    .param("comments", seed.comments())
-                    .param("views", seed.views())
-                    .param("createdAt", java.sql.Timestamp.from(seed.createdAt()))
-                    .update();
-            jdbcClient.sql("""
-                            INSERT INTO post_content(post_id, markdown, clues, solution, suspects, timeline, question,
-                                                     answer_keywords, explanation, worldbuilding, cosmic_facts, related_post_ids)
-                            VALUES (:postId, :markdown, CAST(:clues AS JSON), :solution, CAST(:suspects AS JSON),
-                                    CAST(:timeline AS JSON), :question, CAST(:answerKeywords AS JSON), :explanation,
-                                    CAST(:worldbuilding AS JSON), CAST(:cosmicFacts AS JSON), CAST(:relatedPostIds AS JSON))
-                            """)
-                    .param("postId", seed.id())
-                    .param("markdown", seed.excerpt())
-                    .param("clues", json(seed.clues()))
-                    .param("solution", seed.answerKeywords().isEmpty() ? "" : String.join(",", seed.answerKeywords()))
-                    .param("suspects", json(seed.suspects()))
-                    .param("timeline", json(seed.timeline()))
-                    .param("question", seed.question())
-                    .param("answerKeywords", json(seed.answerKeywords()))
-                    .param("explanation", seed.explanation())
-                    .param("worldbuilding", json(seed.worldbuilding()))
-                    .param("cosmicFacts", json(seed.cosmicFacts()))
-                    .param("relatedPostIds", json(seed.relatedPostIds()))
-                    .update();
-            postTagStore.replace(seed.id(), seed.tags());
-            imported++;
-        }
-        return imported;
+        return seedImporter.importIfEmpty(seeds);
     }
 
     @Transactional
     public Map<String, Object> createAppeal(Long userId, Long postId, String reason, String idempotencyKey) {
-        Long existingId = idempotencyStore.claim(userId, "CREATE_APPEAL:" + postId, idempotencyKey,
-                IdempotencyFingerprint.of("create-appeal-v1", postId, reason));
-        if (existingId != null) {
-            AppealState existing = jdbcClient.sql("SELECT post_id, status FROM appeal_record WHERE id = :appealId")
-                    .param("appealId", existingId)
-                    .query((rs, rowNum) -> new AppealState(rs.getLong("post_id"), rs.getString("status")))
-                    .optional()
-                    .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "申诉记录不存在"));
-            return Map.of("appealId", existingId, "postId", existing.postId(), "status", existing.status(), "duplicateRequest", true);
-        }
-        Long owned = jdbcClient.sql("""
-                        SELECT COUNT(*) FROM post
-                        WHERE id = :postId AND author_id = :userId AND status IN ('REJECTED', 'CHANGES_REQUIRED')
-                        """)
-                .param("postId", postId)
-                .param("userId", userId)
-                .query(Long.class)
-                .single();
-        if (owned == null || owned == 0) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "只能对自己被驳回或要求修改的投稿发起申诉");
-        }
-        var keyHolder = new GeneratedKeyHolder();
-        jdbcTemplate.update(connection -> {
-            PreparedStatement statement = connection.prepareStatement(
-                    "INSERT INTO appeal_record(post_id, user_id, reason) VALUES (?, ?, ?)",
-                    new String[]{"id"}
-            );
-            statement.setLong(1, postId);
-            statement.setLong(2, userId);
-            statement.setString(3, reason.trim());
-            return statement;
-        }, keyHolder);
-        Number key = keyHolder.getKey();
-        Long appealId = key == null ? 0L : key.longValue();
-        jdbcClient.sql("INSERT INTO post_audit_record(post_id, auditor_id, action, reason) VALUES (:postId, :userId, 'APPEAL_CREATED', :reason)")
-                .param("postId", postId)
-                .param("userId", userId)
-                .param("reason", reason.trim())
-                .update();
-        eventStore.append(EventTopics.APPEAL_CREATED, "APPEAL", appealId.toString(),
-                Map.of("appealId", appealId, "postId", postId, "userId", userId));
-        idempotencyStore.attachResource(idempotencyKey, appealId);
-        return Map.of("appealId", appealId, "postId", postId, "status", "PENDING");
+        return appealRepository.create(userId, postId, reason, idempotencyKey);
     }
 
     public List<io.github.devcircle.content.api.PostAuditView> listAudits(Long authorId, Long postId) {
-        Integer owned = jdbcClient.sql("SELECT COUNT(*) FROM post WHERE id = :postId AND author_id = :authorId")
-                .param("postId", postId).param("authorId", authorId).query(Integer.class).single();
-        if (owned == null || owned == 0) throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "投稿不存在");
-        return jdbcClient.sql("""
-                        SELECT id, post_id, auditor_id, action, reason, created_at
-                        FROM post_audit_record WHERE post_id = :postId ORDER BY created_at ASC, id ASC
-                        """)
-                .param("postId", postId)
-                .query((rs, rowNum) -> new io.github.devcircle.content.api.PostAuditView(
-                        rs.getLong("id"), rs.getLong("post_id"), (Long) rs.getObject("auditor_id"),
-                        rs.getString("action"), rs.getString("reason"), rs.getTimestamp("created_at").toInstant()))
-                .list();
-    }
-
-    private record AppealState(long postId, String status) {
+        return appealRepository.listAudits(authorId, postId);
     }
 
     private void writeOutbox(Long postId, Long authorId, CreatePostRequest request) {
@@ -321,14 +233,6 @@ public class PostRepository {
             return objectMapper.writeValueAsString(values);
         } catch (JsonProcessingException ex) {
             throw new IllegalStateException("Failed to serialize structured draft content", ex);
-        }
-    }
-
-    private String json(Object value) {
-        try {
-            return objectMapper.writeValueAsString(value == null ? List.of() : value);
-        } catch (JsonProcessingException ex) {
-            throw new IllegalStateException("Failed to serialize structured seed content", ex);
         }
     }
 
