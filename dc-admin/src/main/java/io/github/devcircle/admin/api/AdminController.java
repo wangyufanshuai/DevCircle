@@ -2,6 +2,7 @@ package io.github.devcircle.admin.api;
 
 import io.github.devcircle.common.api.ApiResponse;
 import io.github.devcircle.admin.application.AdminOpsQueryService;
+import io.github.devcircle.admin.application.AdminReadService;
 import io.github.devcircle.admin.application.AdminService;
 import io.github.devcircle.admin.application.DltReplayService;
 import io.github.devcircle.admin.application.query.DegradationView;
@@ -24,19 +25,21 @@ import java.util.Map;
 @RequestMapping("/api/admin")
 class AdminController {
     private final AdminService adminService;
+    private final AdminReadService adminReadService;
     private final DltReplayService dltReplayService;
     private final AdminOpsQueryService adminOpsQueryService;
 
-    AdminController(AdminService adminService, DltReplayService dltReplayService,
+    AdminController(AdminService adminService, AdminReadService adminReadService, DltReplayService dltReplayService,
                     AdminOpsQueryService adminOpsQueryService) {
         this.adminService = adminService;
+        this.adminReadService = adminReadService;
         this.dltReplayService = dltReplayService;
         this.adminOpsQueryService = adminOpsQueryService;
     }
 
     @GetMapping("/audits/posts")
     ApiResponse<List<AuditItem>> pendingPosts() {
-        return ApiResponse.ok(adminService.pendingPosts());
+        return ApiResponse.ok(adminReadService.pendingPosts());
     }
 
     @PostMapping("/audits/posts/{id}/approve")
@@ -63,7 +66,7 @@ class AdminController {
                                                            @RequestParam(required = false) String status,
                                                            @RequestParam(defaultValue = "1") int page,
                                                            @RequestParam(defaultValue = "20") int size) {
-        return ApiResponse.ok(adminService.moderationTasks(queue, riskLevel, status, page, size));
+        return ApiResponse.ok(adminReadService.moderationTasks(queue, riskLevel, status, page, size));
     }
 
     @PostMapping("/moderation/tasks/{id}/approve")
@@ -106,7 +109,7 @@ class AdminController {
     ApiResponse<List<Map<String, Object>>> appeals(@RequestParam(required = false) String status,
                                                    @RequestParam(defaultValue = "1") int page,
                                                    @RequestParam(defaultValue = "20") int size) {
-        return ApiResponse.ok(adminService.appeals(status, page, size));
+        return ApiResponse.ok(adminReadService.appeals(status, page, size));
     }
 
     @PostMapping("/appeals/{id}/approve")
@@ -140,12 +143,12 @@ class AdminController {
     ApiResponse<List<Map<String, Object>>> riskUsers(@RequestParam(required = false) String status,
                                                      @RequestParam(defaultValue = "1") int page,
                                                      @RequestParam(defaultValue = "20") int size) {
-        return ApiResponse.ok(adminService.riskUsers(status, page, size));
+        return ApiResponse.ok(adminReadService.riskUsers(status, page, size));
     }
 
     @GetMapping("/risk/users/{id}/profile")
     ApiResponse<Map<String, Object>> riskProfile(@PathVariable Long id) {
-        return ApiResponse.ok(adminService.riskProfile(id));
+        return ApiResponse.ok(adminReadService.riskProfile(id));
     }
 
     @PostMapping("/risk/users/{id}/restrict")
@@ -177,17 +180,17 @@ class AdminController {
 
     @GetMapping("/metrics/overview")
     ApiResponse<Map<String, Object>> overview() {
-        return ApiResponse.ok(adminService.overview());
+        return ApiResponse.ok(adminReadService.overview());
     }
 
     @GetMapping("/metrics/themes")
     ApiResponse<List<Map<String, Object>>> themeMetrics() {
-        return ApiResponse.ok(adminService.themeMetrics());
+        return ApiResponse.ok(adminReadService.themeMetrics());
     }
 
     @GetMapping("/recommend/experiments")
     ApiResponse<List<Map<String, Object>>> experiments() {
-        return ApiResponse.ok(adminService.experiments());
+        return ApiResponse.ok(adminReadService.experiments());
     }
 
     @PostMapping("/recommend/experiments")
@@ -218,7 +221,7 @@ class AdminController {
     ApiResponse<List<Map<String, Object>>> auditLogs(@RequestParam(defaultValue = "1") int page,
                                                      @RequestParam(defaultValue = "20") int size,
                                                      @RequestParam(required = false) String action) {
-        return ApiResponse.ok(adminService.auditLogs(page, size, action));
+        return ApiResponse.ok(adminReadService.auditLogs(page, size, action));
     }
 
     @GetMapping("/ops/health")

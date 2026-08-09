@@ -1,6 +1,7 @@
 package io.github.devcircle.admin.api;
 
 import io.github.devcircle.admin.application.AdminOpsQueryService;
+import io.github.devcircle.admin.application.AdminReadService;
 import io.github.devcircle.admin.application.query.DegradationView;
 import io.github.devcircle.admin.application.query.OpsHealthView;
 import io.github.devcircle.admin.application.query.OutboxEventView;
@@ -18,9 +19,10 @@ import static org.mockito.Mockito.when;
 
 class AdminControllerTest {
     private final AdminService service = mock(AdminService.class);
+    private final AdminReadService readService = mock(AdminReadService.class);
     private final DltReplayService dltReplayService = mock(DltReplayService.class);
     private final AdminOpsQueryService opsQueryService = mock(AdminOpsQueryService.class);
-    private final AdminController controller = new AdminController(service, dltReplayService, opsQueryService);
+    private final AdminController controller = new AdminController(service, readService, dltReplayService, opsQueryService);
 
     @Test
     void governanceDecisionsForwardIdentityReasonsAndIdempotencyKeys() {
