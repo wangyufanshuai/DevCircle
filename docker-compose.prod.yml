@@ -240,17 +240,6 @@ services:
     tmpfs: [/tmp]
     logging: *json-logging
 
-  dc-auth:
-    <<: *app-defaults
-    image: ghcr.io/wangyufanshuai/devcircle/dc-auth:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
-    environment: *app-env
-    expose: ["8101"]
-    depends_on:
-      mysql: { condition: service_healthy }
-      redis: { condition: service_healthy }
-      kafka: { condition: service_healthy }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8101/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
-
   dc-user:
     <<: *app-defaults
     image: ghcr.io/wangyufanshuai/devcircle/dc-user:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
@@ -341,7 +330,7 @@ services:
     image: ghcr.io/wangyufanshuai/devcircle/dc-admin:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
     environment:
       <<: *app-env
-      DC_AUTH_URI: http://dc-auth:8101
+      DC_AUTH_URI: http://dc-identity:8201
       DC_USER_URI: http://dc-user:8102
       DC_CONTENT_URI: http://dc-content:8103
       DC_COMMENT_URI: http://dc-comment:8104
@@ -350,6 +339,7 @@ services:
     depends_on:
       mysql: { condition: service_healthy }
       kafka: { condition: service_healthy }
+      dc-identity: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8110/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
   dc-identity:
@@ -357,14 +347,15 @@ services:
     image: ghcr.io/wangyufanshuai/devcircle/dc-identity:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
     environment:
       <<: *app-env
-      DC_AUTH_URI: http://dc-auth:8101
       DC_USER_URI: http://dc-user:8102
       DC_CONTENT_URI: http://dc-content:8103
       DC_INTERACTION_URI: http://dc-interaction:8105
       DC_NOTIFICATION_URI: http://dc-notification:8108
     expose: ["8201"]
     depends_on:
-      dc-auth: { condition: service_healthy }
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      kafka: { condition: service_healthy }
       dc-user: { condition: service_healthy }
       dc-content: { condition: service_healthy }
       dc-interaction: { condition: service_healthy }
@@ -411,9 +402,13 @@ services:
     environment:
       <<: *app-env
       SPRING_PROFILES_ACTIVE: aggregate
+      DC_AUTH_URI: http://dc-identity:8201
       DC_IDENTITY_URI: http://dc-identity:8201
       DC_CONTENT_AGGREGATE_URI: http://dc-content-aggregate:8202
       DC_DISCOVERY_URI: http://dc-discovery:8203
+      DC_USER_URI: http://dc-user:8102
+      DC_INTERACTION_URI: http://dc-interaction:8105
+      DC_NOTIFICATION_URI: http://dc-notification:8108
     ports: ["127.0.0.1:8080:8080"]
     depends_on:
       dc-identity: { condition: service_healthy }

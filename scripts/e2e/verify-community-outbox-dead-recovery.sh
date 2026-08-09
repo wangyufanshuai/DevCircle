@@ -6,7 +6,10 @@ PROJECT_NAME="${REAL_E2E_PROJECT_NAME:-devcircle-real-community-e2e}"
 COMPOSE_FILE="${REAL_E2E_COMPOSE_FILE:-${ROOT_DIR}/docker-compose.e2e.yml}"
 BASE_URL="${REAL_E2E_BASE_URL:-http://127.0.0.1:28080}"
 WAIT_ATTEMPTS="${REAL_E2E_RECOVERY_WAIT_ATTEMPTS:-120}"
-COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" --profile community)
+# shellcheck source=community-auth-profile.sh
+source "${ROOT_DIR}/scripts/e2e/community-auth-profile.sh"
+configure_community_auth_profile
+COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" "${COMMUNITY_AUTH_COMPOSE_PROFILES[@]}")
 MYSQL=("${COMPOSE[@]}" exec -T mysql mysql -uroot -pe2e-root-password --skip-column-names --batch)
 kafka_stopped=false
 
@@ -112,14 +115,14 @@ unauthorized_internal="$("${COMPOSE[@]}" exec -T dc-user curl -sS -o /dev/null -
   echo "Internal Outbox endpoint was not protected: HTTP ${unauthorized_internal}" >&2
   exit 1
 }
-for source in dc-auth:8101 dc-user:8102 dc-content:8103 dc-comment:8104 dc-interaction:8105; do
-  service="${source%%:*}"
-  port="${source##*:}"
+mapfile -t outbox_runtime_sources < <(community_outbox_runtime_sources)
+for runtime in "${outbox_runtime_sources[@]}"; do
+  IFS=: read -r service port logical_source <<<"${runtime}"
   authorized_internal="$("${COMPOSE[@]}" exec -T "${service}" curl -fsS \
     -H 'X-Internal-Ops-Key: E2e-Internal-Ops-Key-2026-Only-For-Isolated-Compose' \
     "http://localhost:${port}/internal/ops/outbox/status")"
   node -e "const body=JSON.parse(process.argv[1]); if(body.service!==process.argv[2]) process.exit(2)" \
-    "${authorized_internal}" "${service}"
+    "${authorized_internal}" "${logical_source}"
 done
 
 title="outbox-dead-${unique}"

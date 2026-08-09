@@ -268,7 +268,17 @@ jobs:
           java-version: "21"
           cache: maven
       - run: ./mvnw -B -DskipTests package
-      - run: jar tf "${{ matrix.module }}/target/${{ matrix.module }}-0.1.0-SNAPSHOT.jar" | grep -q '^BOOT-INF/classes/'
+      - id: executable
+        name: Resolve executable service artifact
+        shell: bash
+        run: |
+          if [[ "${{ matrix.module }}" == "dc-auth" ]]; then
+            path="dc-auth/target/dc-auth-0.1.0-SNAPSHOT-exec.jar"
+          else
+            path="${{ matrix.module }}/target/${{ matrix.module }}-0.1.0-SNAPSHOT.jar"
+          fi
+          jar tf "${path}" | grep -q '^BOOT-INF/classes/'
+          echo "path=${path}" >> "${GITHUB_OUTPUT}"
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -280,7 +290,7 @@ jobs:
           context: .
           file: Dockerfile.service
           push: true
-          build-args: JAR_FILE=${{ matrix.module }}/target/${{ matrix.module }}-0.1.0-SNAPSHOT.jar
+          build-args: JAR_FILE=${{ steps.executable.outputs.path }}
           tags: ghcr.io/wangyufanshuai/devcircle/${{ matrix.image }}:${{ github.sha }}
           sbom: true
           provenance: mode=max

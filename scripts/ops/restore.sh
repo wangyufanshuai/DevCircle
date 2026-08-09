@@ -6,6 +6,12 @@ ENV_FILE="${ENV_FILE:-${ROOT_DIR}/.env.production}"
 BACKUP_DIR="${1:-}"
 MANAGE_APPLICATIONS="${RESTORE_MANAGE_APPLICATIONS:-true}"
 COMPOSE=(docker compose --env-file "${ENV_FILE}" -f "${ROOT_DIR}/docker-compose.prod.yml")
+if [[ "${LEGACY_AUTH_ROLLBACK:-false}" == "true" ]]; then
+  COMPOSE+=(-f "${ROOT_DIR}/deploy/compose/docker-compose.legacy-auth-rollback.yml")
+elif [[ "${LEGACY_AUTH_ROLLBACK:-false}" != "false" ]]; then
+  echo "LEGACY_AUTH_ROLLBACK must be true or false" >&2
+  exit 2
+fi
 
 # shellcheck source=scripts/ops/backup-manifest.sh
 source "${ROOT_DIR}/scripts/ops/backup-manifest.sh"
@@ -34,7 +40,10 @@ else
   exit 2
 fi
 
-APP_SERVICES=(web web-static dc-gateway dc-identity dc-content-aggregate dc-discovery dc-auth dc-user dc-content dc-comment dc-interaction dc-search dc-recommend dc-notification dc-file dc-admin)
+APP_SERVICES=(web web-static dc-gateway dc-identity dc-content-aggregate dc-discovery dc-user dc-content dc-comment dc-interaction dc-search dc-recommend dc-notification dc-file dc-admin)
+if [[ "${LEGACY_AUTH_ROLLBACK:-false}" == "true" ]]; then
+  APP_SERVICES+=(dc-auth)
+fi
 if [[ "${MANAGE_APPLICATIONS}" == "true" ]]; then
   "${COMPOSE[@]}" stop "${APP_SERVICES[@]}"
 elif [[ "${MANAGE_APPLICATIONS}" != "false" ]]; then

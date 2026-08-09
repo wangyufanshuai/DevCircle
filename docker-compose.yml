@@ -145,10 +145,11 @@ services:
       - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards
 
   dc-auth:
+    # Development compatibility service and executable rollback path; production embeds auth in dc-identity.
     profiles: ["app", "demo"]
     build:
       <<: *service-build
-      args: { JAR_FILE: dc-auth/target/dc-auth-0.1.0-SNAPSHOT.jar }
+      args: { JAR_FILE: dc-auth/target/dc-auth-0.1.0-SNAPSHOT-exec.jar }
     environment: *service-env
     ports: ["8101:8101"]
     depends_on:

@@ -23,8 +23,6 @@ scrape_configs:
         labels: { service: dc-content-aggregate }
       - targets: ["dc-discovery:8203"]
         labels: { service: dc-discovery }
-      - targets: ["dc-auth:8101"]
-        labels: { service: dc-auth }
       - targets: ["dc-user:8102"]
         labels: { service: dc-user }
       - targets: ["dc-content:8103"]

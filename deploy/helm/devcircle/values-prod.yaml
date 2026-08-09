@@ -7,22 +7,32 @@ image:
 
 replicaCount: 2
 
+publicOrigin: https://mysticverse.example.com
+
+services:
+  identity:
+    env:
+      AUTH_COOKIE_SECURE: "true"
+      AUTH_FRONTEND_CALLBACK_URI: https://mysticverse.example.com/auth/callback
+      GITHUB_CALLBACK_URI: https://mysticverse.example.com/api/auth/oauth2/github/callback
+      GITHUB_OAUTH_ENABLED: "true"
+      PUBLIC_ORIGIN: https://mysticverse.example.com
+    secretEnvRefs:
+      GITHUB_CLIENT_ID: GITHUB_CLIENT_ID
+      GITHUB_CLIENT_SECRET: GITHUB_CLIENT_SECRET
+
 env:
   DEVCIRCLE_PRODUCTION_MODE: "true"
   DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
   DEVCIRCLE_THEME_CONTENT_SEED_ENABLED: "false"
   SPRINGDOC_API_DOCS_ENABLED: "false"
   SPRINGDOC_SWAGGER_UI_ENABLED: "false"
-  SPRING_PROFILES_ACTIVE: aggregate
   JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60.0 -XX:InitialRAMPercentage=20.0 -XX:+ExitOnOutOfMemoryError"
   SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "8"
   SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: "1"
   SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: "3000"
   SERVER_TOMCAT_THREADS_MAX: "48"
   SERVER_TOMCAT_ACCEPT_COUNT: "64"
-  DC_IDENTITY_URI: http://dc-identity:8201
-  DC_CONTENT_AGGREGATE_URI: http://dc-content-aggregate:8202
-  DC_DISCOVERY_URI: http://dc-discovery:8203
 
 secretEnv: {}
 

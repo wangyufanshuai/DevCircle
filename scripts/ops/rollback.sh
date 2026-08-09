@@ -11,5 +11,14 @@ test -n "${BACKUP_DIR}" || { echo "Usage: PREVIOUS_IMAGE_TAG=<sha> $0 <pre-migra
 
 export IMAGE_TAG="${PREVIOUS_IMAGE_TAG}"
 ENV_FILE="${ENV_FILE}" CONFIRM_RESTORE=RESTORE "${ROOT_DIR}/scripts/ops/restore.sh" "${BACKUP_DIR}"
-docker compose --env-file "${ENV_FILE}" -f "${ROOT_DIR}/docker-compose.prod.yml" up -d --no-deps dc-auth dc-user dc-content dc-comment dc-interaction dc-search dc-recommend dc-notification dc-file dc-admin dc-identity dc-content-aggregate dc-discovery dc-gateway web-static web
+COMPOSE_FILES=(-f "${ROOT_DIR}/docker-compose.prod.yml")
+ROLLBACK_SERVICES=(dc-user dc-content dc-comment dc-interaction dc-search dc-recommend dc-notification dc-file dc-admin dc-identity dc-content-aggregate dc-discovery dc-gateway web-static web)
+if [[ "${LEGACY_AUTH_ROLLBACK:-false}" == "true" ]]; then
+  COMPOSE_FILES+=(-f "${ROOT_DIR}/deploy/compose/docker-compose.legacy-auth-rollback.yml")
+  ROLLBACK_SERVICES=(dc-auth "${ROLLBACK_SERVICES[@]}")
+elif [[ "${LEGACY_AUTH_ROLLBACK:-false}" != "false" ]]; then
+  echo "LEGACY_AUTH_ROLLBACK must be true or false" >&2
+  exit 2
+fi
+docker compose --env-file "${ENV_FILE}" "${COMPOSE_FILES[@]}" up -d --no-deps "${ROLLBACK_SERVICES[@]}"
 echo "Rollback completed with image ${PREVIOUS_IMAGE_TAG}"

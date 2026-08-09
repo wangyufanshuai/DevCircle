@@ -1,6 +1,37 @@
 {{- if and .Values.image.requireSha (not (regexMatch "^[0-9a-f]{40}$" .Values.image.tag)) }}
 {{- fail "production image.tag must be a full 40-character git SHA" }}
 {{- end }}
+{{- if .Values.image.requireSha }}
+{{- $publicOrigin := trimSuffix "/" (required "production publicOrigin is required" .Values.publicOrigin) }}
+{{- if or (not (regexMatch "^https://[^/]+$" $publicOrigin)) (regexMatch "(?i)(localhost|127\\.0\\.0\\.1|\\[::1\\])" $publicOrigin) }}
+{{- fail "production publicOrigin must be a public HTTPS origin" }}
+{{- end }}
+{{- $identity := required "production identity service is required" (index .Values.services "identity") }}
+{{- $identityEnv := ($identity.env | default dict) }}
+{{- if ne (toString (index $identityEnv "AUTH_COOKIE_SECURE")) "true" }}
+{{- fail "production identity must set AUTH_COOKIE_SECURE=true" }}
+{{- end }}
+{{- if ne (toString (index $identityEnv "PUBLIC_ORIGIN")) $publicOrigin }}
+{{- fail "production identity PUBLIC_ORIGIN must match publicOrigin" }}
+{{- end }}
+{{- if ne (toString (index $identityEnv "AUTH_FRONTEND_CALLBACK_URI")) (printf "%s/auth/callback" $publicOrigin) }}
+{{- fail "production identity AUTH_FRONTEND_CALLBACK_URI must derive from publicOrigin" }}
+{{- end }}
+{{- if ne (toString (index $identityEnv "GITHUB_CALLBACK_URI")) (printf "%s/api/auth/oauth2/github/callback" $publicOrigin) }}
+{{- fail "production identity GITHUB_CALLBACK_URI must derive from publicOrigin" }}
+{{- end }}
+{{- if ne (toString (index $identityEnv "GITHUB_OAUTH_ENABLED")) "true" }}
+{{- fail "production identity must explicitly enable GitHub OAuth" }}
+{{- end }}
+{{- $globalSecretRefs := (.Values.secretEnvRefs | default dict) }}
+{{- if ne (toString (index $globalSecretRefs "DEVCIRCLE_INTERNAL_OPS_KEY")) "DEVCIRCLE_INTERNAL_OPS_KEY" }}
+{{- fail "production services must project DEVCIRCLE_INTERNAL_OPS_KEY from a Secret" }}
+{{- end }}
+{{- $identitySecretRefs := ($identity.secretEnvRefs | default dict) }}
+{{- if or (ne (toString (index $identitySecretRefs "GITHUB_CLIENT_ID")) "GITHUB_CLIENT_ID") (ne (toString (index $identitySecretRefs "GITHUB_CLIENT_SECRET")) "GITHUB_CLIENT_SECRET") }}
+{{- fail "production identity must project GitHub OAuth credentials from a Secret" }}
+{{- end }}
+{{- end }}
 {{- range $name, $svc := .Values.services }}
 ---
 apiVersion: apps/v1
@@ -30,12 +61,40 @@ spec:
             - name: {{ $key }}
               value: "{{ $value }}"
             {{- end }}
-            {{- range $key := $.Values.secretEnvKeys }}
+            {{- range $key, $value := ($svc.env | default dict) }}
+            {{- if hasKey $.Values.env $key }}
+            {{- fail (printf "service %s duplicates global environment key %s" $name $key) }}
+            {{- end }}
+            {{- if hasKey $.Values.secretEnvRefs $key }}
+            {{- fail (printf "service %s environment key %s duplicates a global Secret projection" $name $key) }}
+            {{- end }}
+            {{- if hasKey ($svc.secretEnvRefs | default dict) $key }}
+            {{- fail (printf "service %s environment key %s duplicates a service Secret projection" $name $key) }}
+            {{- end }}
             - name: {{ $key }}
+              value: "{{ $value }}"
+            {{- end }}
+            {{- range $envName, $secretKey := $.Values.secretEnvRefs }}
+            {{- if hasKey $.Values.env $envName }}
+            {{- fail (printf "global environment key %s duplicates a global Secret projection" $envName) }}
+            {{- end }}
+            - name: {{ $envName }}
               valueFrom:
                 secretKeyRef:
                   name: {{ $.Values.secrets.existingSecret }}
-                  key: {{ $key }}
+                  key: {{ $secretKey }}
+                  optional: false
+            {{- end }}
+            {{- range $envName, $secretKey := ($svc.secretEnvRefs | default dict) }}
+            {{- if hasKey $.Values.secretEnvRefs $envName }}
+            {{- fail (printf "service %s Secret projection %s duplicates a global Secret projection" $name $envName) }}
+            {{- end }}
+            - name: {{ $envName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.secrets.existingSecret }}
+                  key: {{ $secretKey }}
+                  optional: false
             {{- end }}
           readinessProbe:
             httpGet:

@@ -104,10 +104,12 @@ services:
       retries: 36
 
   dc-auth:
+    # Kept only for an explicit legacy-auth rollback/profile exercise.
     <<: *app-defaults
+    profiles: ["legacy-auth"]
     build:
       <<: *service-build
-      args: { JAR_FILE: dc-auth/target/dc-auth-0.1.0-SNAPSHOT.jar }
+      args: { JAR_FILE: dc-auth/target/dc-auth-0.1.0-SNAPSHOT-exec.jar }
     environment:
       <<: *app-env
       MYSQL_HOST: mysql
@@ -123,6 +125,34 @@ services:
       kafka: { condition: service_healthy, required: false }
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8101/actuator/health/readiness"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  dc-identity:
+    <<: *app-defaults
+    build:
+      <<: *service-build
+      args: { JAR_FILE: dc-identity/target/dc-identity-0.1.0-SNAPSHOT.jar }
+    environment:
+      <<: *app-env
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: devcircle
+      MYSQL_PASSWORD: e2e-database-password
+      AUTH_COOKIE_SECURE: "false"
+      AUTH_FRONTEND_CALLBACK_URI: http://127.0.0.1:5511/auth/callback
+      DEVCIRCLE_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
+      DC_USER_URI: http://dc-user:8102
+      DC_CONTENT_URI: http://dc-content:8103
+      DC_INTERACTION_URI: http://dc-interaction:8105
+      DC_NOTIFICATION_URI: http://dc-notification:8108
+    mem_limit: 256m
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy, required: false }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8201/actuator/health/readiness"]
       interval: 5s
       timeout: 5s
       retries: 24
@@ -194,7 +224,7 @@ services:
     depends_on:
       mysql: { condition: service_healthy }
       kafka: { condition: service_healthy }
-      dc-auth: { condition: service_healthy }
+      dc-identity: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8102/actuator/health/readiness"]
       interval: 5s
@@ -316,7 +346,7 @@ services:
       MYSQL_USER: devcircle
       MYSQL_PASSWORD: e2e-database-password
       DEVCIRCLE_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
-      DC_AUTH_URI: http://dc-auth:8101
+      DC_AUTH_URI: ${REAL_E2E_AUTH_URI:-http://dc-identity:8201}
       DC_USER_URI: http://dc-user:8102
       DC_CONTENT_URI: http://dc-content:8103
       DC_COMMENT_URI: http://dc-comment:8104
@@ -325,6 +355,7 @@ services:
     depends_on:
       dc-content: { condition: service_healthy }
       kafka: { condition: service_healthy, required: false }
+      dc-identity: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8110/actuator/health/readiness"]
       interval: 5s
@@ -338,7 +369,8 @@ services:
       args: { JAR_FILE: dc-gateway/target/dc-gateway-0.1.0-SNAPSHOT.jar }
     environment:
       <<: *app-env
-      DC_AUTH_URI: http://dc-auth:8101
+      DC_AUTH_URI: ${REAL_E2E_AUTH_URI:-http://dc-identity:8201}
+      DC_IDENTITY_URI: http://dc-identity:8201
       DC_USER_URI: http://dc-user:8102
       DC_CONTENT_URI: http://dc-content:8103
       DC_INTERACTION_URI: http://dc-interaction:8105
@@ -349,7 +381,8 @@ services:
     ports: ["28080:8080"]
     mem_limit: 256m
     depends_on:
-      dc-auth: { condition: service_healthy }
+      dc-identity: { condition: service_healthy }
+      dc-auth: { condition: service_healthy, required: false }
       dc-admin: { condition: service_healthy, required: false }
       dc-content: { condition: service_healthy, required: false }
       dc-user: { condition: service_healthy, required: false }

@@ -7,11 +7,18 @@ image:
 replicaCount: 1
 
 services:
-  gateway: { port: 8080 }
-  identity: { port: 8201 }
+  gateway:
+    port: 8080
+    env:
+      SPRING_PROFILES_ACTIVE: aggregate
+      DC_AUTH_URI: http://dc-identity:8201
+      DC_IDENTITY_URI: http://dc-identity:8201
+      DC_CONTENT_AGGREGATE_URI: http://dc-content-aggregate:8202
+      DC_DISCOVERY_URI: http://dc-discovery:8203
+  identity:
+    port: 8201
   content-aggregate: { port: 8202 }
   discovery: { port: 8203 }
-  auth: { port: 8101 }
   user: { port: 8102 }
   content: { port: 8103 }
   comment: { port: 8104 }
@@ -20,7 +27,9 @@ services:
   recommend: { port: 8107 }
   notification: { port: 8108 }
   file: { port: 8109 }
-  admin: { port: 8110 }
+  admin:
+    port: 8110
+    env: { DC_AUTH_URI: http://dc-identity:8201 }
 
 env:
   MYSQL_HOST: mysql
@@ -32,7 +41,6 @@ env:
   S3_ENDPOINT: http://minio:9000
   S3_BUCKET: devcircle
   DEVCIRCLE_CONTENT_BASE_URL: http://dc-content:8103
-  DC_AUTH_URI: http://dc-auth:8101
   DC_USER_URI: http://dc-user:8102
   DC_CONTENT_URI: http://dc-content:8103
   DC_COMMENT_URI: http://dc-comment:8104
@@ -44,12 +52,13 @@ env:
   DC_ADMIN_URI: http://dc-admin:8110
 
 secretEnv: {}
-secretEnvKeys:
-  - MYSQL_PASSWORD
-  - REDIS_PASSWORD
-  - S3_ACCESS_KEY
-  - S3_SECRET_KEY
-  - DEVCIRCLE_JWT_SECRET
+secretEnvRefs:
+  MYSQL_PASSWORD: MYSQL_PASSWORD
+  REDIS_PASSWORD: REDIS_PASSWORD
+  S3_ACCESS_KEY: S3_ACCESS_KEY
+  S3_SECRET_KEY: S3_SECRET_KEY
+  DEVCIRCLE_JWT_SECRET: DEVCIRCLE_JWT_SECRET
+  DEVCIRCLE_INTERNAL_OPS_KEY: DEVCIRCLE_INTERNAL_OPS_KEY
 
 secrets:
   create: false

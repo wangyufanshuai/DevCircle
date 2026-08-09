@@ -9,6 +9,9 @@ PULL_POLICY="${REAL_E2E_PULL_POLICY:-missing}"
 BUILD_MODE="${REAL_E2E_BUILD:-true}"
 RECOVERY_MODE="${REAL_E2E_COMMUNITY_RECOVERY_MODE:-retry}"
 WAIT_ATTEMPTS="${REAL_E2E_RECOVERY_WAIT_ATTEMPTS:-120}"
+# shellcheck source=community-auth-profile.sh
+source "${ROOT_DIR}/scripts/e2e/community-auth-profile.sh"
+configure_community_auth_profile
 export REAL_E2E_ENABLE_OUTBOX=true
 export REAL_E2E_OUTBOX_SEND_TIMEOUT_MS="${REAL_E2E_OUTBOX_SEND_TIMEOUT_MS:-2000}"
 if [[ "${RECOVERY_MODE}" == "dead" ]]; then
@@ -16,7 +19,7 @@ if [[ "${RECOVERY_MODE}" == "dead" ]]; then
 else
   export REAL_E2E_OUTBOX_MAX_ATTEMPTS="${REAL_E2E_OUTBOX_MAX_ATTEMPTS:-8}"
 fi
-COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" --profile community)
+COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" "${COMMUNITY_AUTH_COMPOSE_PROFILES[@]}")
 # shellcheck source=docker-preflight.sh
 source "${ROOT_DIR}/scripts/e2e/docker-preflight.sh"
 
@@ -38,7 +41,10 @@ require_real_e2e_docker "community E2E"
   exit 2
 }
 
-MODULES="dc-auth,dc-user,dc-content,dc-comment,dc-interaction,dc-recommend,dc-notification,dc-admin,dc-gateway"
+MODULES="dc-identity,dc-user,dc-content,dc-comment,dc-interaction,dc-recommend,dc-notification,dc-admin,dc-gateway"
+if [[ -n "${COMMUNITY_AUTH_MAVEN_MODULE}" ]]; then
+  MODULES="${COMMUNITY_AUTH_MAVEN_MODULE},${MODULES}"
+fi
 if command -v java >/dev/null 2>&1; then
   "${ROOT_DIR}/mvnw" -q -pl "${MODULES}" -am -DskipTests package
 elif command -v cmd.exe >/dev/null 2>&1; then
@@ -82,6 +88,7 @@ fi
 
 if [[ "${RECOVERY_MODE}" == "dead" ]]; then
   REAL_E2E_PROJECT_NAME="${PROJECT_NAME}" REAL_E2E_COMPOSE_FILE="${COMPOSE_FILE}" \
+    REAL_E2E_AUTH_PROFILE="${COMMUNITY_AUTH_PROFILE}" \
     bash "${ROOT_DIR}/scripts/e2e/verify-community-outbox-dead-recovery.sh"
 else
   REAL_E2E_PROJECT_NAME="${PROJECT_NAME}" REAL_E2E_COMPOSE_FILE="${COMPOSE_FILE}" \

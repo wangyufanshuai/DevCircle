@@ -1,0 +1,57 @@
+services:
+  dc-auth:
+    image: ghcr.io/wangyufanshuai/devcircle/dc-auth:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    restart: unless-stopped
+    stop_grace_period: 40s
+    mem_limit: 512m
+    cpus: 0.75
+    pids_limit: 256
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-devcircle}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      DEVCIRCLE_JWT_SECRET: ${DEVCIRCLE_JWT_SECRET:?DEVCIRCLE_JWT_SECRET is required}
+      DEVCIRCLE_INTERNAL_OPS_KEY: ${DEVCIRCLE_INTERNAL_OPS_KEY:?DEVCIRCLE_INTERNAL_OPS_KEY is required}
+      DEVCIRCLE_PRODUCTION_MODE: "true"
+      AUTH_COOKIE_SECURE: "true"
+      AUTH_FRONTEND_CALLBACK_URI: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN is required}/auth/callback
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_CALLBACK_URI: ${PUBLIC_ORIGIN}/api/auth/oauth2/github/callback
+      DEVCIRCLE_OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-50}
+      DEVCIRCLE_OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-8}
+      DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS: ${OUTBOX_SEND_TIMEOUT_MS:-15000}
+      MANAGEMENT_TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLE_RATE:-0.1}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60.0 -XX:InitialRAMPercentage=20.0 -XX:+ExitOnOutOfMemoryError"
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${DB_POOL_MAX_SIZE:-8}
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: ${DB_POOL_MIN_IDLE:-1}
+      SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: ${DB_POOL_CONNECTION_TIMEOUT_MS:-3000}
+      SERVER_TOMCAT_THREADS_MAX: ${SERVER_TOMCAT_THREADS_MAX:-48}
+      SERVER_TOMCAT_ACCEPT_COUNT: ${SERVER_TOMCAT_ACCEPT_COUNT:-64}
+    expose: ["8101"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8101/actuator/health/readiness"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    networks: [devcircle]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  dc-gateway:
+    environment:
+      DC_AUTH_URI: http://dc-auth:8101
+    depends_on:
+      dc-auth: { condition: service_healthy }
+
+  dc-admin:
+    environment:
+      DC_AUTH_URI: http://dc-auth:8101

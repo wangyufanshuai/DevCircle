@@ -73,6 +73,24 @@ assert_profile_outbox_mode review false
 assert_profile_outbox_mode community true
 assert_profile_outbox_mode search-recovery true
 
+default_auth_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" config --services | sort)"
+expected_default_auth_services="$(printf '%s\n' dc-gateway dc-identity mysql redis | sort)"
+[[ "${default_auth_services}" == "${expected_default_auth_services}" ]] || {
+  echo "Unexpected default authentication services: ${default_auth_services}" >&2
+  exit 1
+}
+
+legacy_auth_config="$(REAL_E2E_AUTH_URI=http://dc-auth:8101 docker compose \
+  -f "${ROOT_DIR}/docker-compose.e2e.yml" --profile legacy-auth config)"
+grep -q '^  dc-auth:$' <<<"${legacy_auth_config}"
+grep -q 'DC_AUTH_URI: http://dc-auth:8101' <<<"${legacy_auth_config}"
+bash -n "${ROOT_DIR}/scripts/e2e/run-real-auth.sh"
+grep -q -- '-pl dc-identity,dc-gateway' "${ROOT_DIR}/scripts/e2e/run-real-auth.sh"
+if grep -q -- '-pl dc-auth,dc-gateway' "${ROOT_DIR}/scripts/e2e/run-real-auth.sh"; then
+  echo "Authentication E2E must build the embedded identity deployment by default" >&2
+  exit 1
+fi
+
 timeout_config="$(REAL_E2E_OUTBOX_SEND_TIMEOUT_MS=2345 docker compose \
   -f "${ROOT_DIR}/docker-compose.e2e.yml" --profile community config)"
 timeout_values="$(grep -E '^      DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS:' <<<"${timeout_config}" | sort -u)"
@@ -96,6 +114,30 @@ grep -q 'SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: "2345"' <<<"${pool_config}
 bash -n "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
 bash -n "${ROOT_DIR}/scripts/e2e/verify-community-outbox-dead-recovery.sh"
 bash -n "${ROOT_DIR}/scripts/e2e/run-real-community.sh"
+bash -n "${ROOT_DIR}/scripts/e2e/community-auth-profile.sh"
+# shellcheck source=community-auth-profile.sh
+source "${ROOT_DIR}/scripts/e2e/community-auth-profile.sh"
+unset REAL_E2E_AUTH_PROFILE
+configure_community_auth_profile
+[[ "${COMMUNITY_AUTH_SERVICE}:${COMMUNITY_AUTH_PORT}:${COMMUNITY_AUTH_URI}" == \
+  "dc-identity:8201:http://dc-identity:8201" ]]
+[[ "${COMMUNITY_AUTH_COMPOSE_PROFILES[*]}" == "--profile community" ]]
+[[ "$(community_outbox_runtime_sources | head -n 1)" == "dc-identity:8201:dc-auth" ]]
+REAL_E2E_AUTH_PROFILE=legacy-auth
+configure_community_auth_profile
+[[ "${COMMUNITY_AUTH_SERVICE}:${COMMUNITY_AUTH_PORT}:${COMMUNITY_AUTH_URI}" == \
+  "dc-auth:8101:http://dc-auth:8101" ]]
+[[ "${COMMUNITY_AUTH_COMPOSE_PROFILES[*]}" == "--profile community --profile legacy-auth" ]]
+[[ "${COMMUNITY_AUTH_MAVEN_MODULE}" == "dc-auth" ]]
+[[ "$(community_outbox_runtime_sources | head -n 1)" == "dc-auth:8101:dc-auth" ]]
+REAL_E2E_AUTH_PROFILE=unsupported
+if configure_community_auth_profile >/dev/null 2>&1; then
+  echo "Unsupported community authentication profiles must fail closed" >&2
+  exit 1
+fi
+unset REAL_E2E_AUTH_PROFILE
+unset REAL_E2E_AUTH_URI
+configure_community_auth_profile
 grep -q 'stop -t 10 kafka' "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
 grep -q 'FAILED' "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
 grep -q 'PUBLISHED' "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
@@ -105,9 +147,25 @@ grep -q 'DEAD:2' "${ROOT_DIR}/scripts/e2e/verify-community-outbox-dead-recovery.
 grep -q 'OUTBOX_DEAD' "${ROOT_DIR}/scripts/e2e/verify-community-outbox-dead-recovery.sh"
 grep -q 'outboxBlockedByDead' "${ROOT_DIR}/scripts/e2e/verify-community-outbox-dead-recovery.sh"
 
+default_community_config="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
+  --profile community config)"
+default_community_auth_routes="$(grep -E '^      DC_AUTH_URI:' <<<"${default_community_config}" | sort -u)"
+[[ "${default_community_auth_routes}" == "      DC_AUTH_URI: http://dc-identity:8201" ]] || {
+  echo "Community authentication routes must default to dc-identity: ${default_community_auth_routes}" >&2
+  exit 1
+}
+legacy_community_config="$(REAL_E2E_AUTH_URI=http://dc-auth:8101 docker compose \
+  -f "${ROOT_DIR}/docker-compose.e2e.yml" --profile community --profile legacy-auth config)"
+grep -q '^  dc-auth:$' <<<"${legacy_community_config}"
+legacy_community_auth_routes="$(grep -E '^      DC_AUTH_URI:' <<<"${legacy_community_config}" | sort -u)"
+[[ "${legacy_community_auth_routes}" == "      DC_AUTH_URI: http://dc-auth:8101" ]] || {
+  echo "Legacy community authentication routes must select dc-auth: ${legacy_community_auth_routes}" >&2
+  exit 1
+}
+
 community_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
   --profile community config --services | sort)"
-expected_community_services="$(printf '%s\n' dc-admin dc-auth dc-comment dc-content dc-gateway dc-interaction \
+expected_community_services="$(printf '%s\n' dc-admin dc-comment dc-content dc-gateway dc-identity dc-interaction \
   dc-notification dc-recommend dc-user kafka mysql redis | sort)"
 [[ "${community_services}" == "${expected_community_services}" ]] || {
   echo "Unexpected community services: ${community_services}" >&2
@@ -116,7 +174,7 @@ expected_community_services="$(printf '%s\n' dc-admin dc-auth dc-comment dc-cont
 
 search_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
   --profile search-recovery config --services | sort)"
-expected_search_services="$(printf '%s\n' dc-admin dc-auth dc-content dc-gateway dc-search \
+expected_search_services="$(printf '%s\n' dc-admin dc-content dc-gateway dc-identity dc-search \
   elasticsearch kafka mysql redis | sort)"
 [[ "${search_services}" == "${expected_search_services}" ]] || {
   echo "Unexpected search-recovery services: ${search_services}" >&2

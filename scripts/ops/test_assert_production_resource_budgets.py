@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).with_name("assert-production-resource-budgets.py")
+ROOT = SCRIPT.parents[2]
 SPEC = importlib.util.spec_from_file_location("production_resource_budgets", SCRIPT)
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"cannot load {SCRIPT}")
@@ -94,6 +95,14 @@ def valid_compose() -> dict:
     services["dc-gateway"]["ports"] = [
         {"host_ip": "127.0.0.1", "published": 8080, "target": 8080, "protocol": "tcp"},
     ]
+    services["dc-gateway"]["environment"].update({
+        "DC_AUTH_URI": "http://dc-identity:8201",
+        "DC_IDENTITY_URI": "http://dc-identity:8201",
+        "DC_USER_URI": "http://dc-user:8102",
+        "DC_INTERACTION_URI": "http://dc-interaction:8105",
+        "DC_NOTIFICATION_URI": "http://dc-notification:8108",
+    })
+    services["dc-admin"]["environment"]["DC_AUTH_URI"] = "http://dc-identity:8201"
     return {"services": services}
 
 
@@ -101,22 +110,22 @@ class ProductionResourceBudgetTest(unittest.TestCase):
     def setUp(self) -> None:
         self.compose = valid_compose()
 
-    def test_accepts_the_24_service_production_contract(self) -> None:
+    def test_accepts_the_23_service_production_contract(self) -> None:
         service_count, total_memory = budgets.validate(self.compose)
 
-        self.assertEqual(24, service_count)
+        self.assertEqual(23, service_count)
         self.assertLessEqual(total_memory, 15 * budgets.GIB)
 
     def test_rejects_missing_internal_operations_key(self) -> None:
-        del self.compose["services"]["dc-auth"]["environment"]["DEVCIRCLE_INTERNAL_OPS_KEY"]
+        del self.compose["services"]["dc-identity"]["environment"]["DEVCIRCLE_INTERNAL_OPS_KEY"]
 
         with self.assertRaisesRegex(ValueError, "DEVCIRCLE_INTERNAL_OPS_KEY"):
             budgets.validate(self.compose)
 
     def test_rejects_a_missing_memory_limit(self) -> None:
-        del self.compose["services"]["dc-auth"]["mem_limit"]
+        del self.compose["services"]["dc-identity"]["mem_limit"]
 
-        with self.assertRaisesRegex(ValueError, "dc-auth must define numeric mem_limit"):
+        with self.assertRaisesRegex(ValueError, "dc-identity must define numeric mem_limit"):
             budgets.validate(self.compose)
 
     def test_rejects_a_service_without_bounded_log_rotation(self) -> None:
@@ -140,11 +149,11 @@ class ProductionResourceBudgetTest(unittest.TestCase):
             budgets.validate(self.compose)
 
     def test_rejects_a_jvm_without_the_heap_contract(self) -> None:
-        self.compose["services"]["dc-auth"]["environment"]["JAVA_TOOL_OPTIONS"] = (
+        self.compose["services"]["dc-identity"]["environment"]["JAVA_TOOL_OPTIONS"] = (
             "-XX:+ExitOnOutOfMemoryError"
         )
 
-        with self.assertRaisesRegex(ValueError, "dc-auth JAVA_TOOL_OPTIONS is missing"):
+        with self.assertRaisesRegex(ValueError, "dc-identity JAVA_TOOL_OPTIONS is missing"):
             budgets.validate(self.compose)
 
     def test_rejects_an_unexpected_production_service(self) -> None:
@@ -166,8 +175,35 @@ class ProductionResourceBudgetTest(unittest.TestCase):
             budgets.validate(self.compose)
 
         self.compose = valid_compose()
-        self.compose["services"]["dc-auth"]["environment"]["SPRINGDOC_API_DOCS_ENABLED"] = "true"
+        self.compose["services"]["dc-identity"]["environment"]["SPRINGDOC_API_DOCS_ENABLED"] = "true"
         with self.assertRaisesRegex(ValueError, "SPRINGDOC_API_DOCS_ENABLED=false"):
+            budgets.validate(self.compose)
+
+    def test_rejects_a_separate_auth_service_or_identity_auth_proxy(self) -> None:
+        self.compose["services"]["dc-auth"] = {
+            **service(), "environment": app_environment()
+        }
+        with self.assertRaisesRegex(ValueError, "unexpected=.*dc-auth"):
+            budgets.validate(self.compose)
+
+        self.compose = valid_compose()
+        self.compose["services"]["dc-identity"]["environment"]["DC_AUTH_URI"] = "http://dc-auth:8101"
+        with self.assertRaisesRegex(ValueError, "embed authentication"):
+            budgets.validate(self.compose)
+
+    def test_rejects_outbox_or_gateway_routes_that_bypass_the_new_topology(self) -> None:
+        self.compose["services"]["dc-admin"]["environment"]["DC_AUTH_URI"] = "http://dc-auth:8101"
+        with self.assertRaisesRegex(ValueError, "Outbox source from dc-identity"):
+            budgets.validate(self.compose)
+
+        self.compose = valid_compose()
+        del self.compose["services"]["dc-gateway"]["environment"]["DC_AUTH_URI"]
+        with self.assertRaisesRegex(ValueError, "DC_AUTH_URI"):
+            budgets.validate(self.compose)
+
+        self.compose = valid_compose()
+        del self.compose["services"]["dc-gateway"]["environment"]["DC_USER_URI"]
+        with self.assertRaisesRegex(ValueError, "DC_USER_URI"):
             budgets.validate(self.compose)
 
     def test_caddy_admin_api_is_restricted_to_the_container_loopback(self) -> None:
@@ -180,6 +216,84 @@ class ProductionResourceBudgetTest(unittest.TestCase):
                 budgets.validate_caddyfile(temporary)
         finally:
             temporary.unlink(missing_ok=True)
+
+
+class HelmTopologyContractTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.values = budgets.load_simple_yaml_mapping(
+            ROOT / "deploy/helm/devcircle/values.yaml"
+        )
+        self.production = budgets.load_simple_yaml_mapping(
+            ROOT / "deploy/helm/devcircle/values-prod.yaml"
+        )
+        self.template = (
+            ROOT / "deploy/helm/devcircle/templates/services.yaml"
+        ).read_text(encoding="utf-8")
+
+    def test_accepts_identity_as_the_explicit_helm_auth_runtime_without_helm(self) -> None:
+        budgets.validate_helm_topology(self.values, self.production, self.template)
+
+    def test_rejects_a_missing_or_globally_duplicated_gateway_auth_route(self) -> None:
+        missing = copy.deepcopy(self.values)
+        del missing["services"]["gateway"]["env"]["DC_AUTH_URI"]
+        with self.assertRaisesRegex(ValueError, "explicitly set DC_AUTH_URI"):
+            budgets.validate_helm_topology(missing, self.production, self.template)
+
+        duplicated = copy.deepcopy(self.production)
+        duplicated["env"]["DC_AUTH_URI"] = "http://dc-identity:8201"
+        with self.assertRaisesRegex(ValueError, "duplicates global environment"):
+            budgets.validate_helm_topology(self.values, duplicated, self.template)
+
+    def test_rejects_a_template_that_drops_service_environment_rendering(self) -> None:
+        broken = self.template.replace("($svc.env | default dict)", "$.Values.missingServiceEnv")
+        with self.assertRaisesRegex(ValueError, "render service environment exactly once"):
+            budgets.validate_helm_topology(self.values, self.production, broken)
+
+    def test_rejects_insecure_identity_cookie_or_callback_configuration(self) -> None:
+        insecure_cookie = copy.deepcopy(self.production)
+        insecure_cookie["services"]["identity"]["env"]["AUTH_COOKIE_SECURE"] = "false"
+        with self.assertRaisesRegex(ValueError, "AUTH_COOKIE_SECURE=true"):
+            budgets.validate_helm_topology(self.values, insecure_cookie, self.template)
+
+        local_callback = copy.deepcopy(self.production)
+        local_callback["services"]["identity"]["env"]["GITHUB_CALLBACK_URI"] = (
+            "http://localhost:8080/api/auth/oauth2/github/callback"
+        )
+        with self.assertRaisesRegex(ValueError, "GITHUB_CALLBACK_URI"):
+            budgets.validate_helm_topology(self.values, local_callback, self.template)
+
+        local_origin = copy.deepcopy(self.production)
+        local_origin["publicOrigin"] = "http://localhost:8080"
+        with self.assertRaisesRegex(ValueError, "public HTTPS origin"):
+            budgets.validate_helm_topology(self.values, local_origin, self.template)
+
+    def test_rejects_missing_or_unsafe_auth_secret_projections(self) -> None:
+        missing_ops = copy.deepcopy(self.values)
+        del missing_ops["secretEnvRefs"]["DEVCIRCLE_INTERNAL_OPS_KEY"]
+        with self.assertRaisesRegex(ValueError, "DEVCIRCLE_INTERNAL_OPS_KEY"):
+            budgets.validate_helm_topology(missing_ops, self.production, self.template)
+
+        missing_github_secret = copy.deepcopy(self.production)
+        del missing_github_secret["services"]["identity"]["secretEnvRefs"]["GITHUB_CLIENT_SECRET"]
+        with self.assertRaisesRegex(ValueError, "GITHUB_CLIENT_SECRET"):
+            budgets.validate_helm_topology(self.values, missing_github_secret, self.template)
+
+        default_ops = copy.deepcopy(self.production)
+        default_ops["secretEnv"]["DEVCIRCLE_INTERNAL_OPS_KEY"] = (
+            "local-development-internal-ops-key"
+        )
+        with self.assertRaisesRegex(ValueError, "default or weak"):
+            budgets.validate_helm_topology(self.values, default_ops, self.template)
+
+    def test_rejects_plain_and_secret_environment_collisions(self) -> None:
+        duplicate = copy.deepcopy(self.production)
+        duplicate["services"]["identity"]["env"]["GITHUB_CLIENT_ID"] = "not-a-secret"
+        with self.assertRaisesRegex(ValueError, "duplicates Secret projections"):
+            budgets.validate_helm_topology(self.values, duplicate, self.template)
+
+        broken = self.template.replace("optional: false", "optional: true", 1)
+        with self.assertRaisesRegex(ValueError, "fail closed"):
+            budgets.validate_helm_topology(self.values, self.production, broken)
 
 
 if __name__ == "__main__":
