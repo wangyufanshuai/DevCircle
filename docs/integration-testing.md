@@ -4,13 +4,15 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 ## 当前证据边界
 
-截至 2026-08-09，当前证据绑定提交为 `99e6d67`。本轮将可靠消息基础设施从 `dc-common` 迁入新增的非部署库 `dc-messaging-support`：8 个生产类和 4 个测试类完成迁移，业务模块改为显式依赖该支持库。`dc-common` 的主类从 24 个降至 16 个，且不再依赖 JDBC、Kafka 或 H2；这一步进一步收缩了公共模块边界，但它仍保留 Web、追踪、异常处理和认证上下文等运行时支持，后续会继续迁移。
+截至 2026-08-09，当前证据绑定提交为 `5821178`（包含 `5062126` 与 `99e6d67`）。可靠消息基础设施已从 `dc-common` 迁入新增的非部署库 `dc-messaging-support`：8 个生产类和 4 个测试类完成迁移，业务模块改为显式依赖该支持库。`dc-common` 的主类从 24 个降至 16 个，且不再依赖 JDBC、Kafka 或 H2；它仍保留 Web、追踪、异常处理和认证上下文等运行时支持，后续会继续迁移。
 
-Windows 本机使用 E 盘临时目录并禁用 Surefire 分叉执行当前 `99e6d67` 的全仓非容器回归，19/19 个 Maven 模块构建成功；本轮时间窗口内产生 104 份 Surefire 报告，共 457 个测试，0 failures、0 errors、0 skipped。定向回归中，`dc-common` 为 42/42，`dc-messaging-support` 为 18/18。全仓命令显式排除 `*IntegrationTest`、`DockerPreflightTest` 和 `KafkaContainerSmokeTest`，且 `forkCount=0` 不能产生可信 JaCoCo 结果，因此这些结果只证明当前非容器功能回归，不得解释为最新全仓覆盖率、Testcontainers 或真实 Compose 通过。
+当前 `5821178` 已在 Windows 本机使用默认 Surefire 分叉配置完成一轮全新的 `clean verify -Pcoverage` 非容器回归：19/19 个 Reactor projects（根项目 + 18 个子模块）构建成功；`clean` 后本轮生成 107 份 Surefire XML，共 471 个测试，0 failures、0 errors、0 skipped。16 份 JaCoCo 报告的聚合行/分支覆盖率为 81.19%/73.89%，通过 CI 的 75%/70% 门禁；14/14 个关键状态类通过 85% 分支门禁。可复跑命令、UTC 时间窗、工具版本和统计边界见 [Auth-in-Identity 非容器覆盖率证据](evidence/2026-08-09-auth-in-identity-noncontainer.md)。
 
-本轮 31 项 ops 契约、迁移版本门禁、生产资源预算门禁和生产 Compose `config --quiet` 均通过。覆盖率门禁已要求新增 `dc-messaging-support` 的报告；`ReliableOutboxWorker` 分支覆盖率 95.45% 仅为本轮定向覆盖证据，并非当前全仓覆盖率结论。当前尚未在 `99e6d67` 执行完整全仓 `-Pcoverage`。
+本轮 39 项 ops 契约、迁移版本门禁、生产资源预算门禁和生产 Compose `config --quiet` 均通过。生产 Compose 当前声明 23 个服务、14.12 GiB 容器内存上限，且仅 Web 与 Gateway 对宿主机发布端口；这只是静态配置证据，不代表已在目标主机启动。覆盖率门禁已要求新增 `dc-messaging-support` 的报告；本轮 `ReliableOutboxWorker` 分支覆盖率为 95.45%。本轮非容器覆盖率回归显式排除了 `*IntegrationTest`、`DockerPreflightTest` 和 `KafkaContainerSmokeTest`，不得解释为 Testcontainers、真实 Compose 或 Linux 验收通过。
 
-Docker Linux Engine 当前不可用：`docker info` 超时，Bash/WSL 入口返回 `HCS_E_CONNECTION_TIMEOUT`。因此当前提交未重新执行 Testcontainers、真实 Compose 启动、目标 Linux 性能测试、恢复演练或 Cosign Registry 验签；本文下方带日期的容器、性能、恢复和 Registry 结果均为绑定旧提交的历史证据，除非重新在当前 SHA 执行，否则不得作为 `99e6d67` 的生产验收结论。
+`dc-identity` 第一阶段只内嵌 `dc-auth` 与个人仪表盘：认证模块的逻辑 producer（`dc-auth`）、认证 schema、Flyway 迁移和 Maven 模块继续保留，但生产执行载体是 `dc-identity`。其 H2 回归实际启用 8 个认证 Flyway 迁移，并验证注册会写入账号、刷新令牌/幂等记录、审计与 `user.registered` Outbox。`dc-user`、`dc-interaction` 和 `dc-notification` 仍是兼容服务；因此这不是完整四聚合完成的证据。
+
+Docker Linux Engine 当前不可用：`docker info` 超时，Bash/WSL 入口返回 `HCS_E_CONNECTION_TIMEOUT`。因此当前提交未重新执行 Testcontainers、真实 Compose、真实认证 E2E、目标 Linux 性能测试、恢复演练、Helm 实际 render 或 Cosign Registry 验签；本文下方带日期的容器、性能、恢复和 Registry 结果均为绑定旧提交的历史证据，除非重新在当前 SHA 执行，否则不得作为 `5821178` 的生产验收结论。
 
 ## 验证证据时间线
 

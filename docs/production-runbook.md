@@ -22,7 +22,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d mysql
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 ```
 
-生产 Compose 将24个容器的内存上限控制在约14.63 GiB，只允许 `web` 与 `dc-gateway` 发布宿主机端口。14个 JVM 服务单实例限制为512 MiB、0.75 CPU和256个 PID，Java 最大堆按容器内存的60%计算；数据库连接池默认每服务最多8个连接。全部生产容器统一使用 `json-file` 日志驱动，每个日志文件最多20 MiB并保留5份；资源门禁会拒绝任何服务缺少该轮转契约。内部 Prometheus 保留35天/最多1GB指标，Alertmanager使用宿主机私有路由配置，Jaeger使用持久化Badger存储。该预算是防止资源失控的上限，不代表性能验收已经通过；发布前仍必须执行50并发 k6 和目标主机观测。
+生产 Compose 当前声明23个服务，容器内存上限合计约14.12 GiB；只有 `web` 与 `dc-gateway` 对宿主机发布端口，其中 `dc-gateway` 仅绑定回环地址。JVM 进程数以当前 Compose 实际启用的服务为准，不得按 Maven 模块数推算；Java 服务单实例限制为512 MiB、0.75 CPU和256个 PID，Java 最大堆按容器内存的60%计算；数据库连接池默认每服务最多8个连接。生产认证的执行载体是 `dc-identity` 进程内的认证运行时；独立 `dc-auth` 镜像仅用于 `deploy/compose/docker-compose.legacy-auth-rollback.yml` 的短期 legacy rollback，不属于常规生产拓扑。全部生产容器统一使用 `json-file` 日志驱动，每个日志文件最多20 MiB并保留5份；资源门禁会拒绝任何服务缺少该轮转契约。内部 Prometheus 保留35天/最多1GB指标，Alertmanager使用宿主机私有路由配置，Jaeger使用持久化Badger存储。该预算是防止资源失控的上限，不代表性能验收已经通过；发布前仍必须执行50并发 k6 和目标主机观测。
 
 生产编排发布 Caddy Web 的 80/443，并仅把 Gateway 的 8080 绑定到宿主机 `127.0.0.1`，供本机诊断使用。公网 API 统一经过 Caddy 与 Web Nginx 转发；MySQL、Redis、Kafka、Elasticsearch、MinIO、Gateway Actuator 与领域服务均不能从公网直接访问。Caddy 管理 API 同样只监听容器内 localhost。
 

@@ -11,7 +11,10 @@ DevCircle 是工程代号，MysticVerse 是前台产品名。v1.2 将项目定�
 | 模块 | 职责 |
 | --- | --- |
 | `dc-gateway` | 统一入口、TraceId、JWT 校验、角色拦截、用户上下文透传 |
-| `dc-auth` | 密码登录、JWT access/refresh、退出、OAuth2 provider 入口、审计日志 |
+| `dc-identity` | 第一阶段生产 Identity 执行单元：进程内承载 `dc-auth` 认证运行时与个人仪表盘；用户、互动、通知仍通过兼容服务提供 |
+| `dc-content-deployment` | Content 聚合门面：聚合详情视图，并将内容、评论、媒体和治理请求路由到兼容领域服务 |
+| `dc-discovery` | Discovery 聚合门面：将搜索与推荐请求路由到兼容领域服务 |
+| `dc-auth` | 保留认证领域 Maven 模块、逻辑事件 producer、认证 schema/Flyway 迁移和可回滚可执行镜像；正常生产不单独运行该进程 |
 | `dc-content` | 主题帖子、详情、相关内容、推理解谜、审核状态、Outbox |
 | `dc-search` | Kafka 内容事件同步、ES 查询、手动重建索引 |
 | `dc-recommend` | 规则/线性模型排序、Redis 热度和曝光、推荐特征日志、实验分桶、多路召回来源 |
@@ -26,25 +29,29 @@ DevCircle 是工程代号，MysticVerse 是前台产品名。v1.2 将项目定�
 ```mermaid
 flowchart LR
   Web["Vue MysticVerse"] --> Gateway["dc-gateway"]
-  Gateway --> Content["dc-content"]
-  Gateway --> Recommend["dc-recommend"]
-  Gateway --> Search["dc-search"]
-  Gateway --> Admin["dc-admin"]
-  Gateway --> Auth["dc-auth"]
-  Gateway --> File["dc-file"]
+  Gateway --> Identity["dc-identity<br/>阶段 1: embedded Auth + dashboard"]
+  Gateway --> ContentAggregate["dc-content-aggregate"]
+  Gateway --> Discovery["dc-discovery"]
 
-  Content --> MySQLContent[("MySQL dc_content")]
-  Content --> Outbox[("outbox_event")]
+  Identity --> AuthRuntime["dc-auth runtime<br/>(进程内)"]
+  Identity --> IdentityLegacy["dc-user / dc-interaction / dc-notification<br/>兼容领域服务"]
+  ContentAggregate --> ContentLegacy["dc-content / dc-comment / dc-file / dc-admin<br/>兼容领域服务"]
+  ContentAggregate --> IdentityLegacy
+  Discovery --> DiscoveryLegacy["dc-search / dc-recommend<br/>兼容领域服务"]
+  Gateway -. "现存兼容直通路由" .-> IdentityLegacy
+
+  ContentLegacy --> MySQLContent[("MySQL dc_content")]
+  ContentLegacy --> Outbox[("outbox_event")]
   Outbox --> Kafka["Kafka"]
-  Kafka --> Search
-  Search --> ES[("Elasticsearch")]
-  Recommend --> Redis[("Redis")]
-  Recommend --> MySQLContent
-  Admin --> MySQLContent
-  Kafka --> Notify["dc-notification"]
-  Notify --> MySQLNotify[("MySQL dc_notification")]
-  File --> MinIO[("MinIO")]
+  Kafka --> DiscoveryLegacy
+  Kafka --> IdentityLegacy
+  DiscoveryLegacy --> ES[("Elasticsearch")]
+  DiscoveryLegacy --> Redis[("Redis")]
+  IdentityLegacy --> MySQLIdentity[("MySQL identity schemas")]
+  ContentLegacy --> MinIO[("MinIO")]
 ```
+
+该图描述当前生产收口阶段，而不是最终四进程形态：Gateway 的主路由已指向 Identity、Content Aggregate 与 Discovery；Identity 目前只完成 Auth 运行时内嵌和仪表盘聚合，用户、互动、通知仍是独立兼容服务，且 Gateway 仍保留这些接口的兼容直通路由。Content Aggregate 与 Discovery 也仍会调用旧领域进程。
 
 ## 数据策略
 
@@ -60,7 +67,7 @@ flowchart LR
 
 ## 认证与安全
 
-- `dc-auth` 签发 JWT access token 和 refresh token。
+- 正常生产由 `dc-identity` 进程内的 `dc-auth` 认证运行时签发 JWT access token 和 refresh token；`dc-auth` 的 producer 名称、schema 和 Flyway 迁移保持不变。
 - refresh token 哈希后写库，退出时撤销。
 - Gateway 解析 JWT 并透传 `X-User-Id`、`X-Roles`、`X-Trace-Id`。
 - 管理接口要求 `ADMIN` 角色。
@@ -91,8 +98,8 @@ flowchart LR
 
 ## 部署与可观测
 
-- Compose profiles：`infra` 只启动基础设施，`app` 启动应用服务，`demo` 启动全栈。
-- Helm values：`values-dev.yaml` 和 `values-prod.yaml` 分离镜像、资源、Ingress 和生产密钥策略；生产不启用 demo token 或 mock fallback。
+- Compose profiles：`infra` 只启动基础设施，`app` 启动应用服务，`demo` 启动全栈。生产 Compose 的 aggregate profile 将 `/api/auth/**` 与 `/api/me/**` 路由到 `dc-identity`；`dc-user`、`dc-interaction`、`dc-notification` 仍是兼容服务。独立 `dc-auth` 仅由 `deploy/compose/docker-compose.legacy-auth-rollback.yml` 临时启用，以回滚 Gateway/Admin 的认证上游。
+- Helm values：`values-dev.yaml` 和 `values-prod.yaml` 分离镜像、资源、Ingress 和生产密钥策略；生产不启用 demo token 或 mock fallback。生产模板 fail closed：Identity 必须启用安全 Cookie，前端和 GitHub callback 必须从公开 HTTPS origin 推导，GitHub OAuth 凭证及内部运维密钥必须由非可选 Secret 引用投影。Chart 创建 Secret 时缺少必需映射会在 render 阶段失败；外部 `existingSecret` 无法由 Helm render 验证，缺失会阻止 Pod 启动。
 - CI：后端测试、前端构建、Playwright、Helm lint、Compose config、GHCR 镜像构建、Trivy 扫描。
 - 可观测：Actuator + Prometheus + Grafana + Jaeger；告警覆盖服务不可用、5xx、P95、JVM、连接池压力。
 
@@ -104,4 +111,4 @@ v1.2 是生产预备版，还不是大规模生产系统。后续应继续补：
 - Kafka lag、Outbox backlog、ES 健康等更细指标。
 - 推荐实验离线评估、自动报表和审批流。
 - OAuth2 设备风控、已认证账号的显式绑定流程和密钥轮换自动化。
-- 云服务器或 Kubernetes 的真实压测数据和长期运行报告。
+- 当前 SHA 的 Testcontainers、真实 Compose、真实认证 E2E、Linux 性能/恢复、Helm 实际 render 与 Cosign Registry 验签；以及云服务器或 Kubernetes 的真实压测数据和长期运行报告。

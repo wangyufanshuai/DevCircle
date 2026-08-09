@@ -31,7 +31,7 @@ DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“
 ## 模块
 
 - `dc-gateway`: 统一入口、TraceId、JWT 鉴权、角色拦截、限流、用户上下文透传、请求日志。
-- `dc-identity`: auth、user、interaction、notification 的兼容聚合部署门面。
+- `dc-identity`: 第一阶段的 Identity 部署单元；生产进程内嵌 `dc-auth` 认证运行时和个人仪表盘。`dc-user`、`dc-interaction`、`dc-notification` 仍以兼容服务保留，尚未完成完整四聚合。
 - `dc-content-deployment`: content、comment、file、moderation 的兼容聚合部署门面。
 - `dc-discovery`: search、recommend、experiment 的兼容聚合部署门面。
 - `dc-auth`: 邮箱密码登录、Refresh Token 轮换、GitHub OAuth、审计日志。
@@ -44,6 +44,14 @@ DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“
 - `dc-file`: MinIO 上传、媒体元数据、上传安全校验。
 - `dc-admin`: 内容治理、风险运营、推荐实验、审计日志、工程运维接口。
 - `web`: MysticVerse 路由化前台与独立运营入口。
+
+## 当前部署收口状态
+
+生产 Compose 的认证路由为 `Gateway /api/auth/** → dc-identity:8201`，`/api/me/**` 也由 `dc-identity` 处理；用户、互动和通知请求仍分别路由至其兼容服务。认证逻辑、事件 producer 名称 `dc-auth`、认证 schema 与 Flyway 迁移、以及 `dc-auth` Maven 模块继续保留，变化的是生产执行载体而不是认证领域契约。
+
+独立的 `dc-auth` 可执行镜像不属于正常生产拓扑；仅在 [legacy auth rollback Compose](deploy/compose/docker-compose.legacy-auth-rollback.yml) 中用于短期回滚。该覆盖文件会将 Gateway 与管理端的认证上游切回 `dc-auth:8101`，回滚结束后应恢复 `dc-identity` 路由。
+
+生产静态资源预算当前为 23 个 Compose 服务、14.12 GiB 容器内存上限，仅 Web 和 Gateway 向宿主机发布端口。该数字是配置门禁结果，不是 Linux 实际运行、容量或可用性证明。
 
 ## 本地启动
 
@@ -89,7 +97,7 @@ Demo Token、前端本地 Token 和 Mock fallback 已删除。使用邮箱密码
 VITE_API_BASE_URL=http://localhost:8080
 ```
 
-生产部署使用固定提交 SHA 与强随机密钥，详见 [生产运行手册](docs/production-runbook.md)。
+生产部署使用固定提交 SHA 与强随机密钥，详见 [生产运行手册](docs/production-runbook.md)。Helm 生产 values 对 Identity 强制 `AUTH_COOKIE_SECURE=true`、从 `publicOrigin` 推导前端与 GitHub 回调地址，并要求 GitHub 凭证和内部运维密钥来自非可选 Kubernetes Secret 引用。values 映射不完整或由 Chart 创建的 Secret 缺少必需键时 render 失败；引用外部 `existingSecret` 时，Helm render 无法验证 Secret 或键是否真实存在，缺失会因 `optional: false` 在 Pod 启动阶段失败。
 
 ## 本轮验证边界
 
