@@ -28,6 +28,7 @@ public class FeedService {
     private final StringRedisTemplate redisTemplate;
     private final RecommendationImpressionRepository impressionRepository;
     private final RecommendationTelemetryService telemetryService;
+    private final RecommendationScenePolicy scenePolicy;
     private final FollowSignalStore followSignalStore;
     private final RestClient contentClient;
     private final List<PostSummary> seedPosts = ThemeContentLibrary.summaries();
@@ -37,7 +38,7 @@ public class FeedService {
 
     public FeedService(RecommendationScorer scorer, StringRedisTemplate redisTemplate) {
         this(scorer, redisTemplate, null, "http://localhost:8103", null,
-                new RecommendationTelemetryService(redisTemplate, null));
+                new RecommendationTelemetryService(redisTemplate, null), new RecommendationScenePolicy());
         this.readFallbackEnabled = true;
     }
 
@@ -46,7 +47,8 @@ public class FeedService {
                        RecommendationImpressionRepository impressionRepository,
                        String contentBaseUrl) {
         this(scorer, redisTemplate, impressionRepository, contentBaseUrl, null,
-                new RecommendationTelemetryService(redisTemplate, impressionRepository));
+                new RecommendationTelemetryService(redisTemplate, impressionRepository),
+                new RecommendationScenePolicy());
     }
 
     public FeedService(RecommendationScorer scorer,
@@ -55,7 +57,8 @@ public class FeedService {
                        String contentBaseUrl,
                        FollowSignalStore followSignalStore) {
         this(scorer, redisTemplate, impressionRepository, contentBaseUrl, followSignalStore,
-                new RecommendationTelemetryService(redisTemplate, impressionRepository));
+                new RecommendationTelemetryService(redisTemplate, impressionRepository),
+                new RecommendationScenePolicy());
     }
 
     @Autowired
@@ -64,11 +67,13 @@ public class FeedService {
                        RecommendationImpressionRepository impressionRepository,
                        @Value("${devcircle.content.base-url:http://localhost:8103}") String contentBaseUrl,
                        FollowSignalStore followSignalStore,
-                       RecommendationTelemetryService telemetryService) {
+                       RecommendationTelemetryService telemetryService,
+                       RecommendationScenePolicy scenePolicy) {
         this.scorer = scorer;
         this.redisTemplate = redisTemplate;
         this.impressionRepository = impressionRepository;
         this.telemetryService = telemetryService;
+        this.scenePolicy = scenePolicy;
         this.followSignalStore = followSignalStore;
         this.contentClient = BoundedRestClientFactory.create(contentBaseUrl);
     }
@@ -98,14 +103,14 @@ public class FeedService {
     private CursorPage<FeedItem> feedFromPosts(Long userId, List<PostSummary> candidates, String cursor, int size, String scene, String source, boolean degraded) {
         int safeSize = safePageSize(size);
         int offset = parseCursor(cursor);
-        String normalizedScene = normalizeScene(scene);
+        String normalizedScene = scenePolicy.normalize(scene);
         Set<String> interests = interests(userId);
         Set<Long> followedAuthors = followedAuthors(userId);
         Set<Long> exposed = exposed(userId);
         ExperimentContext experiment = experiment(userId, normalizedScene);
         Map<Long, Double> hotScores = hotScores(candidates);
         List<FeedItem> ranked = candidates.stream()
-                .filter(post -> matchesScene(post, normalizedScene))
+                .filter(post -> scenePolicy.matches(post, normalizedScene))
                 .map(post -> toFeedItem(post, interests, followedAuthors, exposed,
                         normalizedScene, experiment, hotScores))
                 .filter(item -> item.score() > -100)
@@ -114,7 +119,7 @@ public class FeedService {
         if (ranked.isEmpty() && !exposed.isEmpty()) {
             degraded = true;
             ranked = candidates.stream()
-                    .filter(post -> matchesScene(post, normalizedScene))
+                    .filter(post -> scenePolicy.matches(post, normalizedScene))
                     .map(post -> toFeedItem(post, interests, followedAuthors, Set.of(),
                             normalizedScene, experiment, hotScores))
                     .sorted(Comparator.comparingDouble(FeedItem::score).reversed())
@@ -131,19 +136,19 @@ public class FeedService {
     }
 
     public int recordExposure(ExposureRequest request, String idempotencyKey) {
-        String scene = normalizeScene(request == null ? null : request.scene());
+        String scene = scenePolicy.normalize(request == null ? null : request.scene());
         return telemetryService.recordExposure(request, idempotencyKey, scene, readFallbackEnabled);
     }
 
     public Map<String, Object> recordRecommendEvent(Long userId, Long postId, String eventType, String scene, String experimentId, String bucket, String requestId) {
         return telemetryService.recordRecommendEvent(
-                userId, postId, eventType, normalizeScene(scene), experimentId, bucket,
+                userId, postId, eventType, scenePolicy.normalize(scene), experimentId, bucket,
                 requestId, readFallbackEnabled);
     }
 
     private CandidateSet loadCandidates(String scene, int size) {
         try {
-            String theme = sceneToQueryTheme(normalizeScene(scene));
+            String theme = scenePolicy.queryTheme(scene);
             ApiResponse<PageResponse<PostSummary>> response = contentClient.get()
                     .uri(uriBuilder -> uriBuilder.path("/api/posts")
                             .queryParam("page", 1)
@@ -188,39 +193,13 @@ public class FeedService {
 
     private List<String> recallSources(PostSummary post, String scene, Set<String> interests, boolean followedAuthor, double hotScore) {
         ArrayList<String> sources = new ArrayList<>();
-        if (post.theme().equalsIgnoreCase(sceneToTheme(scene))) sources.add("theme");
+        if (post.theme().equalsIgnoreCase(scenePolicy.theme(scene))) sources.add("theme");
         if (post.tags().stream().anyMatch(interests::contains)) sources.add("tag");
         if (hotScore > 0 || post.likes() > 100) sources.add("hot");
         if (followedAuthor) sources.add("follow_author");
         if (!post.relatedPostIds().isEmpty()) sources.add("series");
         if (sources.isEmpty()) sources.add("cold_start");
         return sources;
-    }
-
-    private boolean matchesScene(PostSummary post, String scene) {
-        if ("mixed".equals(scene) || "home".equals(scene)) return true;
-        if ("image".equals(scene) || "video".equals(scene)) return post.type().equalsIgnoreCase(scene);
-        return post.theme().equalsIgnoreCase(sceneToTheme(scene));
-    }
-
-    private String sceneToQueryTheme(String scene) {
-        if ("deduction".equals(scene) || "sci_fi".equals(scene) || "cosmos".equals(scene)) return sceneToTheme(scene);
-        return null;
-    }
-
-    private String sceneToTheme(String scene) {
-        return switch (scene) {
-            case "sci_fi" -> "SCI_FI";
-            case "cosmos" -> "COSMOS";
-            default -> "DEDUCTION";
-        };
-    }
-
-    private String normalizeScene(String scene) {
-        if (scene == null || scene.isBlank()) return "mixed";
-        String normalized = scene.toLowerCase();
-        if (List.of("home", "mixed", "deduction", "sci_fi", "cosmos", "image", "video").contains(normalized)) return normalized;
-        return "mixed";
     }
 
     private Set<String> interests(Long userId) {
