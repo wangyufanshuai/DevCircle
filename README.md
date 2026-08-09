@@ -32,7 +32,7 @@ DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“
 
 - `dc-gateway`: 统一入口、TraceId、JWT 鉴权、角色拦截、限流、用户上下文透传、请求日志。
 - `dc-identity`: 第一阶段的 Identity 部署单元；生产进程内嵌 `dc-auth` 认证运行时和个人仪表盘。`dc-user`、`dc-interaction`、`dc-notification` 仍以兼容服务保留，尚未完成完整四聚合。
-- `dc-content-deployment`: content、comment、file、moderation 的兼容聚合部署门面。
+- `dc-content-deployment`: Content 生产部署单元；当前进程内承载 `dc-content` 与 `dc-file`，评论和治理继续使用兼容服务。
 - `dc-discovery`: Discovery 生产边界；第一阶段在该进程内承载 `dc-search` Search 代码模块，实验能力继续兼容聚合。推荐不是 Discovery 的内嵌能力，而是独立的 `dc-recommend` 进程，由 Gateway 直接路由。
 - `dc-auth`: 邮箱密码登录、Refresh Token 轮换、GitHub OAuth、审计日志；逻辑 producer、schema 和 Maven 模块保留，由 `dc-identity` 进程承载，独立可执行镜像仅用于 legacy auth rollback。
 - `dc-user`: 关注关系、共同关注、二跳推荐。
@@ -53,7 +53,9 @@ DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“
 
 生产推荐路由为 `Gateway /api/recommend/** → dc-recommend:8107`；`dc-recommend` 是独立进程，推荐运行时未嵌入 `dc-discovery`。Search 路由为 `Gateway /api/search/** → dc-discovery:8203`，其中由 Discovery 进程承载 `dc-search` 代码模块。
 
-生产静态资源预算当前为 22 个 Compose 服务、13.62 GiB 容器内存上限，仅 Web 和 Gateway 向宿主机发布端口。该数字是配置门禁结果，不是 Linux 实际运行、容量或可用性证明。Search-in-Discovery 当前仅有 Windows 非容器证据；Docker、Testcontainers、Helm 实际部署、目标 Linux 性能/恢复和 Cosign Registry 验签仍未验证。
+生产内容路由为 `Gateway → dc-content-aggregate:8202`。该 JVM 直接承载 Content 与 File 代码、各自独立的 Flyway 历史和逻辑 Outbox producer `dc-content`；独立 `dc-content` 与 `dc-file` 镜像仅用于 [legacy content rollback Compose](deploy/compose/docker-compose.legacy-content-rollback.yml)。公开内容响应不返回存储桶对象 URL，浏览器必须通过 `/api/files/access` 取得短期读取地址。
+
+生产静态资源预算当前为 20 个 Compose 服务、12.62 GiB 容器内存上限，仅 Web 和 Gateway 向宿主机发布端口。该数字是配置门禁结果，不是 Linux 实际运行、容量或可用性证明。当前聚合证据仅覆盖 Windows 非容器回归和 Compose 静态解析；Docker、Testcontainers、Helm 实际部署、目标 Linux 性能/恢复和 Cosign Registry 验签仍未验证。
 
 ## 本地启动
 

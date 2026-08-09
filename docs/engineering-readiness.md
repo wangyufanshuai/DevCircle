@@ -55,6 +55,7 @@ Copy-Item .env.example .env
 
 - `dc-identity` 是认证的生产执行载体，进程内承载 `dc-auth` 认证逻辑。`dc-auth` 的逻辑 producer 名称、schema、Flyway 迁移和 Maven 模块保持不变；独立 `dc-auth` 可执行镜像仅在 `legacy-auth rollback Compose` 中短期启用。
 - `dc-discovery` 是 Search 的生产执行载体，进程内承载 `dc-search` 代码模块；独立 `dc-search` 可执行镜像仅在 `legacy-search rollback Compose` 中短期启用。
+- `dc-content-aggregate` 是 Content 与 File 的生产执行载体，保留两个独立 Flyway history 和逻辑 Outbox 来源 `dc-content`；独立 `dc-content`、`dc-file` 镜像只用于 `legacy-content rollback Compose`。
 - `dc-recommend` 是独立推荐进程。Gateway 将 `/api/recommend/**` 直接路由到 `dc-recommend`，推荐运行时不嵌入 `dc-discovery`。
 
 `ops/health` 和 `ops/degradation` 会聚合 `dc-identity`（其内承载逻辑 producer `dc-auth`）、`dc-user`、`dc-content`、`dc-comment` 与 `dc-interaction` 五个生产域，返回 `outboxScope=FLEET`、`outboxComplete`、总 backlog/重试/DEAD/阻塞数、逐来源状态和不可用来源。任一来源超时或失败时必须返回 `outboxComplete=false` 与 `OUTBOX_SOURCE_UNAVAILABLE`，不能以缺失来源的零值伪造全局健康。内部状态端点不经 Gateway 暴露，只允许 Docker 网络内携带 `X-Internal-Ops-Key` 调用。

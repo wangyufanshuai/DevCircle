@@ -22,19 +22,20 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d mysql
 docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 ```
 
-生产 Compose 当前声明22个服务，容器内存上限合计约13.62 GiB；只有 `web` 与 `dc-gateway` 对宿主机发布端口，其中 `dc-gateway` 仅绑定回环地址。JVM 进程数以当前 Compose 实际启用的服务为准，不得按 Maven 模块数推算；Java 服务单实例限制为512 MiB、0.75 CPU和256个 PID，Java 最大堆按容器内存的60%计算；数据库连接池默认每服务最多8个连接。生产认证的执行载体是 `dc-identity` 进程内的认证运行时；独立 `dc-auth` 镜像仅用于 `deploy/compose/docker-compose.legacy-auth-rollback.yml` 的短期 legacy rollback，不属于常规生产拓扑。Search 代码模块 `dc-search` 第一阶段由 `dc-discovery` 进程承载；Gateway 将 `/api/recommend/**` 直接路由到独立 `dc-recommend`，推荐未嵌入 Discovery；独立 Search 仅用于 `deploy/compose/docker-compose.legacy-search-rollback.yml` 回滚。全部生产容器统一使用 `json-file` 日志驱动，每个日志文件最多20 MiB并保留5份；资源门禁会拒绝任何服务缺少该轮转契约。内部 Prometheus 保留35天/最多1GB指标，Alertmanager使用宿主机私有路由配置，Jaeger使用持久化Badger存储。该预算是防止资源失控的上限，不代表性能验收已经通过；发布前仍必须执行50并发 k6 和目标主机观测。当前证据仅覆盖 Windows 非容器回归和 Compose 静态解析，未验证 Docker 实际启动、Testcontainers、真实 Compose、Helm 集群部署、目标 Linux 性能/恢复或 Cosign Registry 验签；这些检查必须在对应环境和当前镜像 SHA 上重新执行。
+生产 Compose 当前声明20个服务，容器内存上限合计约12.62 GiB；只有 `web` 与 `dc-gateway` 对宿主机发布端口，其中 `dc-gateway` 仅绑定回环地址。JVM 进程数以当前 Compose 实际启用的服务为准，不得按 Maven 模块数推算；Java 服务单实例限制为512 MiB、0.75 CPU和256个 PID，Java 最大堆按容器内存的60%计算；数据库连接池默认每服务最多8个连接。生产认证由 `dc-identity` 进程内的 Auth runtime 承载；内容与媒体由 `dc-content-aggregate` 进程内的 Content/File runtime 承载；Search 由 `dc-discovery` 进程承载。独立 Auth、Content、File 和 Search 镜像仅用于对应 legacy rollback，不属于常规生产拓扑。Gateway 将 `/api/recommend/**` 直接路由到独立 `dc-recommend`，推荐尚未嵌入 Discovery。全部生产容器统一使用 `json-file` 日志驱动，每个日志文件最多20 MiB并保留5份；资源门禁会拒绝任何服务缺少该轮转契约。内部 Prometheus 保留35天/最多1GB指标，Alertmanager使用宿主机私有路由配置，Jaeger使用持久化Badger存储。该预算是防止资源失控的上限，不代表性能验收已经通过；发布前仍必须执行50并发 k6 和目标主机观测。当前证据仅覆盖 Windows 非容器回归和 Compose 静态解析，未验证 Docker 实际启动、Testcontainers、真实 Compose、Helm 集群部署、目标 Linux 性能/恢复或 Cosign Registry 验签；这些检查必须在对应环境和当前镜像 SHA 上重新执行。
 
 生产编排发布 Caddy Web 的 80/443，并仅把 Gateway 的 8080 绑定到宿主机 `127.0.0.1`，供本机诊断使用。公网 API 统一经过 Caddy 与 Web Nginx 转发；MySQL、Redis、Kafka、Elasticsearch、MinIO、Gateway Actuator 与领域服务均不能从公网直接访问。Caddy 管理 API 同样只监听容器内 localhost。
 
 ## 迁移顺序
 
 1. 运行 `scripts/ops/backup.sh`，保留生成目录、`backup-manifest.json` 和 `SHA256SUMS`。备份期间内容发生变化时脚本会删除不完整产物并失败，应在写入低峰重试。
-2. 对推荐消费者先执行优雅停机并确认无活跃消费，再发布兼容旧表结构的新镜像，让 Flyway 建立新表/字段；包含 `recommend_consumer_dedup.lease_token` 的迁移完成后，只启动支持 lease token 的新 `dc-recommend` 镜像，避免旧 worker 在过期租约后覆盖新 worker 状态。
-3. 引入评论/点赞权威计数快照时，先停止旧 `dc-comment` 和 `dc-interaction` 写入实例，再执行 `dc-content` V21、`dc-comment` V6 与 `dc-interaction` V4 迁移，最后启动同时发布 `counterVersion` 的新实例。禁止在评论计数回填完成后重新启动不会维护 `post_comment_counter` 的旧评论镜像。
-4. 迁移主题内容，运行 `EXPECTED_POST_COUNT=180 scripts/ops/verify-migration.sh` 校验数量和内容校验和。
-5. 触发 Elasticsearch 全量重建，再次运行校验脚本确认无非 `PUBLISHED` 文档。
-6. 将入口切为只读验证，抽查登录、详情、搜索、媒体和审核链路。
-7. 解除只读并观察错误率、Outbox backlog、磁盘与容器重启次数至少 30 分钟。
+2. 首次切换 `dc-content-aggregate` 前确认 `flyway_schema_history` 与 `flyway_schema_history_file` 均已备份。聚合进程必须先迁移 Content history，再迁移 File history；不得删除、合并或手工伪造任一 history。若需回滚，使用 `deploy/compose/docker-compose.legacy-content-rollback.yml` 恢复独立 Content/File 执行载体。
+3. 对推荐消费者先执行优雅停机并确认无活跃消费，再发布兼容旧表结构的新镜像，让 Flyway 建立新表/字段；包含 `recommend_consumer_dedup.lease_token` 的迁移完成后，只启动支持 lease token 的新 `dc-recommend` 镜像，避免旧 worker 在过期租约后覆盖新 worker 状态。
+4. 引入评论/点赞权威计数快照时，先停止旧 `dc-comment` 和 `dc-interaction` 写入实例，再执行 `dc-content` V21、`dc-comment` V6 与 `dc-interaction` V4 迁移，最后启动同时发布 `counterVersion` 的新实例。禁止在评论计数回填完成后重新启动不会维护 `post_comment_counter` 的旧评论镜像。
+5. 迁移主题内容，运行 `EXPECTED_POST_COUNT=180 scripts/ops/verify-migration.sh` 校验数量和内容校验和。
+6. 触发 Elasticsearch 全量重建，再次运行校验脚本确认无非 `PUBLISHED` 文档。
+7. 将入口切为只读验证，抽查登录、详情、搜索、媒体和审核链路。
+8. 解除只读并观察错误率、Outbox backlog、磁盘与容器重启次数至少 30 分钟。
 
 数据库迁移必须保持前一版本镜像可读取；删除列、改名和收紧约束要拆成至少两个版本。
 

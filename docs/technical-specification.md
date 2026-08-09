@@ -12,7 +12,7 @@ DevCircle 是工程代号，MysticVerse 是前台产品名。v1.2 将项目定�
 | --- | --- |
 | `dc-gateway` | 统一入口、TraceId、JWT 校验、角色拦截、用户上下文透传 |
 | `dc-identity` | 第一阶段生产 Identity 执行单元：进程内承载 `dc-auth` 认证运行时与个人仪表盘；用户、互动、通知仍通过兼容服务提供 |
-| `dc-content-deployment` | Content 聚合门面：聚合详情视图，并将内容、评论、媒体和治理请求路由到兼容领域服务 |
+| `dc-content-deployment` | Content 生产部署单元：进程内承载内容、解谜、媒体、双 Flyway 历史和详情组合；评论与治理仍调用兼容服务 |
 | `dc-discovery` | Discovery 生产边界：第一阶段进程内承载 `dc-search` Search 代码模块，实验能力保留兼容门面；推荐独立运行在 `dc-recommend` |
 | `dc-auth` | 保留认证领域 Maven 模块、逻辑事件 producer、认证 schema/Flyway 迁移和可回滚可执行镜像；正常生产不单独运行该进程 |
 | `dc-content` | 主题帖子、详情、相关内容、推理解谜、审核状态、Outbox |
@@ -36,13 +36,16 @@ flowchart LR
 
   Identity --> AuthRuntime["dc-auth runtime<br/>(进程内)"]
   Identity --> IdentityLegacy["dc-user / dc-interaction / dc-notification<br/>兼容领域服务"]
-  ContentAggregate --> ContentLegacy["dc-content / dc-comment / dc-file / dc-admin<br/>兼容领域服务"]
+  ContentAggregate --> ContentEmbedded["dc-content / dc-file runtime<br/>(进程内)"]
+  ContentAggregate --> ContentLegacy["dc-comment / dc-admin<br/>兼容领域服务"]
   ContentAggregate --> IdentityLegacy
   Discovery --> SearchEmbedded["Search embedded in Discovery<br/>first phase"]
   Gateway -. "现存兼容直通路由" .-> IdentityLegacy
 
-  ContentLegacy --> MySQLContent[("MySQL dc_content")]
-  ContentLegacy --> Outbox[("outbox_event")]
+  ContentEmbedded --> MySQLContent[("MySQL dc_content")]
+  ContentEmbedded --> Outbox[("outbox_event")]
+  ContentLegacy --> MySQLContent
+  ContentLegacy --> Outbox
   Outbox --> Kafka["Kafka"]
   Kafka --> SearchEmbedded
   Kafka --> Recommend
@@ -50,10 +53,10 @@ flowchart LR
   SearchEmbedded --> ES[("Elasticsearch")]
   Recommend --> Redis[("Redis")]
   IdentityLegacy --> MySQLIdentity[("MySQL identity schemas")]
-  ContentLegacy --> MinIO[("MinIO")]
+  ContentEmbedded --> MinIO[("MinIO")]
 ```
 
-该图描述当前生产收口阶段，而不是最终四进程形态：Gateway 的主路由已指向 Identity、Content Aggregate、Discovery 和独立的 `dc-recommend`；Identity 目前只完成 Auth 运行时内嵌和仪表盘聚合，用户、互动、通知仍是独立兼容服务，且 Gateway 仍保留这些接口的兼容直通路由。Content Aggregate 仍会调用旧领域进程；Discovery 的 Search 代码模块 `dc-search` 已第一阶段进程内承载。推荐请求由 Gateway 直接路由到 `dc-recommend`，不经过或嵌入 Discovery。独立 Search 只保留 `deploy/compose/docker-compose.legacy-search-rollback.yml` 的短期回滚用途。
+该图描述当前生产收口阶段，而不是最终四进程形态：Gateway 的主路由已指向 Identity、Content Aggregate、Discovery 和独立的 `dc-recommend`；Identity 目前只完成 Auth 运行时内嵌和仪表盘聚合，用户、互动、通知仍是独立兼容服务，且 Gateway 仍保留这些接口的兼容直通路由。Content Aggregate 已进程内承载 Content 与 File，评论和治理仍调用兼容服务；Discovery 已进程内承载 Search。推荐请求由 Gateway 直接路由到 `dc-recommend`，不经过或嵌入 Discovery。独立 Auth、Content、File 和 Search 只保留对应 legacy rollback Compose 的短期回滚用途。
 
 ## 数据策略
 
@@ -115,4 +118,4 @@ v1.2 是生产预备版，还不是大规模生产系统。后续应继续补：
 - OAuth2 设备风控、已认证账号的显式绑定流程和密钥轮换自动化。
 - 当前 SHA 的 Testcontainers、真实 Compose、真实认证 E2E、Linux 性能/恢复、Helm 实际 render 与 Cosign Registry 验签；以及云服务器或 Kubernetes 的真实压测数据和长期运行报告。
 
-Search-in-Discovery 当前证据仅覆盖 Windows 非容器回归与 Compose 静态配置；因此 Docker 实际启动、Testcontainers、真实 Compose、Helm 集群部署、目标 Linux 性能/恢复及 Cosign Registry 验签均仍未验证。当前静态资源合同为 22 个服务、13.62 GiB 容器内存和 2 个宿主机发布服务；这是配置结果，不是运行时容量结论。
+当前聚合证据仅覆盖 Windows 非容器回归与 Compose 静态配置；因此 Docker 实际启动、Testcontainers、真实 Compose、Helm 集群部署、目标 Linux 性能/恢复及 Cosign Registry 验签均仍未验证。当前静态资源合同为 20 个服务、12.62 GiB 容器内存和 2 个宿主机发布服务；这是配置结果，不是运行时容量结论。

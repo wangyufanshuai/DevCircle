@@ -4,15 +4,15 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 ## 当前证据边界
 
-截至 2026-08-09，当前证据绑定提交为 `c14d6fc1db816b457a179504457053b77817768e`。可靠消息基础设施已从 `dc-common` 迁入新增的非部署库 `dc-messaging-support`：8 个生产类和 4 个测试类完成迁移，业务模块改为显式依赖该支持库。`dc-common` 的主类从 24 个降至 16 个，且不再依赖 JDBC、Kafka 或 H2；它仍保留 Web、追踪、异常处理和认证上下文等运行时支持，后续会继续迁移。
+截至 2026-08-10，当前证据绑定提交为 `86fd1fa3db17665876d9c2d4b18ada3a938a42f1`。生产运行时已完成 Auth-in-Identity、Search-in-Discovery 和 Content/File-in-Content-Aggregate 三个收口阶段。内容与媒体继续保留独立 Maven 模块和 Flyway history，但在同一 Servlet JVM 中执行；评论、互动、通知、推荐和治理仍是兼容服务，因此还不是最终四运行单元。
 
-当前 `c14d6fc` 已在 Windows 本机使用默认 Surefire 分叉配置完成一轮全新的 `clean verify -Pcoverage` 非容器回归：19/19 个 Reactor projects（根项目 + 18 个子模块）构建成功；`clean` 后本轮生成 108 份 Surefire XML，共 474 个测试，0 failures、0 errors、0 skipped。17 份 JaCoCo 报告的聚合行/分支覆盖率为 81.17%/73.89%，通过 CI 的 75%/70% 门禁；关键状态覆盖率门禁通过。可复跑命令、UTC 时间窗、工具版本和统计边界见 [Search-in-Discovery 非容器证据](evidence/2026-08-09-search-in-discovery-noncontainer.md)。
+当前 `86fd1fa` 已在 Windows 本机使用默认 Surefire 分叉配置完成一轮全新的 `clean verify -Pcoverage` 非容器回归：19/19 个 Reactor projects（根项目 + 18 个子模块）构建成功；`clean` 后本轮生成 109 份 Surefire XML，共 474 个测试，0 failures、0 errors、0 skipped。17 份 JaCoCo 报告的聚合行/分支覆盖率为 81.23%/74.13%，通过 CI 的 75%/70% 门禁；14 个关键状态类全部通过 85% 分支门禁。可复跑命令、范围与限制见 [Content/File-in-Content-Aggregate 非容器证据](evidence/2026-08-10-content-file-in-aggregate-noncontainer.md)。
 
-本轮 ops 契约、迁移版本门禁、关键状态覆盖率门禁、生产资源预算门禁和生产 Compose `config --quiet` 均通过。生产 Compose 当前声明 22 个服务、13.62 GiB 容器内存上限，且仅 Web 与 Gateway 对宿主机发布端口；这只是静态配置证据，不代表已在目标主机启动。本轮非容器覆盖率回归显式排除了 `*IntegrationTest`、`DockerPreflightTest` 和 `KafkaContainerSmokeTest`，不得解释为 Testcontainers、真实 Compose 或 Linux 验收通过。Search 代码模块 `dc-search` 已在 Discovery 第一阶段由 `dc-discovery` 进程承载；Gateway 将推荐请求直接路由到独立的 `dc-recommend`，推荐未嵌入 Discovery。独立 Search 只保留 [`legacy-search rollback Compose`](../deploy/compose/docker-compose.legacy-search-rollback.yml) 回滚用途。
+本轮 ops 契约、迁移版本门禁、关键状态覆盖率门禁、生产资源预算门禁、生产 Compose 和 legacy Content rollback Compose 静态解析均通过。生产 Compose 当前声明 20 个服务、12.62 GiB 容器内存上限，且仅 Web 与 Gateway 对宿主机发布端口；这只是静态配置证据，不代表已在目标主机启动。本轮非容器覆盖率回归显式排除了 `*IntegrationTest`、`DockerPreflightTest` 和 `KafkaContainerSmokeTest`，不得解释为 Testcontainers、真实 Compose 或 Linux 验收通过。新增 `ContentRuntimeFlywayIntegrationTest` 已编译并覆盖 fresh DB、既有双 history 和 restart idempotency 三个场景，但 Docker 不可用使其未实际运行，不能记为 MySQL 8.4 通过。
 
 `dc-identity` 第一阶段只内嵌 `dc-auth` 与个人仪表盘：认证模块的逻辑 producer（`dc-auth`）、认证 schema、Flyway 迁移和 Maven 模块继续保留，但生产执行载体是 `dc-identity`。其 H2 回归实际启用 8 个认证 Flyway 迁移，并验证注册会写入账号、刷新令牌/幂等记录、审计与 `user.registered` Outbox。`dc-user`、`dc-interaction` 和 `dc-notification` 仍是兼容服务；因此这不是完整四聚合完成的证据。
 
-Docker Linux Engine 当前不可用：`docker info` 超时，Bash/WSL 入口返回 `HCS_E_CONNECTION_TIMEOUT`。因此当前提交未重新执行 Testcontainers、真实 Compose、真实认证 E2E、目标 Linux 性能测试、恢复演练、Helm 实际 render 或 Cosign Registry 验签；本文下方带日期的容器、性能、恢复和 Registry 结果均为绑定旧提交的历史证据，除非重新在当前 SHA 执行，否则不得作为 `c14d6fc` 的生产验收结论。
+Docker Linux Engine 当前不可用：`docker info` 超时。因而当前提交未重新执行 Testcontainers、真实 Compose、真实认证/内容/审核/社区 E2E、目标 Linux 性能测试、恢复演练、Helm 实际 render 或 Cosign Registry 验签；本文下方带日期的容器、性能、恢复和 Registry 结果均为绑定旧提交的历史证据，除非重新在当前 SHA 执行，否则不得作为 `86fd1fa` 的生产验收结论。
 
 ## 验证证据时间线
 
