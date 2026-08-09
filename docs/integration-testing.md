@@ -4,7 +4,7 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 ## 当前证据边界
 
-截至 2026-08-09，当前 HEAD 为 `a51ac40`。Windows 本机已证明内容写侧切片编译成功，`PostRepositoryStateTest` 15 项和元数据策略测试 2 项通过；搜索架构切片编译成功，22 项搜索契约测试通过（使用 E 盘临时目录规避本机 C 盘空间限制）。最新一次全仓纯单元/H2 `clean verify -Pcoverage` 在 `dc-user` 的 `LegacyProfileBackfillRepositoryTest` 因 H2 驱动未加载失败，尚未到达 `dc-search`；完整全仓结果仍未证明通过。因此本文下方带日期的全仓、Testcontainers 和 Compose 结果均为历史证据，不能当作当前 HEAD 的全仓通过结论。
+截至 2026-08-09，本轮搜索架构基线提交为 `4eac841`，其后的提交只更新证据文档。Windows 本机已证明内容写侧切片编译成功，`PostRepositoryStateTest` 15 项和元数据策略测试 2 项通过；搜索架构切片编译成功，22 项搜索契约测试通过（使用 E 盘临时目录规避本机 C 盘空间限制）。最新一次全仓纯单元/H2 `clean verify -Pcoverage` 在 `dc-user` 的 `LegacyProfileBackfillRepositoryTest` 因 H2 驱动未加载失败，尚未到达 `dc-search`；完整全仓结果仍未证明通过。因此本文下方带日期的全仓、Testcontainers 和 Compose 结果均为历史证据，不能当作最新全仓通过结论。
 
 ## 验证证据时间线
 
