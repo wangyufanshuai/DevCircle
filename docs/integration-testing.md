@@ -8,6 +8,8 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 同一工作树的前端 `npm run build` 成功，四个 Playwright project 共 120/120 通过；常规 Playwright 套件使用显式 API 拦截，不替代真实多服务 E2E。当前 `docker info` 在 14 秒内超时，因此未执行最新 Testcontainers、真实 Compose、k6 或恢复演练；`npm audit --audit-level=high` 也因本机 `npmmirror` 不实现 npm security audit endpoint 而失败，不能据此判断依赖安全状态。本文下方带日期的容器、覆盖率、Compose、性能和恢复结果均为绑定旧提交的历史证据，除非重新在当前 SHA 执行，否则不得当作 `acee747` 的生产验收结论。
 
+提交 `101359e` 后重新执行离线交付门禁：Linux 性能、Linux 恢复、k6 和生产资源预算契约 19 项通过，发布身份、迁移版本和关键状态覆盖契约 8 项通过，生产环境校验与覆盖率 Shell 门禁通过，备份、恢复和迁移验证夹具在补齐当前 Alertmanager 生产路径契约后通过。实际生产 Compose 渲染为 24 个服务、14.62 GiB 容器内存上限，只发布 Web 与绑定宿主机回环地址的 Gateway。该批次只证明脚本和配置拒绝错误证据的能力；没有启动真实容器、没有执行真实 Cosign Registry 验证，也没有产生目标 Linux 的性能或 RTO/RPO 证据。
+
 ## 验证证据时间线
 
 ### 2026-08-08 可执行基线（历史提交记录）
