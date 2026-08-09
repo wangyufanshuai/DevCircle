@@ -40,6 +40,7 @@ class PostRepositoryConnectionPoolTest {
     private HikariDataSource dataSource() {
         HikariDataSource dataSource = new HikariDataSource();
         dataSource.setJdbcUrl("jdbc:h2:mem:content-pool-regression;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE");
+        dataSource.setDriverClassName("org.h2.Driver");
         dataSource.setUsername("sa");
         dataSource.setMaximumPoolSize(1);
         dataSource.setMinimumIdle(1);
