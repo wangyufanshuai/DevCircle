@@ -70,6 +70,8 @@ class DiscoveryApplicationContextTest {
         assertThat(context.containsBean("searchApplication")).isFalse();
         assertThat(context.getBean(SearchIndexInitializer.class)).isNotNull();
         assertThat(context.containsBean("searchController")).isTrue();
+        assertThat(context.containsBean("searchQueryService")).isTrue();
+        assertThat(context.containsBean("searchIndexService")).isTrue();
         assertThat(context.containsBean("searchEventCoordinator")).isTrue();
         assertThat(context.containsBean("searchProjectionStore")).isTrue();
         assertThat(context.getBean(CommonErrorHandler.class)).isNotNull();

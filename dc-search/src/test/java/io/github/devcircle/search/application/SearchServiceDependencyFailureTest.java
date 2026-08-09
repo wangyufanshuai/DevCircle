@@ -109,6 +109,24 @@ class SearchServiceDependencyFailureTest {
         verify(indexOperations).refresh();
     }
 
+    @Test
+    void explicitDevelopmentFallbackAppliesToFullReindexAsWellAsQueries() throws IOException {
+        startContentServer("""
+                {"code":"OK","data":{"records":[],"total":0,"page":1,"size":20,"totalPages":0}}
+                """);
+        ElasticsearchOperations operations = mock(ElasticsearchOperations.class);
+        IndexOperations indexOperations = mock(IndexOperations.class);
+        when(operations.indexOps(PostSearchDocument.class)).thenReturn(indexOperations);
+        SearchService service = service(operations,
+                "http://127.0.0.1:" + contentServer.getAddress().getPort());
+        service.enableReadFallbackForTests();
+
+        assertThat(service.reindexSeedPosts()).isEqualTo(180);
+
+        verify(operations).save(any(Iterable.class));
+        verify(indexOperations).refresh();
+    }
+
     private void startContentServer(String response) throws IOException {
         startContentServer(ignored -> response);
     }
