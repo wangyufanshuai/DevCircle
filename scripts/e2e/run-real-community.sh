@@ -41,7 +41,7 @@ require_real_e2e_docker "community E2E"
   exit 2
 }
 
-MODULES="dc-identity,dc-user,dc-content-deployment,dc-comment,dc-interaction,dc-recommend,dc-notification,dc-admin,dc-gateway"
+MODULES="dc-identity,dc-content-deployment,dc-comment,dc-interaction,dc-recommend,dc-notification,dc-admin,dc-gateway"
 if [[ -n "${COMMUNITY_AUTH_MAVEN_MODULE}" ]]; then
   MODULES="${COMMUNITY_AUTH_MAVEN_MODULE},${MODULES}"
 fi

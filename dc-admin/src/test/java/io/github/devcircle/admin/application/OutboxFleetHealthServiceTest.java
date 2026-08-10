@@ -1,5 +1,6 @@
 package io.github.devcircle.admin.application;
 
+import com.sun.net.httpserver.HttpServer;
 import io.github.devcircle.admin.application.query.OutboxFleetSnapshot;
 import io.github.devcircle.messaging.outbox.OutboxStatusView;
 import org.junit.jupiter.api.AfterEach;
@@ -9,6 +10,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.time.Duration;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -139,6 +143,38 @@ class OutboxFleetHealthServiceTest {
 
         assertThat(result.outboxComplete()).isFalse();
         assertThat(result.unavailableOutboxSources()).containsExactly("dc-content");
+    }
+
+    @Test
+    void identityLogicalClientUsesTheConfiguredPathAndInternalCredential() throws Exception {
+        AtomicReference<String> requestedPath = new AtomicReference<>();
+        AtomicReference<String> providedKey = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            requestedPath.set(exchange.getRequestURI().getPath());
+            providedKey.set(exchange.getRequestHeaders().getFirst("X-Internal-Ops-Key"));
+            byte[] body = "{\"service\":\"dc-user\",\"backlog\":3,\"retryable\":2,\"dead\":1,\"blockedByDead\":0}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            var client = new OutboxFleetHealthService.HttpOutboxNodeClient(
+                    "http://127.0.0.1:" + server.getAddress().getPort(),
+                    "/internal/ops/identity/outbox/user/status", "fleet-test-key");
+
+            OutboxStatusView result = client.fetch();
+
+            assertThat(result.service()).isEqualTo("dc-user");
+            assertThat(result.backlog()).isEqualTo(3);
+            assertThat(requestedPath).hasValue("/internal/ops/identity/outbox/user/status");
+            assertThat(providedKey).hasValue("fleet-test-key");
+        } finally {
+            server.stop(0);
+        }
     }
 
     private OutboxFleetHealthService service(Map<String, OutboxStatusView> statuses) {

@@ -18,7 +18,7 @@ GIB = 1024 * MIB
 APP_SERVICES = {
     "dc-admin", "dc-comment", "dc-content-aggregate",
     "dc-discovery", "dc-gateway", "dc-identity", "dc-interaction",
-    "dc-notification", "dc-recommend", "dc-user",
+    "dc-notification", "dc-recommend",
 }
 OBSERVABILITY_SERVICES = {"prometheus", "alertmanager", "jaeger"}
 EXPECTED_SERVICES = APP_SERVICES | {
@@ -46,6 +46,7 @@ HELM_GATEWAY_ENVIRONMENT = {
     "SPRING_PROFILES_ACTIVE": "aggregate",
     "DC_AUTH_URI": "http://dc-identity:8201",
     "DC_IDENTITY_URI": "http://dc-identity:8201",
+    "DC_USER_URI": "http://dc-identity:8201",
     "DC_CONTENT_AGGREGATE_URI": "http://dc-content-aggregate:8202",
     "DC_DISCOVERY_URI": "http://dc-discovery:8203",
     "DC_SEARCH_URI": "http://dc-discovery:8203",
@@ -61,11 +62,14 @@ def fail(message: str) -> None:
     raise ValueError(message)
 
 
-def rendered_compose(compose_file: Path, env_file: Path) -> dict:
+def rendered_compose(compose_files: Path | list[Path], env_file: Path) -> dict:
+    files = [compose_files] if isinstance(compose_files, Path) else compose_files
     command = [
-        "docker", "compose", "--env-file", str(env_file), "-f", str(compose_file),
-        "config", "--format", "json",
+        "docker", "compose", "--env-file", str(env_file),
     ]
+    for compose_file in files:
+        command.extend(("-f", str(compose_file)))
+    command.extend(("config", "--format", "json"))
     completed = subprocess.run(command, check=False, capture_output=True, text=True)
     if completed.returncode != 0:
         fail(f"docker compose config failed: {completed.stderr.strip()}")
@@ -256,6 +260,8 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
     secrets = _mapping(values.get("secrets"), "secrets")
     if "auth" in services:
         fail("Helm must not deploy dc-auth separately in the production topology")
+    if "user" in services:
+        fail("Helm must embed User in identity instead of deploying dc-user separately")
     if "search" in services:
         fail("Helm must embed search in discovery instead of deploying dc-search separately")
     if not str(secrets.get("existingSecret", "")).strip():
@@ -321,6 +327,8 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
     )
     if "DC_AUTH_URI" in identity_environment or "DC_AUTH_URI" in global_environment:
         fail("Helm identity must embed authentication instead of proxying DC_AUTH_URI")
+    if "DC_USER_URI" in identity_environment or "DC_USER_URI" in global_environment:
+        fail("Helm identity must use its embedded User runtime instead of an HTTP self-call")
     public_origin = _public_https_origin(values.get("publicOrigin"), "publicOrigin")
     if global_environment.get("S3_PRESIGN_ENDPOINT") != public_origin:
         fail("Helm S3_PRESIGN_ENDPOINT must match publicOrigin")
@@ -366,6 +374,14 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
     )
     if admin_environment.get("DC_AUTH_URI") != "http://dc-identity:8201":
         fail("Helm admin must read the logical dc-auth Outbox source from dc-identity")
+    if admin_environment.get("DC_USER_URI") != "http://dc-identity:8201":
+        fail("Helm admin must read the logical dc-user Outbox source from dc-identity")
+    for key, expected in {
+        "DC_AUTH_OUTBOX_PATH": "/internal/ops/identity/outbox/auth/status",
+        "DC_USER_OUTBOX_PATH": "/internal/ops/identity/outbox/user/status",
+    }.items():
+        if admin_environment.get(key) != expected:
+            fail(f"Helm admin must set {key}={expected}")
     if projected_secret_refs.get("admin", {}).get("DEVCIRCLE_INTERNAL_OPS_KEY") != "DEVCIRCLE_INTERNAL_OPS_KEY":
         fail("Helm admin must project DEVCIRCLE_INTERNAL_OPS_KEY from the existing Secret")
 
@@ -416,7 +432,7 @@ def validate(data: dict) -> tuple[int, int]:
     unexpected_services = set(services).difference(EXPECTED_SERVICES)
     if missing_services or unexpected_services:
         fail(
-            "production services do not match the 20-service contract: "
+            "production services do not match the 19-service contract: "
             f"missing={sorted(missing_services)} unexpected={sorted(unexpected_services)}"
         )
 
@@ -466,9 +482,13 @@ def validate(data: dict) -> tuple[int, int]:
 
     if "dc-auth" in services:
         fail("dc-auth must not run as a separate production service")
+    if "dc-user" in services:
+        fail("dc-user must not run as a separate production service")
     identity_environment = services["dc-identity"].get("environment") or {}
     if "DC_AUTH_URI" in identity_environment:
         fail("dc-identity must embed authentication instead of proxying DC_AUTH_URI")
+    if "DC_USER_URI" in identity_environment:
+        fail("dc-identity must use its embedded User runtime instead of an HTTP self-call")
     identity_pool_sizes = {}
     for domain, key in {
         "Auth": "IDENTITY_AUTH_DB_POOL_MAX_SIZE",
@@ -485,9 +505,17 @@ def validate(data: dict) -> tuple[int, int]:
     admin_environment = services["dc-admin"].get("environment") or {}
     if admin_environment.get("DC_AUTH_URI") != "http://dc-identity:8201":
         fail("dc-admin must read the logical dc-auth Outbox source from dc-identity")
+    if admin_environment.get("DC_USER_URI") != "http://dc-identity:8201":
+        fail("dc-admin must read the logical dc-user Outbox source from dc-identity")
+    for key, expected in {
+        "DC_AUTH_OUTBOX_PATH": "/internal/ops/identity/outbox/auth/status",
+        "DC_USER_OUTBOX_PATH": "/internal/ops/identity/outbox/user/status",
+    }.items():
+        if admin_environment.get(key) != expected:
+            fail(f"dc-admin must set {key}={expected}")
     content_environment = services["dc-content-aggregate"].get("environment") or {}
     for key, expected in {
-        "DC_USER_URI": "http://dc-user:8102",
+        "DC_USER_URI": "http://dc-identity:8201",
         "DC_INTERACTION_URI": "http://dc-interaction:8105",
     }.items():
         if content_environment.get(key) != expected:
@@ -496,7 +524,7 @@ def validate(data: dict) -> tuple[int, int]:
     expected_gateway_routes = {
         "DC_AUTH_URI": "http://dc-identity:8201",
         "DC_IDENTITY_URI": "http://dc-identity:8201",
-        "DC_USER_URI": "http://dc-user:8102",
+        "DC_USER_URI": "http://dc-identity:8201",
         "DC_INTERACTION_URI": "http://dc-interaction:8105",
         "DC_NOTIFICATION_URI": "http://dc-notification:8108",
         "DC_DISCOVERY_URI": "http://dc-discovery:8203",
@@ -541,9 +569,111 @@ def validate(data: dict) -> tuple[int, int]:
     return len(services), total_memory
 
 
+def validate_legacy_user_rollback(
+        production: dict,
+        rollback: dict,
+        production_prometheus: Path,
+        rollback_prometheus: Path,
+) -> tuple[int, int]:
+    """Validate the bounded, observable standalone User rollback topology."""
+    validate(production)
+    services = rollback.get("services") or {}
+    expected_services = EXPECTED_SERVICES | {"dc-user"}
+    if set(services) != expected_services:
+        fail(
+            "legacy User rollback services do not match the 20-service contract: "
+            f"missing={sorted(expected_services.difference(services))} "
+            f"unexpected={sorted(set(services).difference(expected_services))}"
+        )
+
+    user = services["dc-user"]
+    memory = int(positive_number("dc-user", user, "mem_limit"))
+    if not 384 * MIB <= memory <= 768 * MIB:
+        fail("legacy dc-user memory limit must stay between 384 and 768 MiB")
+    if positive_number("dc-user", user, "cpus") > 2:
+        fail("legacy dc-user CPU limit exceeds the single-host budget")
+    if int(positive_number("dc-user", user, "pids_limit")) > 512:
+        fail("legacy dc-user PID limit exceeds 512")
+    port_contract("dc-user", user)
+    logging_contract("dc-user", user)
+    if "8102" not in {str(port) for port in user.get("expose", [])}:
+        fail("legacy dc-user must expose its internal HTTP port 8102")
+    health_test = (user.get("healthcheck") or {}).get("test") or []
+    if "http://localhost:8102/actuator/health/readiness" not in health_test:
+        fail("legacy dc-user must use the readiness actuator health check")
+    user_environment = user.get("environment") or {}
+    for key, expected in PRODUCTION_ENVIRONMENT.items():
+        if str(user_environment.get(key, "")).lower() != expected:
+            fail(f"legacy dc-user must set {key}={expected}")
+    for option in ("-XX:MaxRAMPercentage=", "-XX:+ExitOnOutOfMemoryError"):
+        if option not in user_environment.get("JAVA_TOOL_OPTIONS", ""):
+            fail(f"legacy dc-user JAVA_TOOL_OPTIONS is missing {option}")
+    if not 1 <= int(user_environment.get("SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE", "0")) <= 10:
+        fail("legacy dc-user Hikari maximum pool size must be between 1 and 10")
+    if not 500 <= int(user_environment.get("SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT", "0")) <= 5000:
+        fail("legacy dc-user Hikari connection timeout must be between 500 and 5000 ms")
+    if not 8 <= int(user_environment.get("SERVER_TOMCAT_THREADS_MAX", "0")) <= 64:
+        fail("legacy dc-user Tomcat thread ceiling must be between 8 and 64")
+    if len(str(user_environment.get("DEVCIRCLE_INTERNAL_OPS_KEY", ""))) < 32:
+        fail("legacy dc-user must receive DEVCIRCLE_INTERNAL_OPS_KEY")
+
+    expected_user_route = "http://dc-user:8102"
+    route_owners = ("dc-identity", "dc-gateway", "dc-content-aggregate", "dc-admin")
+    for owner in route_owners:
+        environment = services[owner].get("environment") or {}
+        if environment.get("DC_USER_URI") != expected_user_route:
+            fail(f"legacy User rollback must set {owner} DC_USER_URI={expected_user_route}")
+        dependencies = services[owner].get("depends_on") or {}
+        dependency = dependencies.get("dc-user") or {}
+        if dependency.get("condition") != "service_healthy":
+            fail(f"legacy User rollback must make {owner} wait for healthy dc-user")
+    identity_environment = services["dc-identity"].get("environment") or {}
+    for switch in (
+        "USER_RUNTIME_CONSUMER_ENABLED",
+        "USER_PROFILE_BACKFILL_ENABLED",
+        "USER_RUNTIME_OUTBOX_ENABLED",
+        "USER_FLYWAY_ENABLED",
+    ):
+        if str(identity_environment.get(switch, "")).lower() != "false":
+            fail(f"legacy User rollback must disable {switch} in dc-identity")
+    admin_environment = services["dc-admin"].get("environment") or {}
+    if admin_environment.get("DC_USER_OUTBOX_PATH") != "/internal/ops/outbox/status":
+        fail("legacy User rollback must restore the standalone dc-user Outbox status path")
+
+    prometheus_volumes = services["prometheus"].get("volumes") or []
+    config_mounts = [
+        volume for volume in prometheus_volumes
+        if volume.get("target") == "/etc/prometheus/prometheus.yml"
+    ]
+    if len(config_mounts) != 1 or not str(config_mounts[0].get("source", "")).replace("\\", "/").endswith(
+            "/deploy/prometheus/prometheus.legacy-user-rollback.yml"):
+        fail("legacy User rollback must mount prometheus.legacy-user-rollback.yml")
+    production_prometheus_text = production_prometheus.read_text(encoding="utf-8")
+    rollback_prometheus_text = rollback_prometheus.read_text(encoding="utf-8")
+    if "dc-user:8102" in production_prometheus_text or "service: dc-user" in production_prometheus_text:
+        fail("normal production Prometheus must not scrape the absent dc-user target")
+    if "targets: [\"dc-user:8102\"]" not in rollback_prometheus_text \
+            or "labels: { service: dc-user }" not in rollback_prometheus_text:
+        fail("legacy User rollback Prometheus must scrape dc-user actuator metrics")
+
+    total_memory = sum(int(positive_number(name, config, "mem_limit"))
+                       for name, config in services.items())
+    if total_memory > 15 * GIB:
+        fail(
+            "legacy User rollback aggregate container memory ceiling "
+            f"{total_memory / GIB:.2f} GiB exceeds 15 GiB"
+        )
+    return len(services), total_memory
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--compose-file", default="docker-compose.prod.yml", type=Path)
+    parser.add_argument(
+        "--legacy-user-overlay",
+        default="deploy/compose/docker-compose.legacy-user-rollback.yml",
+        type=Path,
+    )
     parser.add_argument("--env-file", default=".env.production.example", type=Path)
     parser.add_argument("--caddyfile", default="deploy/Caddyfile", type=Path)
     parser.add_argument("--helm-values", default="deploy/helm/devcircle/values.yaml", type=Path)
@@ -555,7 +685,14 @@ def main() -> int:
     )
     args = parser.parse_args()
     try:
-        service_count, total_memory = validate(rendered_compose(args.compose_file, args.env_file))
+        production = rendered_compose(args.compose_file, args.env_file)
+        service_count, total_memory = validate(production)
+        rollback_count, rollback_memory = validate_legacy_user_rollback(
+            production,
+            rendered_compose([args.compose_file, args.legacy_user_overlay], args.env_file),
+            Path("deploy/prometheus/prometheus.prod.yml"),
+            Path("deploy/prometheus/prometheus.legacy-user-rollback.yml"),
+        )
         validate_caddyfile(args.caddyfile)
         validate_production_mode_bindings(Path("."))
         validate_helm_topology(
@@ -569,7 +706,9 @@ def main() -> int:
     print(
         f"Production resource budgets validated: services={service_count} "
         f"memory_ceiling={total_memory / GIB:.2f}GiB published_services={len(PUBLISHED_PORTS)} "
-        "helm_auth_runtime=dc-identity:8201"
+        f"legacy_user_services={rollback_count} "
+        f"legacy_user_memory_ceiling={rollback_memory / GIB:.2f}GiB "
+        "helm_identity_runtime=dc-auth+dc-user@dc-identity:8201"
     )
     return 0
 

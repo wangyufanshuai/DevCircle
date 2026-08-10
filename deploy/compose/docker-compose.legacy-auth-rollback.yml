@@ -55,3 +55,4 @@ services:
   dc-admin:
     environment:
       DC_AUTH_URI: http://dc-auth:8101
+      DC_AUTH_OUTBOX_PATH: /internal/ops/outbox/status

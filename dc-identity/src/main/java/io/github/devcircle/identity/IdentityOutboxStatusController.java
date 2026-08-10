@@ -32,10 +32,28 @@ final class IdentityOutboxStatusController {
     @GetMapping("/internal/ops/identity/outbox/status")
     IdentityOutboxStatusView status(
             @RequestHeader(value = "X-Internal-Ops-Key", required = false) String providedKey) {
+        authorize(providedKey);
+        return new IdentityOutboxStatusView(authStatus.snapshot(), userStatus.snapshot());
+    }
+
+    @GetMapping("/internal/ops/identity/outbox/auth/status")
+    OutboxStatusView authStatus(
+            @RequestHeader(value = "X-Internal-Ops-Key", required = false) String providedKey) {
+        authorize(providedKey);
+        return authStatus.snapshot();
+    }
+
+    @GetMapping("/internal/ops/identity/outbox/user/status")
+    OutboxStatusView userStatus(
+            @RequestHeader(value = "X-Internal-Ops-Key", required = false) String providedKey) {
+        authorize(providedKey);
+        return userStatus.snapshot();
+    }
+
+    private void authorize(String providedKey) {
         if (!MessageDigest.isEqual(internalKey, bytes(providedKey))) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "Invalid internal operations credential");
         }
-        return new IdentityOutboxStatusView(authStatus.snapshot(), userStatus.snapshot());
     }
 
     private static byte[] bytes(String value) {

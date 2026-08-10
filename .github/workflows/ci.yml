@@ -184,11 +184,18 @@ jobs:
       - run: docker compose --profile infra config
       - run: docker compose --profile demo config
       - run: docker compose --env-file .env.production.example -f docker-compose.prod.yml config --quiet
+      - name: Validate legacy User rollback Compose topology
+        run: >-
+          docker compose --env-file .env.production.example
+          -f docker-compose.prod.yml
+          -f deploy/compose/docker-compose.legacy-user-rollback.yml
+          config --quiet
       - name: Validate Prometheus rules and configs
         run: |
           docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check rules /etc/prometheus/slo.yml /etc/prometheus/alerts.yml
           docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check config /etc/prometheus/prometheus.yml
           docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check config /etc/prometheus/prometheus.prod.yml
+          docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check config /etc/prometheus/prometheus.legacy-user-rollback.yml
       - name: Validate Alertmanager routes and Grafana dashboard
         run: |
           docker run --rm -v "$PWD/deploy/alertmanager:/etc/alertmanager:ro" --entrypoint /bin/amtool prom/alertmanager:v0.29.0 check-config /etc/alertmanager/alertmanager.dev.yml
@@ -248,20 +255,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { module: dc-gateway, image: dc-gateway }
-          - { module: dc-identity, image: dc-identity }
-          - { module: dc-content-deployment, image: dc-content-aggregate }
-          - { module: dc-discovery, image: dc-discovery }
-          - { module: dc-auth, image: dc-auth }
-          - { module: dc-user, image: dc-user }
-          - { module: dc-content, image: dc-content }
-          - { module: dc-comment, image: dc-comment }
-          - { module: dc-interaction, image: dc-interaction }
-          - { module: dc-search, image: dc-search }
-          - { module: dc-recommend, image: dc-recommend }
-          - { module: dc-notification, image: dc-notification }
-          - { module: dc-file, image: dc-file }
-          - { module: dc-admin, image: dc-admin }
+          - { module: dc-gateway, image: dc-gateway, release_class: production }
+          - { module: dc-identity, image: dc-identity, release_class: production }
+          - { module: dc-content-deployment, image: dc-content-aggregate, release_class: production }
+          - { module: dc-discovery, image: dc-discovery, release_class: production }
+          - { module: dc-comment, image: dc-comment, release_class: production }
+          - { module: dc-interaction, image: dc-interaction, release_class: production }
+          - { module: dc-recommend, image: dc-recommend, release_class: production }
+          - { module: dc-notification, image: dc-notification, release_class: production }
+          - { module: dc-admin, image: dc-admin, release_class: production }
+          - { module: dc-auth, image: dc-auth, release_class: legacy-rollback }
+          - { module: dc-user, image: dc-user, release_class: legacy-rollback }
+          - { module: dc-content, image: dc-content, release_class: legacy-rollback }
+          - { module: dc-search, image: dc-search, release_class: legacy-rollback }
+          - { module: dc-file, image: dc-file, release_class: legacy-rollback }
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -297,6 +304,7 @@ jobs:
           file: Dockerfile.service
           push: true
           build-args: JAR_FILE=${{ steps.executable.outputs.path }}
+          labels: io.github.devcircle.release-class=${{ matrix.release_class }}
           tags: ghcr.io/wangyufanshuai/devcircle/${{ matrix.image }}:${{ github.sha }}
           sbom: true
           provenance: mode=max

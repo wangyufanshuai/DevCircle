@@ -109,18 +109,18 @@ admin_login="$(curl -fsS -X POST "${BASE_URL}/api/auth/login" \
   --data "{\"email\":\"${admin_email}\",\"password\":\"OrbitReader2026!\"}")"
 admin_token="$(node -e "const body=JSON.parse(process.argv[1]); if(!body.data?.user?.roles?.includes('ADMIN')) process.exit(2); process.stdout.write(body.data.accessToken)" "${admin_login}")"
 
-unauthorized_internal="$("${COMPOSE[@]}" exec -T dc-user curl -sS -o /dev/null -w '%{http_code}' \
-  'http://localhost:8102/internal/ops/outbox/status')"
+unauthorized_internal="$("${COMPOSE[@]}" exec -T dc-identity curl -sS -o /dev/null -w '%{http_code}' \
+  'http://localhost:8201/internal/ops/identity/outbox/user/status')"
 [[ "${unauthorized_internal}" == "403" ]] || {
   echo "Internal Outbox endpoint was not protected: HTTP ${unauthorized_internal}" >&2
   exit 1
 }
 mapfile -t outbox_runtime_sources < <(community_outbox_runtime_sources)
 for runtime in "${outbox_runtime_sources[@]}"; do
-  IFS=: read -r service port logical_source <<<"${runtime}"
+  IFS=: read -r service port logical_source status_path <<<"${runtime}"
   authorized_internal="$("${COMPOSE[@]}" exec -T "${service}" curl -fsS \
     -H 'X-Internal-Ops-Key: E2e-Internal-Ops-Key-2026-Only-For-Isolated-Compose' \
-    "http://localhost:${port}/internal/ops/outbox/status")"
+    "http://localhost:${port}${status_path}")"
   node -e "const body=JSON.parse(process.argv[1]); if(body.service!==process.argv[2]) process.exit(2)" \
     "${authorized_internal}" "${logical_source}"
 done
@@ -267,11 +267,11 @@ node -e "const body=JSON.parse(process.argv[1]); const h=body.data; if(h?.degrad
 replay_audit="$(sql dc_content "SELECT COUNT(*) FROM audit_log WHERE action = 'REPLAY_OUTBOX' AND user_id = ${admin[0]};")"
 [[ "${replay_audit}" == "1" ]] || { echo "Expected one audited Outbox replay, got ${replay_audit}" >&2; exit 1; }
 
-"${COMPOSE[@]}" stop -t 10 dc-user >/dev/null
+"${COMPOSE[@]}" stop -t 10 dc-identity >/dev/null
 partial="$(curl -fsS "${BASE_URL}/api/admin/ops/health" -H "Authorization: Bearer ${admin_token}")"
 node -e "const body=JSON.parse(process.argv[1]); const h=body.data; if(h?.degraded!==true || h?.degradationReason!=='OUTBOX_SOURCE_UNAVAILABLE' || h?.outboxComplete!==false || !h?.unavailableOutboxSources?.includes('dc-user')) process.exit(2)" "${partial}"
-"${COMPOSE[@]}" start dc-user >/dev/null
-wait_for_service dc-user 8102
+"${COMPOSE[@]}" start dc-identity >/dev/null
+wait_for_service dc-identity 8201
 complete_again=false
 for _ in $(seq 1 "${WAIT_ATTEMPTS}"); do
   recovered_health="$(curl -fsS "${BASE_URL}/api/admin/ops/health" -H "Authorization: Bearer ${admin_token}")"
@@ -281,6 +281,6 @@ for _ in $(seq 1 "${WAIT_ATTEMPTS}"); do
   fi
   sleep 1
 done
-[[ "${complete_again}" == "true" ]] || { echo "Fleet health did not recover after dc-user restart" >&2; exit 1; }
+[[ "${complete_again}" == "true" ]] || { echo "Fleet health did not recover after dc-identity restart" >&2; exit 1; }
 
 echo "Outbox fleet recovery verified post=${post_id}: DEAD/NEW -> PUBLISHED/PUBLISHED, five domains complete -> partial -> complete"

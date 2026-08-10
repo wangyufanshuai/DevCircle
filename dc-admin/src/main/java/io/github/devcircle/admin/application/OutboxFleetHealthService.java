@@ -35,6 +35,8 @@ public class OutboxFleetHealthService {
     public OutboxFleetHealthService(
             @Value("${devcircle.internal.auth-uri:http://localhost:8101}") String authUri,
             @Value("${devcircle.internal.user-uri:http://localhost:8102}") String userUri,
+            @Value("${devcircle.internal.auth-outbox-path:/internal/ops/outbox/status}") String authOutboxPath,
+            @Value("${devcircle.internal.user-outbox-path:/internal/ops/outbox/status}") String userOutboxPath,
             @Value("${devcircle.internal.content-uri:http://localhost:8103}") String contentUri,
             @Value("${devcircle.internal.comment-uri:http://localhost:8104}") String commentUri,
             @Value("${devcircle.internal.interaction-uri:http://localhost:8105}") String interactionUri,
@@ -42,11 +44,11 @@ public class OutboxFleetHealthService {
             @Value("${devcircle.admin.outbox-fleet-timeout-ms:2000}") long fleetTimeoutMillis,
             @Value("${devcircle.admin.outbox-fleet-max-concurrent-snapshots:2}") int maxConcurrentSnapshots) {
         this.clients = new LinkedHashMap<>();
-        clients.put("dc-auth", new HttpOutboxNodeClient(authUri, internalOpsKey));
-        clients.put("dc-user", new HttpOutboxNodeClient(userUri, internalOpsKey));
-        clients.put("dc-content", new HttpOutboxNodeClient(contentUri, internalOpsKey));
-        clients.put("dc-comment", new HttpOutboxNodeClient(commentUri, internalOpsKey));
-        clients.put("dc-interaction", new HttpOutboxNodeClient(interactionUri, internalOpsKey));
+        clients.put("dc-auth", new HttpOutboxNodeClient(authUri, authOutboxPath, internalOpsKey));
+        clients.put("dc-user", new HttpOutboxNodeClient(userUri, userOutboxPath, internalOpsKey));
+        clients.put("dc-content", new HttpOutboxNodeClient(contentUri, "/internal/ops/outbox/status", internalOpsKey));
+        clients.put("dc-comment", new HttpOutboxNodeClient(commentUri, "/internal/ops/outbox/status", internalOpsKey));
+        clients.put("dc-interaction", new HttpOutboxNodeClient(interactionUri, "/internal/ops/outbox/status", internalOpsKey));
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
         this.fleetTimeoutMillis = Math.max(100, fleetTimeoutMillis);
         this.snapshotPermits = new Semaphore(Math.max(1, maxConcurrentSnapshots));
@@ -163,18 +165,20 @@ public class OutboxFleetHealthService {
         OutboxStatusView fetch();
     }
 
-    private static final class HttpOutboxNodeClient implements OutboxNodeClient {
+    static final class HttpOutboxNodeClient implements OutboxNodeClient {
         private final RestClient client;
+        private final String statusPath;
         private final String internalOpsKey;
 
-        private HttpOutboxNodeClient(String baseUri, String internalOpsKey) {
+        HttpOutboxNodeClient(String baseUri, String statusPath, String internalOpsKey) {
             this.client = BoundedRestClientFactory.create(baseUri);
+            this.statusPath = statusPath;
             this.internalOpsKey = internalOpsKey;
         }
 
         @Override
         public OutboxStatusView fetch() {
-            OutboxStatusView body = client.get().uri("/internal/ops/outbox/status")
+            OutboxStatusView body = client.get().uri(statusPath)
                     .header("X-Internal-Ops-Key", internalOpsKey)
                     .retrieve()
                     .body(OutboxStatusView.class);

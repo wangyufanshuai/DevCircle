@@ -44,6 +44,8 @@ devcircle:
   internal:
     auth-uri: ${DC_AUTH_URI:http://localhost:8101}
     user-uri: ${DC_USER_URI:http://localhost:8102}
+    auth-outbox-path: ${DC_AUTH_OUTBOX_PATH:/internal/ops/outbox/status}
+    user-outbox-path: ${DC_USER_OUTBOX_PATH:/internal/ops/outbox/status}
     content-uri: ${DC_CONTENT_URI:http://localhost:8103}
     comment-uri: ${DC_COMMENT_URI:http://localhost:8104}
     interaction-uri: ${DC_INTERACTION_URI:http://localhost:8105}

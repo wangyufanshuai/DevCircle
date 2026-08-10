@@ -3,6 +3,8 @@ package io.github.devcircle.identity.api;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.identity.application.DashboardService;
+import io.github.devcircle.user.application.UserGraphService;
+import io.github.devcircle.user.infrastructure.UserGraphRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
@@ -11,9 +13,12 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.ExpectedCount.once;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
@@ -29,7 +34,6 @@ class DashboardControllerTest {
     void aggregatesProfileProgressFavoritesAndStatsForAuthenticatedPrincipal() {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        expect(server, "https://user.test/api/users/2", "{\"id\":2,\"username\":\"Observer\"}");
         expect(server, "https://content.test/api/me/reading-progress", """
                 [{"postId":1001,"title":"Clocktower","theme":"DEDUCTION","progressPercent":42,
                   "completed":false,"available":true,"trackState":"IN_PROGRESS"}]
@@ -41,7 +45,10 @@ class DashboardControllerTest {
         expect(server, "https://notification.test/api/notifications/unread-count", "2");
         expect(server, "https://content.test/api/deduction/me/stats",
                 "{\"attempts\":3,\"correctCount\":2,\"revealedCount\":0,\"totalPoints\":40}");
-        DashboardController controller = controller(builder);
+        UserGraphService users = mock(UserGraphService.class);
+        when(users.profile(2L)).thenReturn(Optional.of(new UserGraphRepository.UserProfile(
+                2L, "Observer", null, "Orbit reader", 7, 3)));
+        DashboardController controller = controller(builder, users);
 
         var authentication = UsernamePasswordAuthenticationToken.authenticated("2", null, List.of());
         var response = controller.dashboard(authentication, TRACE_ID);
@@ -59,17 +66,15 @@ class DashboardControllerTest {
     void requiredSourceFailureIsReturnedAsDependencyUnavailable() {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
-        server.expect(once(), requestTo("https://user.test/api/users/2"))
-                .andRespond(withStatus(SERVICE_UNAVAILABLE)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body("{\"code\":\"DEPENDENCY_UNAVAILABLE\",\"data\":null}"));
         expect(server, "https://content.test/api/me/reading-progress", "[]");
         expect(server, "https://content.test/api/me/submissions", "[]");
         expect(server, "https://interaction.test/api/me/favorites", "[1001]");
         expect(server, "https://content.test/api/posts/summaries?ids=1001", "[]");
         expect(server, "https://notification.test/api/notifications/unread-count", "0");
         expect(server, "https://content.test/api/deduction/me/stats", "{}");
-        DashboardController controller = controller(builder);
+        UserGraphService users = mock(UserGraphService.class);
+        when(users.profile(2L)).thenThrow(new IllegalStateException("user database unavailable"));
+        DashboardController controller = controller(builder, users);
         var authentication = UsernamePasswordAuthenticationToken.authenticated("2", null, List.of());
 
         assertThatThrownBy(() -> controller.dashboard(authentication, TRACE_ID))
@@ -80,7 +85,7 @@ class DashboardControllerTest {
 
     @Test
     void rejectsAnInvalidAuthenticatedPrincipalBeforeCallingDependencies() {
-        DashboardController controller = controller(RestClient.builder());
+        DashboardController controller = controller(RestClient.builder(), mock(UserGraphService.class));
         var authentication = UsernamePasswordAuthenticationToken.authenticated("not-a-user", null, List.of());
 
         assertThatThrownBy(() -> controller.dashboard(authentication, TRACE_ID))
@@ -88,8 +93,8 @@ class DashboardControllerTest {
                         error -> assertThat(error.code()).isEqualTo(ErrorCode.UNAUTHORIZED));
     }
 
-    private DashboardController controller(RestClient.Builder builder) {
-        DashboardService service = new DashboardService(builder, "https://user.test", "https://content.test",
+    private DashboardController controller(RestClient.Builder builder, UserGraphService users) {
+        DashboardService service = new DashboardService(users, builder, "https://content.test",
                 "https://interaction.test", "https://notification.test", Runnable::run);
         return new DashboardController(service);
     }

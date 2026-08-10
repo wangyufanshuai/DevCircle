@@ -300,6 +300,16 @@ class IdentityEmbeddedUserRuntimeTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.auth.service").value("dc-auth"))
                 .andExpect(jsonPath("$.user.service").value("dc-user"));
+        mockMvc.perform(get("/internal/ops/identity/outbox/auth/status")
+                        .header("X-Internal-Ops-Key", "local-development-internal-ops-key"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.service").value("dc-auth"));
+        mockMvc.perform(get("/internal/ops/identity/outbox/user/status")
+                        .header("X-Internal-Ops-Key", "local-development-internal-ops-key"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.service").value("dc-user"));
+        mockMvc.perform(get("/internal/ops/identity/outbox/user/status"))
+                .andExpect(status().isForbidden());
 
         userJdbcClient.sql("DROP TABLE outbox_event").update();
 

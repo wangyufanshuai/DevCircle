@@ -64,9 +64,11 @@ devcircle:
     profile-backfill:
       enabled: ${USER_PROFILE_BACKFILL_ENABLED:true}
   user-runtime:
+    consumer-enabled: ${USER_RUNTIME_CONSUMER_ENABLED:true}
     flyway-enabled: ${USER_FLYWAY_ENABLED:true}
     flyway-locations: classpath:db/user-migration
     outbox:
+      enabled: ${USER_RUNTIME_OUTBOX_ENABLED:${devcircle.outbox.enabled:true}}
       # User events retain their domain producer identity after deployment aggregation.
       service-name: dc-user
     datasource:
@@ -77,7 +79,6 @@ devcircle:
       minimum-idle: ${IDENTITY_USER_DB_POOL_MIN_IDLE:1}
       connection-timeout: ${IDENTITY_USER_DB_POOL_CONNECTION_TIMEOUT_MS:3000}
   internal:
-    user-uri: ${DC_USER_URI:http://localhost:8102}
     content-uri: ${DC_CONTENT_URI:http://localhost:8103}
     interaction-uri: ${DC_INTERACTION_URI:http://localhost:8105}
     notification-uri: ${DC_NOTIFICATION_URI:http://localhost:8108}

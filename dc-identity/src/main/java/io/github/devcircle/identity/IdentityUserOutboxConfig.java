@@ -14,7 +14,7 @@ import org.springframework.kafka.core.KafkaTemplate;
 @Configuration(proxyBeanMethods = false)
 class IdentityUserOutboxConfig {
     @Bean("userReliableOutboxWorker")
-    @ConditionalOnProperty(prefix = "devcircle.outbox", name = "enabled",
+    @ConditionalOnProperty(prefix = "devcircle.user-runtime.outbox", name = "enabled",
             havingValue = "true", matchIfMissing = true)
     ReliableOutboxWorker userReliableOutboxWorker(
             @Qualifier("userJdbcClient") JdbcClient userJdbcClient,

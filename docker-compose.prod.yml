@@ -240,17 +240,6 @@ services:
     tmpfs: [/tmp]
     logging: *json-logging
 
-  dc-user:
-    <<: *app-defaults
-    image: ghcr.io/wangyufanshuai/devcircle/dc-user:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
-    environment: *app-env
-    expose: ["8102"]
-    depends_on:
-      mysql: { condition: service_healthy }
-      redis: { condition: service_healthy }
-      kafka: { condition: service_healthy }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8102/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
-
   dc-comment:
     <<: *app-defaults
     image: ghcr.io/wangyufanshuai/devcircle/dc-comment:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
@@ -299,7 +288,9 @@ services:
     environment:
       <<: *app-env
       DC_AUTH_URI: http://dc-identity:8201
-      DC_USER_URI: http://dc-user:8102
+      DC_USER_URI: http://dc-identity:8201
+      DC_AUTH_OUTBOX_PATH: /internal/ops/identity/outbox/auth/status
+      DC_USER_OUTBOX_PATH: /internal/ops/identity/outbox/user/status
       DC_CONTENT_URI: http://dc-content-aggregate:8202
       DC_COMMENT_URI: http://dc-comment:8104
       DC_INTERACTION_URI: http://dc-interaction:8105
@@ -323,7 +314,6 @@ services:
       IDENTITY_USER_DB_POOL_MAX_SIZE: ${IDENTITY_USER_DB_POOL_MAX_SIZE:-6}
       IDENTITY_USER_DB_POOL_MIN_IDLE: ${IDENTITY_USER_DB_POOL_MIN_IDLE:-1}
       IDENTITY_USER_DB_POOL_CONNECTION_TIMEOUT_MS: ${IDENTITY_USER_DB_POOL_CONNECTION_TIMEOUT_MS:-3000}
-      DC_USER_URI: http://dc-user:8102
       DC_CONTENT_URI: http://dc-content-aggregate:8202
       DC_INTERACTION_URI: http://dc-interaction:8105
       DC_NOTIFICATION_URI: http://dc-notification:8108
@@ -332,10 +322,6 @@ services:
       mysql: { condition: service_healthy }
       redis: { condition: service_healthy }
       kafka: { condition: service_healthy }
-      dc-user: { condition: service_healthy }
-      dc-content-aggregate: { condition: service_healthy }
-      dc-interaction: { condition: service_healthy }
-      dc-notification: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8201/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
   dc-content-aggregate:
@@ -343,13 +329,14 @@ services:
     image: ghcr.io/wangyufanshuai/devcircle/dc-content-aggregate:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
     environment:
       <<: *app-env
-      DC_USER_URI: http://dc-user:8102
+      DC_USER_URI: http://dc-identity:8201
       DC_INTERACTION_URI: http://dc-interaction:8105
     expose: ["8202"]
     depends_on:
       mysql: { condition: service_healthy }
       kafka: { condition: service_healthy }
       minio: { condition: service_healthy }
+      dc-identity: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8202/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
   dc-discovery:
@@ -376,7 +363,7 @@ services:
       DC_DISCOVERY_URI: http://dc-discovery:8203
       DC_SEARCH_URI: http://dc-discovery:8203
       DC_RECOMMEND_URI: http://dc-recommend:8107
-      DC_USER_URI: http://dc-user:8102
+      DC_USER_URI: http://dc-identity:8201
       DC_INTERACTION_URI: http://dc-interaction:8105
       DC_NOTIFICATION_URI: http://dc-notification:8108
       DC_COMMENT_URI: http://dc-comment:8104

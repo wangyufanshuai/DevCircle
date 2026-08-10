@@ -50,6 +50,7 @@ class IdentityApplicationContextTest {
         assertThat(context.getBeansOfType(OutboxStatusService.class))
                 .containsOnlyKeys("outboxStatusService");
         assertThat(context.getBean(IdentityUserOutboxStatus.class)).isNotNull();
+        assertThat(context.containsBean("userReliableOutboxWorker")).isFalse();
         assertThat(context.containsBean("authApplication")).isFalse();
         assertThat(Arrays.stream(context.getBeanDefinitionNames()))
                 .noneMatch(name -> name.toLowerCase().contains("routedefinition"));

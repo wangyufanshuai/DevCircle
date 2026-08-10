@@ -46,11 +46,65 @@ class AggregateRouteContractTest {
                 .contains("id: identity-dashboard")
                 .contains("uri: ${DC_IDENTITY_URI:http://localhost:8201}")
                 .contains("Path=/api/me/**")
-                .contains("id: identity-user-compatibility")
+                .contains("id: identity-user")
+                .contains("uri: ${DC_USER_URI:${DC_IDENTITY_URI:http://localhost:8201}}")
                 .contains("id: identity-interaction-compatibility")
                 .contains("id: identity-notification-compatibility")
                 .doesNotContain("Path=/api/auth/**,/api/me/**")
                 .doesNotContain("Path=/api/auth/**,/api/users/**");
+    }
+
+    @Test
+    void productionOwnsUsersInIdentityAndLegacyUserIsAnExplicitRollbackOnly() throws IOException {
+        String production = repositoryFile("docker-compose.prod.yml");
+        String e2e = repositoryFile("docker-compose.e2e.yml");
+        String legacyOverlay = repositoryFile("deploy/compose/docker-compose.legacy-user-rollback.yml");
+        String productionPrometheus = repositoryFile("deploy/prometheus/prometheus.prod.yml");
+        String legacyPrometheus = repositoryFile(
+                "deploy/prometheus/prometheus.legacy-user-rollback.yml");
+        String rollback = repositoryFile("scripts/ops/rollback.sh");
+        String restore = repositoryFile("scripts/ops/restore.sh");
+        String rollbackIdentity = composeServiceBlock(legacyOverlay, "dc-identity");
+        String rollbackPrometheus = composeServiceBlock(legacyOverlay, "prometheus");
+
+        assertThat(production)
+                .contains("DC_USER_URI: http://dc-identity:8201")
+                .doesNotContain("\n  dc-user:");
+        assertThat(e2e)
+                .contains("DC_USER_URI: http://dc-identity:8201")
+                .doesNotContain("\n  dc-user:");
+        assertThat(legacyOverlay)
+                .contains("\n  dc-user:")
+                .contains("DC_USER_URI: http://dc-user:8102")
+                .contains("USER_RUNTIME_CONSUMER_ENABLED: \"false\"")
+                .contains("USER_PROFILE_BACKFILL_ENABLED: \"false\"")
+                .contains("USER_RUNTIME_OUTBOX_ENABLED: \"false\"")
+                .contains("USER_FLYWAY_ENABLED: \"false\"");
+        assertThat(rollbackIdentity)
+                .contains("DC_USER_URI: http://dc-user:8102")
+                .contains("USER_RUNTIME_CONSUMER_ENABLED: \"false\"")
+                .contains("USER_PROFILE_BACKFILL_ENABLED: \"false\"")
+                .contains("USER_RUNTIME_OUTBOX_ENABLED: \"false\"")
+                .contains("USER_FLYWAY_ENABLED: \"false\"")
+                .contains("dc-user: { condition: service_healthy }");
+        assertThat(rollbackPrometheus)
+                .contains("./deploy/prometheus/prometheus.legacy-user-rollback.yml:"
+                        + "/etc/prometheus/prometheus.yml:ro");
+        assertThat(productionPrometheus)
+                .doesNotContain("dc-user:8102")
+                .doesNotContain("service: dc-user");
+        assertThat(legacyPrometheus)
+                .contains("metrics_path: /actuator/prometheus")
+                .contains("targets: [\"dc-user:8102\"]")
+                .contains("labels: { service: dc-user }");
+        assertThat(rollback)
+                .contains("LEGACY_USER_ROLLBACK:-false")
+                .contains("docker-compose.legacy-user-rollback.yml")
+                .contains("ROLLBACK_SERVICES+=(dc-user)");
+        assertThat(restore)
+                .contains("LEGACY_USER_ROLLBACK:-false")
+                .contains("docker-compose.legacy-user-rollback.yml")
+                .contains("APP_SERVICES+=(dc-user)");
     }
 
     @Test
@@ -109,5 +163,17 @@ class AggregateRouteContractTest {
             directory = directory.getParent();
         }
         throw new IOException("Cannot locate repository file: " + relativePath);
+    }
+
+    private String composeServiceBlock(String compose, String service) {
+        String marker = "\n  " + service + ":";
+        int start = compose.indexOf(marker);
+        assertThat(start).as("Compose service %s", service).isGreaterThanOrEqualTo(0);
+        int candidate = compose.indexOf("\n  ", start + marker.length());
+        while (candidate >= 0 && candidate + 3 < compose.length()
+                && Character.isWhitespace(compose.charAt(candidate + 3))) {
+            candidate = compose.indexOf("\n  ", candidate + 3);
+        }
+        return compose.substring(start, candidate < 0 ? compose.length() : candidate);
     }
 }

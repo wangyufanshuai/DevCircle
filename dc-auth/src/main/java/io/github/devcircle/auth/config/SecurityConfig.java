@@ -101,7 +101,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(registry -> registry
                         .requestMatchers("/api/auth/**", "/actuator/health", "/actuator/health/**",
                                 "/actuator/prometheus", "/internal/ops/outbox/status",
-                                "/internal/ops/identity/outbox/status",
+                                "/internal/ops/identity/outbox/**",
                                 "/v3/api-docs/**", "/swagger-ui/**").permitAll()
                         .requestMatchers(PUBLIC_USER_READ).permitAll()
                         .requestMatchers("/api/users/**").authenticated()

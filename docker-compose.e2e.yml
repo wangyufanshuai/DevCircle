@@ -173,7 +173,6 @@ services:
       AUTH_COOKIE_SECURE: "false"
       AUTH_FRONTEND_CALLBACK_URI: http://127.0.0.1:5511/auth/callback
       DEVCIRCLE_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
-      DC_USER_URI: http://dc-user:8102
       DC_CONTENT_URI: http://dc-content-aggregate:8202
       DC_INTERACTION_URI: http://dc-interaction:8105
       DC_NOTIFICATION_URI: http://dc-notification:8108
@@ -204,12 +203,13 @@ services:
       DEVCIRCLE_KAFKA_TOPICS_ENABLED: "false"
       DEVCIRCLE_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
       SPRING_KAFKA_LISTENER_AUTO_STARTUP: "false"
-      DC_USER_URI: http://dc-user:8102
+      DC_USER_URI: http://dc-identity:8201
       DC_INTERACTION_URI: http://dc-interaction:8105
     mem_limit: 256m
     depends_on:
       mysql: { condition: service_healthy }
       minio: { condition: service_healthy }
+      dc-identity: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8202/actuator/health/readiness"]
       interval: 5s
@@ -237,29 +237,6 @@ services:
       dc-content-aggregate: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8104/actuator/health/readiness"]
-      interval: 5s
-      timeout: 5s
-      retries: 24
-
-  dc-user:
-    <<: *app-defaults
-    profiles: ["community"]
-    build:
-      <<: *service-build
-      args: { JAR_FILE: dc-user/target/dc-user-0.1.0-SNAPSHOT-exec.jar }
-    environment:
-      <<: *app-env
-      MYSQL_HOST: mysql
-      MYSQL_PORT: 3306
-      MYSQL_USER: devcircle
-      MYSQL_PASSWORD: e2e-database-password
-    mem_limit: 256m
-    depends_on:
-      mysql: { condition: service_healthy }
-      kafka: { condition: service_healthy }
-      dc-identity: { condition: service_healthy }
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8102/actuator/health/readiness"]
       interval: 5s
       timeout: 5s
       retries: 24
@@ -380,7 +357,9 @@ services:
       MYSQL_PASSWORD: e2e-database-password
       DEVCIRCLE_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
       DC_AUTH_URI: ${REAL_E2E_AUTH_URI:-http://dc-identity:8201}
-      DC_USER_URI: http://dc-user:8102
+      DC_USER_URI: http://dc-identity:8201
+      DC_AUTH_OUTBOX_PATH: /internal/ops/identity/outbox/auth/status
+      DC_USER_OUTBOX_PATH: /internal/ops/identity/outbox/user/status
       DC_CONTENT_URI: http://dc-content-aggregate:8202
       DC_COMMENT_URI: http://dc-comment:8104
       DC_INTERACTION_URI: http://dc-interaction:8105
@@ -435,7 +414,7 @@ services:
       <<: *app-env
       DC_AUTH_URI: ${REAL_E2E_AUTH_URI:-http://dc-identity:8201}
       DC_IDENTITY_URI: http://dc-identity:8201
-      DC_USER_URI: http://dc-user:8102
+      DC_USER_URI: http://dc-identity:8201
       SPRING_PROFILES_ACTIVE: aggregate
       DC_CONTENT_AGGREGATE_URI: http://dc-content-aggregate:8202
       DC_INTERACTION_URI: http://dc-interaction:8105
@@ -451,7 +430,6 @@ services:
       dc-auth: { condition: service_healthy, required: false }
       dc-admin: { condition: service_healthy, required: false }
       dc-content-aggregate: { condition: service_healthy, required: false }
-      dc-user: { condition: service_healthy, required: false }
       dc-interaction: { condition: service_healthy, required: false }
       dc-discovery: { condition: service_healthy, required: false }
       dc-search: { condition: service_healthy, required: false }

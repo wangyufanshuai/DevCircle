@@ -23,8 +23,6 @@ scrape_configs:
         labels: { service: dc-content-aggregate }
       - targets: ["dc-discovery:8203"]
         labels: { service: dc-discovery }
-      - targets: ["dc-user:8102"]
-        labels: { service: dc-user }
       - targets: ["dc-comment:8104"]
         labels: { service: dc-comment }
       - targets: ["dc-interaction:8105"]

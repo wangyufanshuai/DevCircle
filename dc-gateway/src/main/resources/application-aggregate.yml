@@ -12,8 +12,8 @@ spring:
               uri: ${DC_IDENTITY_URI:http://localhost:8201}
               predicates:
                 - Path=/api/me/**
-            - id: identity-user-compatibility
-              uri: ${DC_USER_URI:http://localhost:8102}
+            - id: identity-user
+              uri: ${DC_USER_URI:${DC_IDENTITY_URI:http://localhost:8201}}
               predicates:
                 - Path=/api/users/**
             - id: identity-interaction-compatibility

@@ -2,6 +2,8 @@ package io.github.devcircle.identity.application;
 
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
+import io.github.devcircle.user.application.UserGraphService;
+import io.github.devcircle.user.infrastructure.UserGraphRepository;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -20,19 +22,19 @@ import java.util.concurrent.Executor;
 public class DashboardService {
     private static final String UNAVAILABLE_MESSAGE = "个人中心暂时无法加载，请稍后重试";
 
-    private final RestClient userClient;
+    private final UserGraphService userGraphService;
     private final RestClient contentClient;
     private final RestClient interactionClient;
     private final RestClient notificationClient;
     private final Executor dashboardExecutor;
 
-    public DashboardService(RestClient.Builder restClientBuilder,
-                            @Value("${devcircle.internal.user-uri:http://localhost:8102}") String userUri,
+    public DashboardService(UserGraphService userGraphService,
+                            RestClient.Builder restClientBuilder,
                             @Value("${devcircle.internal.content-uri:http://localhost:8103}") String contentUri,
                             @Value("${devcircle.internal.interaction-uri:http://localhost:8105}") String interactionUri,
                             @Value("${devcircle.internal.notification-uri:http://localhost:8108}") String notificationUri,
                             @Qualifier("dashboardExecutor") Executor dashboardExecutor) {
-        this.userClient = restClientBuilder.clone().baseUrl(userUri).build();
+        this.userGraphService = userGraphService;
         this.contentClient = restClientBuilder.clone().baseUrl(contentUri).build();
         this.interactionClient = restClientBuilder.clone().baseUrl(interactionUri).build();
         this.notificationClient = restClientBuilder.clone().baseUrl(notificationUri).build();
@@ -40,7 +42,8 @@ public class DashboardService {
     }
 
     public Map<String, JsonNode> dashboard(Long userId, String traceId) {
-        CompletableFuture<JsonNode> profile = asyncGet(userClient, "/api/users/" + userId, userId, traceId);
+        CompletableFuture<JsonNode> profile = CompletableFuture.supplyAsync(
+                () -> localProfile(userId), dashboardExecutor);
         CompletableFuture<JsonNode> progress = asyncGet(contentClient, "/api/me/reading-progress", userId, traceId);
         CompletableFuture<JsonNode> submissions = asyncGet(contentClient, "/api/me/submissions", userId, traceId);
         CompletableFuture<JsonNode> favoriteIds = asyncGet(interactionClient, "/api/me/favorites", userId, traceId);
@@ -63,6 +66,19 @@ public class DashboardService {
 
     private CompletableFuture<JsonNode> asyncGet(RestClient client, String path, Long userId, String traceId) {
         return CompletableFuture.supplyAsync(() -> get(client, path, userId, traceId), dashboardExecutor);
+    }
+
+    private JsonNode localProfile(Long userId) {
+        UserGraphRepository.UserProfile profile = userGraphService.profile(userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "用户不存在"));
+        return JsonNodeFactory.instance.objectNode()
+                .put("id", profile.userId())
+                .put("username", profile.username())
+                .put("avatarUrl", profile.avatarUrl())
+                .put("bio", profile.bio())
+                .put("followers", profile.followerCount())
+                .put("following", profile.followingCount())
+                .put("status", "ACTIVE");
     }
 
     private JsonNode favoriteSummaries(JsonNode favoriteIds, Long userId, String traceId) {

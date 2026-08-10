@@ -98,7 +98,7 @@ def valid_compose() -> dict:
     services["dc-gateway"]["environment"].update({
         "DC_AUTH_URI": "http://dc-identity:8201",
         "DC_IDENTITY_URI": "http://dc-identity:8201",
-        "DC_USER_URI": "http://dc-user:8102",
+        "DC_USER_URI": "http://dc-identity:8201",
         "DC_INTERACTION_URI": "http://dc-interaction:8105",
         "DC_NOTIFICATION_URI": "http://dc-notification:8108",
         "DC_DISCOVERY_URI": "http://dc-discovery:8203",
@@ -109,13 +109,18 @@ def valid_compose() -> dict:
         name: {"condition": "service_healthy"}
         for name in ("dc-identity", "dc-content-aggregate", "dc-discovery", "dc-recommend")
     }
-    services["dc-admin"]["environment"]["DC_AUTH_URI"] = "http://dc-identity:8201"
+    services["dc-admin"]["environment"].update({
+        "DC_AUTH_URI": "http://dc-identity:8201",
+        "DC_USER_URI": "http://dc-identity:8201",
+        "DC_AUTH_OUTBOX_PATH": "/internal/ops/identity/outbox/auth/status",
+        "DC_USER_OUTBOX_PATH": "/internal/ops/identity/outbox/user/status",
+    })
     services["dc-identity"]["environment"].update({
         "IDENTITY_AUTH_DB_POOL_MAX_SIZE": "6",
         "IDENTITY_USER_DB_POOL_MAX_SIZE": "6",
     })
     services["dc-content-aggregate"]["environment"].update({
-        "DC_USER_URI": "http://dc-user:8102",
+        "DC_USER_URI": "http://dc-identity:8201",
         "DC_INTERACTION_URI": "http://dc-interaction:8105",
     })
     services["dc-discovery"]["depends_on"] = {
@@ -125,14 +130,51 @@ def valid_compose() -> dict:
     return {"services": services}
 
 
+def valid_legacy_user_rollback() -> dict:
+    rollback = copy.deepcopy(valid_compose())
+    services = rollback["services"]
+    services["dc-user"] = {
+        **service(),
+        "environment": app_environment(),
+        "expose": ["8102"],
+        "healthcheck": {
+            "test": [
+                "CMD", "curl", "-fsS",
+                "http://localhost:8102/actuator/health/readiness",
+            ],
+        },
+    }
+    for owner in ("dc-identity", "dc-gateway", "dc-content-aggregate", "dc-admin"):
+        services[owner]["environment"]["DC_USER_URI"] = "http://dc-user:8102"
+        services[owner].setdefault("depends_on", {})["dc-user"] = {
+            "condition": "service_healthy",
+        }
+    services["dc-identity"]["environment"].update({
+        "USER_RUNTIME_CONSUMER_ENABLED": "false",
+        "USER_PROFILE_BACKFILL_ENABLED": "false",
+        "USER_RUNTIME_OUTBOX_ENABLED": "false",
+        "USER_FLYWAY_ENABLED": "false",
+    })
+    services["dc-admin"]["environment"]["DC_USER_OUTBOX_PATH"] = (
+        "/internal/ops/outbox/status"
+    )
+    services["prometheus"]["volumes"] = [{
+        "type": "bind",
+        "source": str(ROOT / "deploy/prometheus/prometheus.legacy-user-rollback.yml"),
+        "target": "/etc/prometheus/prometheus.yml",
+        "read_only": True,
+    }]
+    return rollback
+
+
 class ProductionResourceBudgetTest(unittest.TestCase):
     def setUp(self) -> None:
         self.compose = valid_compose()
 
-    def test_accepts_the_20_service_production_contract(self) -> None:
+    def test_accepts_the_19_service_production_contract(self) -> None:
         service_count, total_memory = budgets.validate(self.compose)
 
-        self.assertEqual(20, service_count)
+        self.assertEqual(19, service_count)
         self.assertLessEqual(total_memory, 15 * budgets.GIB)
 
     def test_rejects_missing_internal_operations_key(self) -> None:
@@ -225,9 +267,30 @@ class ProductionResourceBudgetTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "embed authentication"):
             budgets.validate(self.compose)
 
+    def test_rejects_a_separate_user_service_or_identity_user_self_proxy(self) -> None:
+        self.compose["services"]["dc-user"] = {
+            **service(), "environment": app_environment()
+        }
+        with self.assertRaisesRegex(ValueError, "unexpected=.*dc-user"):
+            budgets.validate(self.compose)
+
+        self.compose = valid_compose()
+        self.compose["services"]["dc-identity"]["environment"]["DC_USER_URI"] = (
+            "http://dc-identity:8201"
+        )
+        with self.assertRaisesRegex(ValueError, "embedded User runtime"):
+            budgets.validate(self.compose)
+
     def test_rejects_outbox_or_gateway_routes_that_bypass_the_new_topology(self) -> None:
         self.compose["services"]["dc-admin"]["environment"]["DC_AUTH_URI"] = "http://dc-auth:8101"
         with self.assertRaisesRegex(ValueError, "Outbox source from dc-identity"):
+            budgets.validate(self.compose)
+
+        self.compose = valid_compose()
+        self.compose["services"]["dc-admin"]["environment"]["DC_USER_OUTBOX_PATH"] = (
+            "/internal/ops/outbox/status"
+        )
+        with self.assertRaisesRegex(ValueError, "DC_USER_OUTBOX_PATH"):
             budgets.validate(self.compose)
 
         self.compose = valid_compose()
@@ -274,6 +337,56 @@ class ProductionResourceBudgetTest(unittest.TestCase):
                 budgets.validate_caddyfile(temporary)
         finally:
             temporary.unlink(missing_ok=True)
+
+
+class LegacyUserRollbackResourceBudgetTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.production = valid_compose()
+        self.rollback = valid_legacy_user_rollback()
+        self.production_prometheus = ROOT / "deploy/prometheus/prometheus.prod.yml"
+        self.rollback_prometheus = (
+            ROOT / "deploy/prometheus/prometheus.legacy-user-rollback.yml"
+        )
+
+    def validate(self) -> tuple[int, int]:
+        return budgets.validate_legacy_user_rollback(
+            self.production,
+            self.rollback,
+            self.production_prometheus,
+            self.rollback_prometheus,
+        )
+
+    def test_accepts_the_bounded_observable_legacy_user_topology(self) -> None:
+        service_count, total_memory = self.validate()
+
+        self.assertEqual(20, service_count)
+        self.assertLessEqual(total_memory, 15 * budgets.GIB)
+
+    def test_rejects_identity_without_the_legacy_dashboard_user_route(self) -> None:
+        del self.rollback["services"]["dc-identity"]["environment"]["DC_USER_URI"]
+
+        with self.assertRaisesRegex(ValueError, "dc-identity DC_USER_URI"):
+            self.validate()
+
+    def test_rejects_unbounded_or_unobservable_legacy_user(self) -> None:
+        self.rollback["services"]["dc-user"]["mem_limit"] = budgets.GIB
+        with self.assertRaisesRegex(ValueError, "legacy dc-user memory limit"):
+            self.validate()
+
+        self.rollback = valid_legacy_user_rollback()
+        self.rollback["services"]["prometheus"]["volumes"][0]["source"] = (
+            str(self.production_prometheus)
+        )
+        with self.assertRaisesRegex(ValueError, "must mount prometheus.legacy-user-rollback.yml"):
+            self.validate()
+
+    def test_rejects_dual_identity_user_writers(self) -> None:
+        self.rollback["services"]["dc-identity"]["environment"][
+            "USER_RUNTIME_OUTBOX_ENABLED"
+        ] = "true"
+
+        with self.assertRaisesRegex(ValueError, "disable USER_RUNTIME_OUTBOX_ENABLED"):
+            self.validate()
 
 
 class HelmTopologyContractTest(unittest.TestCase):

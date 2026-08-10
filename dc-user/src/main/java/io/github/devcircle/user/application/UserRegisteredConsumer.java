@@ -7,12 +7,15 @@ import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.user.infrastructure.UserGraphRepository;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
 import java.util.Set;
 
 @Component
+@ConditionalOnProperty(prefix = "devcircle.user-runtime", name = "consumer-enabled",
+        havingValue = "true", matchIfMissing = true)
 class UserRegisteredConsumer {
     private static final Map<String, Set<String>> EVENT_CONTRACT =
             Map.of(EventTopics.USER_REGISTERED, Set.of("dc-auth"));

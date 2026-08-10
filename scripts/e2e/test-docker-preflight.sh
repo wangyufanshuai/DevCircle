@@ -126,16 +126,19 @@ configure_community_auth_profile
 [[ "${COMMUNITY_AUTH_SERVICE}:${COMMUNITY_AUTH_PORT}:${COMMUNITY_AUTH_URI}" == \
   "dc-identity:8201:http://dc-identity:8201" ]]
 [[ "${COMMUNITY_AUTH_COMPOSE_PROFILES[*]}" == "--profile community" ]]
-[[ "$(community_outbox_runtime_sources | head -n 1)" == "dc-identity:8201:dc-auth" ]]
-grep -qx 'dc-content-aggregate:8202:dc-content' < <(community_outbox_runtime_sources)
+[[ "$(community_outbox_runtime_sources | head -n 1)" == \
+  "dc-identity:8201:dc-auth:/internal/ops/identity/outbox/auth/status" ]]
+grep -qx 'dc-identity:8201:dc-user:/internal/ops/identity/outbox/user/status' < <(community_outbox_runtime_sources)
+grep -qx 'dc-content-aggregate:8202:dc-content:/internal/ops/outbox/status' < <(community_outbox_runtime_sources)
 REAL_E2E_AUTH_PROFILE=legacy-auth
 configure_community_auth_profile
 [[ "${COMMUNITY_AUTH_SERVICE}:${COMMUNITY_AUTH_PORT}:${COMMUNITY_AUTH_URI}" == \
   "dc-auth:8101:http://dc-auth:8101" ]]
 [[ "${COMMUNITY_AUTH_COMPOSE_PROFILES[*]}" == "--profile community --profile legacy-auth" ]]
 [[ "${COMMUNITY_AUTH_MAVEN_MODULE}" == "dc-auth" ]]
-[[ "$(community_outbox_runtime_sources | head -n 1)" == "dc-auth:8101:dc-auth" ]]
-grep -qx 'dc-content-aggregate:8202:dc-content' < <(community_outbox_runtime_sources)
+[[ "$(community_outbox_runtime_sources | head -n 1)" == \
+  "dc-auth:8101:dc-auth:/internal/ops/outbox/status" ]]
+grep -qx 'dc-content-aggregate:8202:dc-content:/internal/ops/outbox/status' < <(community_outbox_runtime_sources)
 REAL_E2E_AUTH_PROFILE=unsupported
 if configure_community_auth_profile >/dev/null 2>&1; then
   echo "Unsupported community authentication profiles must fail closed" >&2
@@ -172,7 +175,7 @@ legacy_community_auth_routes="$(grep -E '^      DC_AUTH_URI:' <<<"${legacy_commu
 community_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
   --profile community config --services | sort)"
 expected_community_services="$(printf '%s\n' dc-admin dc-comment dc-content-aggregate dc-gateway dc-identity dc-interaction \
-  dc-notification dc-recommend dc-user kafka minio mysql redis | sort)"
+  dc-notification dc-recommend kafka minio mysql redis | sort)"
 [[ "${community_services}" == "${expected_community_services}" ]] || {
   echo "Unexpected community services: ${community_services}" >&2
   exit 1
@@ -235,5 +238,39 @@ if grep -q 'exec -T kafka /opt/kafka/bin' "${ROOT_DIR}/scripts/e2e/run-real-sear
   echo "Kafka container paths must be protected from Git Bash path conversion with sh -c" >&2
   exit 1
 fi
+
+# Production must stay free of the rollback-only process and scrape target. The
+# explicit overlay must restore the User route for old Identity dashboard code,
+# bound its resources, and replace the Prometheus configuration atomically.
+production_compose=(docker compose --env-file "${ROOT_DIR}/.env.production.example" \
+  -f "${ROOT_DIR}/docker-compose.prod.yml")
+legacy_user_compose=("${production_compose[@]}" \
+  -f "${ROOT_DIR}/deploy/compose/docker-compose.legacy-user-rollback.yml")
+if "${production_compose[@]}" config --services | grep -qx 'dc-user'; then
+  echo "Default production must not start rollback-only dc-user" >&2
+  exit 1
+fi
+if grep -q 'dc-user:8102' "${ROOT_DIR}/deploy/prometheus/prometheus.prod.yml"; then
+  echo "Default production Prometheus must not scrape an absent dc-user" >&2
+  exit 1
+fi
+"${legacy_user_compose[@]}" config --format json | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+services = data["services"]
+assert "dc-user" in services
+for owner in ("dc-identity", "dc-gateway", "dc-content-aggregate", "dc-admin"):
+    assert services[owner]["environment"]["DC_USER_URI"] == "http://dc-user:8102", owner
+    assert services[owner]["depends_on"]["dc-user"]["condition"] == "service_healthy", owner
+user = services["dc-user"]
+assert int(user["mem_limit"]) == 512 * 1024 * 1024
+assert user["healthcheck"]["test"][-1] == "http://localhost:8102/actuator/health/readiness"
+mounts = [v for v in services["prometheus"]["volumes"] if v["target"] == "/etc/prometheus/prometheus.yml"]
+assert len(mounts) == 1
+assert mounts[0]["source"].replace("\\", "/").endswith("/deploy/prometheus/prometheus.legacy-user-rollback.yml")
+'
+grep -Fq 'labels: io.github.devcircle.release-class=${{ matrix.release_class }}' \
+  "${ROOT_DIR}/.github/workflows/ci.yml"
+grep -Fq 'docker-compose.legacy-user-rollback.yml' "${ROOT_DIR}/.github/workflows/ci.yml"
 
 echo "Docker preflight tests passed"
