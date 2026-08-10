@@ -6,6 +6,11 @@ spring:
     name: dc-gateway
   lifecycle:
     timeout-per-shutdown-phase: 30s
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2s
   cloud:
     nacos:
       discovery:

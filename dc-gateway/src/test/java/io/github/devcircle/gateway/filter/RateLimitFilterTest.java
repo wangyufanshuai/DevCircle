@@ -7,12 +7,17 @@ import org.springframework.mock.web.server.MockServerWebExchange;
 import reactor.core.publisher.Mono;
 
 import java.net.InetSocketAddress;
+import java.time.Duration;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class RateLimitFilterTest {
     private static final InetSocketAddress INTERNAL_PROXY = new InetSocketAddress("172.18.0.9", 8080);
-    private final RateLimitFilter filter = new RateLimitFilter();
+    private final SharedFakeStore sharedStore = new SharedFakeStore();
+    private final RateLimitFilter filter = new RateLimitFilter(sharedStore);
 
     @Test
     void trustedProxyClientsReceiveIndependentAuthenticationBudgets() {
@@ -44,6 +49,32 @@ class RateLimitFilterTest {
         assertLimited(authRequest(INTERNAL_PROXY, "still-not-an-ip"));
     }
 
+    @Test
+    void separateFilterInstancesShareTheSameCounterStore() {
+        RateLimitFilter second = new RateLimitFilter(sharedStore);
+        for (int request = 0; request < 19; request++) {
+            assertAllowed(authRequest(INTERNAL_PROXY, "203.0.113.9"));
+        }
+        assertAllowedWith(second, authRequest(INTERNAL_PROXY, "203.0.113.9"));
+        assertLimitedWith(second, authRequest(INTERNAL_PROXY, "203.0.113.9"));
+    }
+
+    @Test
+    void storeFailureFailsClosedWithoutCallingDownstream() {
+        RateLimitFilter unavailable = new RateLimitFilter((key, expiry) -> Mono.error(new IllegalStateException("redis down")));
+        var exchange = authRequest(INTERNAL_PROXY, "203.0.113.10");
+        AtomicInteger downstreamCalls = new AtomicInteger();
+
+        unavailable.filter(exchange, ignored -> {
+            downstreamCalls.incrementAndGet();
+            return Mono.empty();
+        }).block();
+
+        assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
+        assertThat(exchange.getResponse().getBodyAsString().block()).contains("RATE_LIMIT_DEPENDENCY_UNAVAILABLE");
+        assertThat(downstreamCalls).hasValue(0);
+    }
+
     private MockServerWebExchange authRequest(InetSocketAddress remote, String forwardedFor) {
         return MockServerWebExchange.from(MockServerHttpRequest.post("/api/auth/login")
                 .remoteAddress(remote)
@@ -52,15 +83,32 @@ class RateLimitFilterTest {
     }
 
     private void assertAllowed(MockServerWebExchange exchange) {
-        filter.filter(exchange, ignored -> Mono.empty()).block();
+        assertAllowedWith(filter, exchange);
+    }
+
+    private void assertAllowedWith(RateLimitFilter target, MockServerWebExchange exchange) {
+        target.filter(exchange, ignored -> Mono.empty()).block();
         assertThat(exchange.getResponse().getStatusCode()).isNull();
         assertThat(exchange.getResponse().getHeaders().getFirst("X-RateLimit-Remaining")).isNotNull();
     }
 
     private void assertLimited(MockServerWebExchange exchange) {
-        filter.filter(exchange, ignored -> Mono.empty()).block();
+        assertLimitedWith(filter, exchange);
+    }
+
+    private void assertLimitedWith(RateLimitFilter target, MockServerWebExchange exchange) {
+        target.filter(exchange, ignored -> Mono.empty()).block();
         assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
-        assertThat(exchange.getResponse().getHeaders().getFirst("Retry-After")).isEqualTo("60");
+        assertThat(exchange.getResponse().getHeaders().getFirst("Retry-After")).isNotBlank();
         assertThat(exchange.getResponse().getBodyAsString().block()).contains("RATE_LIMITED");
+    }
+
+    private static final class SharedFakeStore implements RateLimitStore {
+        private final Map<String, AtomicInteger> counts = new ConcurrentHashMap<>();
+
+        @Override
+        public Mono<Integer> increment(String key, Duration expiry) {
+            return Mono.just(counts.computeIfAbsent(key, ignored -> new AtomicInteger()).incrementAndGet());
+        }
     }
 }

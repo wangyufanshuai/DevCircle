@@ -1,6 +1,7 @@
 package io.github.devcircle.gateway.filter;
 
 import io.netty.util.NetUtil;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
@@ -11,35 +12,56 @@ import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 import java.net.InetAddress;
+import java.time.Duration;
 import java.time.Instant;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 @Component
 class RateLimitFilter implements GlobalFilter, Ordered {
-    private final Map<String, Window> windows = new ConcurrentHashMap<>();
+    private static final String KEY_PREFIX = "devcircle:gateway:rate-limit:v1:";
+    private final RateLimitStore store;
+
+    @Autowired
+    RateLimitFilter(RateLimitStore store) {
+        this.store = store;
+    }
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
-        long minute = Instant.now().getEpochSecond() / 60;
-        String client = clientIdentity(exchange);
+        Instant now = Instant.now();
+        long minute = now.getEpochSecond() / 60;
+        String bucket = bucket(exchange);
+        int limit = limit(bucket);
+        String key = KEY_PREFIX + clientIdentity(exchange) + ':' + bucket + ':' + minute;
+        Duration expiry = Duration.ofSeconds(Math.max(1, 60 - (now.getEpochSecond() % 60)));
+
+        Mono<Integer> count = store.increment(key, expiry)
+                .onErrorMap(error -> new RateLimitStoreUnavailableException(error));
+        return count.flatMap(used -> {
+            exchange.getResponse().getHeaders().set("X-RateLimit-Limit", String.valueOf(limit));
+            exchange.getResponse().getHeaders().set("X-RateLimit-Remaining", String.valueOf(Math.max(0, limit - used)));
+            if (used > limit) {
+                exchange.getResponse().getHeaders().set("Retry-After", String.valueOf(expiry.toSeconds()));
+                return GatewayResponses.error(exchange, HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED",
+                        "请求过于频繁，请稍后再试");
+            }
+            return chain.filter(exchange);
+        }).onErrorResume(RateLimitStoreUnavailableException.class,
+                ignored -> GatewayResponses.error(exchange, HttpStatus.SERVICE_UNAVAILABLE,
+                        "RATE_LIMIT_DEPENDENCY_UNAVAILABLE", "服务暂时不可用，请稍后重试"));
+    }
+
+    private String bucket(ServerWebExchange exchange) {
         String path = exchange.getRequest().getPath().value();
-        int limit = path.startsWith("/api/auth/") ? 20 : isWrite(exchange) ? 60 : 240;
-        String key = client + ':' + (path.startsWith("/api/auth/") ? "auth" : isWrite(exchange) ? "write" : "read");
-        Window window = windows.compute(key, (ignored, current) -> current == null || current.minute() != minute
-                ? new Window(minute, new AtomicInteger()) : current);
-        int used = window.requests().incrementAndGet();
-        exchange.getResponse().getHeaders().set("X-RateLimit-Limit", String.valueOf(limit));
-        exchange.getResponse().getHeaders().set("X-RateLimit-Remaining", String.valueOf(Math.max(0, limit - used)));
-        if (used > limit) {
-            exchange.getResponse().getHeaders().set("Retry-After", "60");
-            return GatewayResponses.error(exchange, HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED", "请求过于频繁，请稍后再试");
-        }
-        if (windows.size() > 10_000) {
-            windows.entrySet().removeIf(entry -> entry.getValue().minute() < minute - 2);
-        }
-        return chain.filter(exchange);
+        if (path.startsWith("/api/auth/")) return "auth";
+        return isWrite(exchange) ? "write" : "read";
+    }
+
+    private int limit(String bucket) {
+        return switch (bucket) {
+            case "auth" -> 20;
+            case "write" -> 60;
+            default -> 240;
+        };
     }
 
     private String clientIdentity(ServerWebExchange exchange) {
@@ -69,6 +91,9 @@ class RateLimitFilter implements GlobalFilter, Ordered {
         return -95;
     }
 
-    private record Window(long minute, AtomicInteger requests) {
+    private static final class RateLimitStoreUnavailableException extends RuntimeException {
+        private RateLimitStoreUnavailableException(Throwable cause) {
+            super(cause);
+        }
     }
 }
