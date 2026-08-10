@@ -19,6 +19,11 @@ services:
       DC_RECOMMEND_URI: http://dc-recommend:8107
   identity:
     port: 8201
+    env:
+      IDENTITY_AUTH_DB_POOL_MAX_SIZE: "4"
+      IDENTITY_AUTH_DB_POOL_MIN_IDLE: "1"
+      IDENTITY_USER_DB_POOL_MAX_SIZE: "4"
+      IDENTITY_USER_DB_POOL_MIN_IDLE: "1"
   content-aggregate: { port: 8202 }
   discovery: { port: 8203 }
   user: { port: 8102 }

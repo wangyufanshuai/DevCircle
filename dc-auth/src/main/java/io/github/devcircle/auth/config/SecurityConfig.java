@@ -8,8 +8,10 @@ import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -23,16 +25,36 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.util.matcher.RequestMatcher;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.slf4j.MDC;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Enumeration;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Configuration
 public class SecurityConfig {
+    private static final RequestMatcher PUBLIC_USER_BATCH_READ =
+            PathPatternRequestMatcher.pathPattern(HttpMethod.GET, "/api/users/batch");
+    private static final RequestMatcher PUBLIC_USER_BATCH_READ_TRAILING_SLASH =
+            PathPatternRequestMatcher.pathPattern(HttpMethod.GET, "/api/users/batch/");
+    private static final RequestMatcher PUBLIC_USER_PROFILE_READ =
+            PathPatternRequestMatcher.pathPattern(HttpMethod.GET, "/api/users/{id:[0-9]+}");
+    private static final RequestMatcher PUBLIC_USER_PROFILE_READ_TRAILING_SLASH =
+            PathPatternRequestMatcher.pathPattern(HttpMethod.GET, "/api/users/{id:[0-9]+}/");
+    private static final RequestMatcher PUBLIC_USER_READ = request ->
+            PUBLIC_USER_BATCH_READ.matches(request)
+                    || PUBLIC_USER_BATCH_READ_TRAILING_SLASH.matches(request)
+                    || PUBLIC_USER_PROFILE_READ.matches(request)
+                    || PUBLIC_USER_PROFILE_READ_TRAILING_SLASH.matches(request);
+
     @Bean
     PasswordEncoder passwordEncoder() {
         return Argon2PasswordEncoder.defaultsForSpringSecurity_v5_8();
@@ -79,7 +101,10 @@ public class SecurityConfig {
                 .authorizeHttpRequests(registry -> registry
                         .requestMatchers("/api/auth/**", "/actuator/health", "/actuator/health/**",
                                 "/actuator/prometheus", "/internal/ops/outbox/status",
+                                "/internal/ops/identity/outbox/status",
                                 "/v3/api-docs/**", "/swagger-ui/**").permitAll()
+                        .requestMatchers(PUBLIC_USER_READ).permitAll()
+                        .requestMatchers("/api/users/**").authenticated()
                         .requestMatchers("/api/me/**").authenticated()
                         .anyRequest().denyAll())
                 .addFilterBefore(bearerTokenAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
@@ -105,6 +130,8 @@ public class SecurityConfig {
                     UsernamePasswordAuthenticationToken authentication =
                             UsernamePasswordAuthenticationToken.authenticated(claims.getSubject(), null, authorities);
                     SecurityContextHolder.getContext().setAuthentication(authentication);
+                    filterChain.doFilter(new AuthenticatedUserRequest(request, claims.getSubject()), response);
+                    return;
                 } catch (RuntimeException ignored) {
                     SecurityContextHolder.clearContext();
                 }
@@ -119,6 +146,48 @@ public class SecurityConfig {
                     .filter(role -> !role.isBlank())
                     .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
                     .toList();
+        }
+
+        /**
+         * Treats the verified access-token subject as the only caller identity. This mirrors the
+         * Gateway's strip-and-replace behavior and prevents direct aggregate requests from
+         * supplying a different X-User-Id while leaving the standalone dc-user rollback path
+         * unchanged.
+         */
+        private static final class AuthenticatedUserRequest extends HttpServletRequestWrapper {
+            private static final String USER_ID_HEADER = "X-User-Id";
+            private final String userId;
+
+            private AuthenticatedUserRequest(HttpServletRequest request, String userId) {
+                super(request);
+                this.userId = userId;
+            }
+
+            @Override
+            public String getHeader(String name) {
+                return USER_ID_HEADER.equalsIgnoreCase(name) ? userId : super.getHeader(name);
+            }
+
+            @Override
+            public Enumeration<String> getHeaders(String name) {
+                return USER_ID_HEADER.equalsIgnoreCase(name)
+                        ? Collections.enumeration(List.of(userId))
+                        : super.getHeaders(name);
+            }
+
+            @Override
+            public Enumeration<String> getHeaderNames() {
+                Set<String> names = new LinkedHashSet<>();
+                Enumeration<String> existing = super.getHeaderNames();
+                while (existing != null && existing.hasMoreElements()) {
+                    String name = existing.nextElement();
+                    if (!USER_ID_HEADER.equalsIgnoreCase(name)) {
+                        names.add(name);
+                    }
+                }
+                names.add(USER_ID_HEADER);
+                return Collections.enumeration(names);
+            }
         }
     }
 }

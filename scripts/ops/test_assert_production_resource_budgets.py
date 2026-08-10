@@ -110,6 +110,10 @@ def valid_compose() -> dict:
         for name in ("dc-identity", "dc-content-aggregate", "dc-discovery", "dc-recommend")
     }
     services["dc-admin"]["environment"]["DC_AUTH_URI"] = "http://dc-identity:8201"
+    services["dc-identity"]["environment"].update({
+        "IDENTITY_AUTH_DB_POOL_MAX_SIZE": "6",
+        "IDENTITY_USER_DB_POOL_MAX_SIZE": "6",
+    })
     services["dc-content-aggregate"]["environment"].update({
         "DC_USER_URI": "http://dc-user:8102",
         "DC_INTERACTION_URI": "http://dc-interaction:8105",
@@ -135,6 +139,21 @@ class ProductionResourceBudgetTest(unittest.TestCase):
         del self.compose["services"]["dc-identity"]["environment"]["DEVCIRCLE_INTERNAL_OPS_KEY"]
 
         with self.assertRaisesRegex(ValueError, "DEVCIRCLE_INTERNAL_OPS_KEY"):
+            budgets.validate(self.compose)
+
+    def test_rejects_missing_or_excessive_identity_logical_pool_budgets(self) -> None:
+        del self.compose["services"]["dc-identity"]["environment"][
+            "IDENTITY_USER_DB_POOL_MAX_SIZE"
+        ]
+        with self.assertRaisesRegex(ValueError, "User pool budget"):
+            budgets.validate(self.compose)
+
+        self.compose = valid_compose()
+        self.compose["services"]["dc-identity"]["environment"].update({
+            "IDENTITY_AUTH_DB_POOL_MAX_SIZE": "9",
+            "IDENTITY_USER_DB_POOL_MAX_SIZE": "9",
+        })
+        with self.assertRaisesRegex(ValueError, "aggregate Auth and User pool ceiling"):
             budgets.validate(self.compose)
 
     def test_rejects_a_missing_memory_limit(self) -> None:
@@ -321,6 +340,21 @@ class HelmTopologyContractTest(unittest.TestCase):
         local_origin["publicOrigin"] = "http://localhost:8080"
         with self.assertRaisesRegex(ValueError, "public HTTPS origin"):
             budgets.validate_helm_topology(self.values, local_origin, self.template)
+
+    def test_rejects_invalid_identity_pool_budget_or_replica_ceiling(self) -> None:
+        missing = copy.deepcopy(self.production)
+        missing["services"]["identity"]["env"]["IDENTITY_USER_DB_POOL_MAX_SIZE"] = "0"
+        with self.assertRaisesRegex(ValueError, "User pool budget"):
+            budgets.validate_helm_topology(self.values, missing, self.template)
+
+        excessive = copy.deepcopy(self.production)
+        excessive["services"]["identity"]["env"].update({
+            "IDENTITY_AUTH_DB_POOL_MAX_SIZE": "10",
+            "IDENTITY_USER_DB_POOL_MAX_SIZE": "10",
+        })
+        excessive["replicaCount"] = "3"
+        with self.assertRaisesRegex(ValueError, "aggregate DB pool ceiling"):
+            budgets.validate_helm_topology(self.values, excessive, self.template)
 
     def test_rejects_internal_or_mismatched_browser_object_storage_endpoints(self) -> None:
         internal = copy.deepcopy(self.production)

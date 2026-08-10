@@ -340,6 +340,22 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
             fail(f"Helm identity {key} must derive from the public HTTPS origin")
     if str(identity_environment.get("GITHUB_OAUTH_ENABLED", "")).lower() != "true":
         fail("Helm production identity must explicitly enable GitHub OAuth")
+    identity_pool_sizes = {}
+    for domain, key in {
+        "Auth": "IDENTITY_AUTH_DB_POOL_MAX_SIZE",
+        "User": "IDENTITY_USER_DB_POOL_MAX_SIZE",
+    }.items():
+        try:
+            identity_pool_sizes[domain] = int(identity_environment.get(key, "0"))
+        except (TypeError, ValueError):
+            fail(f"Helm identity {domain} pool budget must be an integer")
+        if not 1 <= identity_pool_sizes[domain] <= 10:
+            fail(f"Helm identity {domain} pool budget must be between 1 and 10")
+    replica_count = int(values.get("replicaCount", 0))
+    if replica_count < 1:
+        fail("Helm replicaCount must be positive")
+    if sum(identity_pool_sizes.values()) * replica_count > 40:
+        fail("Helm identity aggregate DB pool ceiling must not exceed 40 connections")
     identity_secret_refs = projected_secret_refs.get("identity", {})
     for key in ("DEVCIRCLE_INTERNAL_OPS_KEY", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"):
         if identity_secret_refs.get(key) != key:
@@ -381,6 +397,8 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
         "production identity AUTH_FRONTEND_CALLBACK_URI must derive from publicOrigin",
         "production identity GITHUB_CALLBACK_URI must derive from publicOrigin",
         "production identity must project GitHub OAuth credentials from a Secret",
+        "production identity Auth and User pool budgets must both be positive",
+        "production identity aggregate DB pool ceiling must not exceed 40 connections",
         "production services must project DEVCIRCLE_INTERNAL_OPS_KEY from a Secret",
         "production S3_PRESIGN_ENDPOINT must match publicOrigin",
         "production S3_PUBLIC_BASE_URL must derive from publicOrigin",
@@ -451,6 +469,19 @@ def validate(data: dict) -> tuple[int, int]:
     identity_environment = services["dc-identity"].get("environment") or {}
     if "DC_AUTH_URI" in identity_environment:
         fail("dc-identity must embed authentication instead of proxying DC_AUTH_URI")
+    identity_pool_sizes = {}
+    for domain, key in {
+        "Auth": "IDENTITY_AUTH_DB_POOL_MAX_SIZE",
+        "User": "IDENTITY_USER_DB_POOL_MAX_SIZE",
+    }.items():
+        try:
+            identity_pool_sizes[domain] = int(identity_environment.get(key, "0"))
+        except (TypeError, ValueError):
+            fail(f"dc-identity {domain} pool budget must be an integer")
+        if not 1 <= identity_pool_sizes[domain] <= 10:
+            fail(f"dc-identity {domain} pool budget must be between 1 and 10")
+    if sum(identity_pool_sizes.values()) > 16:
+        fail("dc-identity aggregate Auth and User pool ceiling must not exceed 16 connections")
     admin_environment = services["dc-admin"].get("environment") or {}
     if admin_environment.get("DC_AUTH_URI") != "http://dc-identity:8201":
         fail("dc-admin must read the logical dc-auth Outbox source from dc-identity")

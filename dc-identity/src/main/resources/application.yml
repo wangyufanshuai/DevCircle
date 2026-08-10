@@ -8,14 +8,24 @@ spring:
     timeout-per-shutdown-phase: 30s
   main:
     web-application-type: servlet
-  datasource:
-    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/dc_auth?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
-    username: ${MYSQL_USER:devcircle}
-    password: ${MYSQL_PASSWORD:devcircle}
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+    listener:
+      ack-mode: record
   flyway:
     enabled: true
+    locations: classpath:db/migration
 management:
   endpoints:
     web:
@@ -27,6 +37,14 @@ management:
         enabled: true
 devcircle:
   production: ${DEVCIRCLE_PRODUCTION_MODE:false}
+  identity:
+    auth-datasource:
+      url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${AUTH_MYSQL_DATABASE:dc_auth}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+      username: ${MYSQL_USER:devcircle}
+      password: ${MYSQL_PASSWORD:devcircle}
+      maximum-pool-size: ${IDENTITY_AUTH_DB_POOL_MAX_SIZE:6}
+      minimum-idle: ${IDENTITY_AUTH_DB_POOL_MIN_IDLE:1}
+      connection-timeout: ${IDENTITY_AUTH_DB_POOL_CONNECTION_TIMEOUT_MS:3000}
   public-origin: ${PUBLIC_ORIGIN:http://localhost:5501}
   jwt:
     secret: ${DEVCIRCLE_JWT_SECRET:local-development-secret-must-be-at-least-forty-eight-characters-long}
@@ -41,6 +59,23 @@ devcircle:
   outbox:
     # Authentication events and operations keep their established logical producer identity.
     service-name: dc-auth
+  user:
+    auth-schema: ${AUTH_MYSQL_DATABASE:dc_auth}
+    profile-backfill:
+      enabled: ${USER_PROFILE_BACKFILL_ENABLED:true}
+  user-runtime:
+    flyway-enabled: ${USER_FLYWAY_ENABLED:true}
+    flyway-locations: classpath:db/user-migration
+    outbox:
+      # User events retain their domain producer identity after deployment aggregation.
+      service-name: dc-user
+    datasource:
+      url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${USER_MYSQL_DATABASE:dc_user}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+      username: ${MYSQL_USER:devcircle}
+      password: ${MYSQL_PASSWORD:devcircle}
+      maximum-pool-size: ${IDENTITY_USER_DB_POOL_MAX_SIZE:6}
+      minimum-idle: ${IDENTITY_USER_DB_POOL_MIN_IDLE:1}
+      connection-timeout: ${IDENTITY_USER_DB_POOL_CONNECTION_TIMEOUT_MS:3000}
   internal:
     user-uri: ${DC_USER_URI:http://localhost:8102}
     content-uri: ${DC_CONTENT_URI:http://localhost:8103}

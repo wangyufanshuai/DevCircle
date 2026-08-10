@@ -23,9 +23,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest(properties = {
-        "spring.datasource.url=jdbc:h2:mem:identity-context;MODE=MySQL;DB_CLOSE_DELAY=-1",
-        "spring.datasource.driver-class-name=org.h2.Driver",
+        "devcircle.identity.auth-datasource.url=jdbc:h2:mem:identity-context;MODE=MySQL;DB_CLOSE_DELAY=-1",
+        "devcircle.identity.auth-datasource.username=sa",
+        "devcircle.identity.auth-datasource.password=",
         "spring.flyway.enabled=false",
+        "devcircle.user-runtime.flyway-enabled=false",
+        "devcircle.user.profile-backfill.enabled=false",
         "devcircle.outbox.enabled=false",
         "spring.kafka.listener.auto-startup=false",
         "management.tracing.enabled=false"
@@ -42,9 +45,11 @@ class IdentityApplicationContextTest {
     private JwtService jwtService;
 
     @Test
-    void embedsAuthenticationComponentsWithoutLoadingTheLegacyApplicationOrGatewayRoutes() {
+    void embedsDomainComponentsWithoutLoadingLegacyApplicationsOrGatewayRoutes() {
         assertThat(context.getBean(AuthService.class)).isNotNull();
-        assertThat(context.getBean(OutboxStatusService.class)).isNotNull();
+        assertThat(context.getBeansOfType(OutboxStatusService.class))
+                .containsOnlyKeys("outboxStatusService");
+        assertThat(context.getBean(IdentityUserOutboxStatus.class)).isNotNull();
         assertThat(context.containsBean("authApplication")).isFalse();
         assertThat(Arrays.stream(context.getBeanDefinitionNames()))
                 .noneMatch(name -> name.toLowerCase().contains("routedefinition"));

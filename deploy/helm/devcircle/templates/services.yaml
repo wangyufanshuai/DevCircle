@@ -30,6 +30,14 @@
 {{- if ne (toString (index $identityEnv "GITHUB_OAUTH_ENABLED")) "true" }}
 {{- fail "production identity must explicitly enable GitHub OAuth" }}
 {{- end }}
+{{- $authPool := int (required "production identity Auth pool budget is required" (index $identityEnv "IDENTITY_AUTH_DB_POOL_MAX_SIZE")) }}
+{{- $userPool := int (required "production identity User pool budget is required" (index $identityEnv "IDENTITY_USER_DB_POOL_MAX_SIZE")) }}
+{{- if or (lt $authPool 1) (lt $userPool 1) }}
+{{- fail "production identity Auth and User pool budgets must both be positive" }}
+{{- end }}
+{{- if gt (mul (add $authPool $userPool) (.Values.replicaCount | int)) 40 }}
+{{- fail "production identity aggregate DB pool ceiling must not exceed 40 connections" }}
+{{- end }}
 {{- $globalSecretRefs := (.Values.secretEnvRefs | default dict) }}
 {{- if ne (toString (index $globalSecretRefs "DEVCIRCLE_INTERNAL_OPS_KEY")) "DEVCIRCLE_INTERNAL_OPS_KEY" }}
 {{- fail "production services must project DEVCIRCLE_INTERNAL_OPS_KEY from a Secret" }}

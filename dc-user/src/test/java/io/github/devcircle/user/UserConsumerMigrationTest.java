@@ -32,7 +32,7 @@ class UserConsumerMigrationTest {
 
         try (Connection connection = dataSource.getConnection()) {
             ScriptUtils.executeSqlScript(connection,
-                    new ClassPathResource("db/migration/V6__bind_user_consumer_payloads.sql"));
+                    new ClassPathResource("db/user-migration/V6__bind_user_consumer_payloads.sql"));
         }
 
         jdbcClient.sql("""

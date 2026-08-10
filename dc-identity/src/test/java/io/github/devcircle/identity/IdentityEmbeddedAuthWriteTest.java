@@ -29,9 +29,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest(properties = {
-        "spring.datasource.url=jdbc:h2:mem:identity-embedded-auth;MODE=MySQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;DB_CLOSE_DELAY=-1",
-        "spring.datasource.driver-class-name=org.h2.Driver",
+        "devcircle.identity.auth-datasource.url=jdbc:h2:mem:identity-embedded-auth;MODE=MySQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;DB_CLOSE_DELAY=-1",
+        "devcircle.identity.auth-datasource.username=sa",
+        "devcircle.identity.auth-datasource.password=",
         "spring.flyway.enabled=true",
+        "devcircle.user-runtime.flyway-enabled=false",
+        "devcircle.user.profile-backfill.enabled=false",
         "devcircle.outbox.enabled=false",
         "spring.kafka.listener.auto-startup=false",
         "management.tracing.enabled=false"
