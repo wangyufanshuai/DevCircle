@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 MIB = 1024 * 1024
 GIB = 1024 * MIB
+IDENTITY_DB_CONNECTIONS_PER_REPLICA = 16
 APP_SERVICES = {
     "dc-admin", "dc-comment", "dc-content-aggregate",
     "dc-discovery", "dc-gateway", "dc-identity", "dc-interaction",
@@ -352,6 +353,7 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
     for domain, key in {
         "Auth": "IDENTITY_AUTH_DB_POOL_MAX_SIZE",
         "User": "IDENTITY_USER_DB_POOL_MAX_SIZE",
+        "Interaction": "IDENTITY_INTERACTION_DB_POOL_MAX_SIZE",
     }.items():
         try:
             identity_pool_sizes[domain] = int(identity_environment.get(key, "0"))
@@ -362,8 +364,19 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
     replica_count = int(values.get("replicaCount", 0))
     if replica_count < 1:
         fail("Helm replicaCount must be positive")
-    if sum(identity_pool_sizes.values()) * replica_count > 40:
-        fail("Helm identity aggregate DB pool ceiling must not exceed 40 connections")
+    try:
+        identity_connection_budget = int(values.get("identityDatabaseConnectionBudget", 0))
+    except (TypeError, ValueError):
+        fail("Helm identityDatabaseConnectionBudget must be an integer")
+    maximum_calculable_budget = IDENTITY_DB_CONNECTIONS_PER_REPLICA * replica_count
+    if not 1 <= identity_connection_budget <= maximum_calculable_budget:
+        fail(
+            "Helm identityDatabaseConnectionBudget must be positive and must not exceed "
+            f"{IDENTITY_DB_CONNECTIONS_PER_REPLICA} connections per replica"
+        )
+    required_identity_connections = sum(identity_pool_sizes.values()) * replica_count
+    if required_identity_connections > identity_connection_budget:
+        fail("Helm identity aggregate DB pools must fit identityDatabaseConnectionBudget")
     identity_secret_refs = projected_secret_refs.get("identity", {})
     for key in ("DEVCIRCLE_INTERNAL_OPS_KEY", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"):
         if identity_secret_refs.get(key) != key:
@@ -413,8 +426,11 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
         "production identity AUTH_FRONTEND_CALLBACK_URI must derive from publicOrigin",
         "production identity GITHUB_CALLBACK_URI must derive from publicOrigin",
         "production identity must project GitHub OAuth credentials from a Secret",
-        "production identity Auth and User pool budgets must both be positive",
-        "production identity aggregate DB pool ceiling must not exceed 40 connections",
+        "production identity Auth, User and Interaction pool budgets must all be positive",
+        "production identity database connection budget is required",
+        "production identity database connection budget must be positive",
+        "production identity database connection budget must not exceed 16 connections per replica",
+        "production identity aggregate DB pools must fit identityDatabaseConnectionBudget",
         "production services must project DEVCIRCLE_INTERNAL_OPS_KEY from a Secret",
         "production S3_PRESIGN_ENDPOINT must match publicOrigin",
         "production S3_PUBLIC_BASE_URL must derive from publicOrigin",
@@ -493,6 +509,7 @@ def validate(data: dict) -> tuple[int, int]:
     for domain, key in {
         "Auth": "IDENTITY_AUTH_DB_POOL_MAX_SIZE",
         "User": "IDENTITY_USER_DB_POOL_MAX_SIZE",
+        "Interaction": "IDENTITY_INTERACTION_DB_POOL_MAX_SIZE",
     }.items():
         try:
             identity_pool_sizes[domain] = int(identity_environment.get(key, "0"))
@@ -501,7 +518,7 @@ def validate(data: dict) -> tuple[int, int]:
         if not 1 <= identity_pool_sizes[domain] <= 10:
             fail(f"dc-identity {domain} pool budget must be between 1 and 10")
     if sum(identity_pool_sizes.values()) > 16:
-        fail("dc-identity aggregate Auth and User pool ceiling must not exceed 16 connections")
+        fail("dc-identity aggregate Auth, User and Interaction pool ceiling must not exceed 16 connections")
     admin_environment = services["dc-admin"].get("environment") or {}
     if admin_environment.get("DC_AUTH_URI") != "http://dc-identity:8201":
         fail("dc-admin must read the logical dc-auth Outbox source from dc-identity")

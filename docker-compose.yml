@@ -197,7 +197,7 @@ services:
     profiles: ["app", "demo"]
     build:
       <<: *service-build
-      args: { JAR_FILE: dc-interaction/target/dc-interaction-0.1.0-SNAPSHOT.jar }
+      args: { JAR_FILE: dc-interaction/target/dc-interaction-0.1.0-SNAPSHOT-exec.jar }
     environment: *service-env
     ports: ["8105:8105"]
     depends_on:

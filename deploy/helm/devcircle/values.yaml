@@ -6,6 +6,10 @@ image:
 
 replicaCount: 1
 
+# Explicit aggregate ceiling for Identity's Auth/User/Interaction Hikari pools.
+# The production override accounts for all replicas on the target MySQL host.
+identityDatabaseConnectionBudget: 12
+
 services:
   gateway:
     port: 8080
@@ -25,6 +29,10 @@ services:
       IDENTITY_AUTH_DB_POOL_MIN_IDLE: "1"
       IDENTITY_USER_DB_POOL_MAX_SIZE: "4"
       IDENTITY_USER_DB_POOL_MIN_IDLE: "1"
+      IDENTITY_INTERACTION_DB_POOL_MAX_SIZE: "4"
+      IDENTITY_INTERACTION_DB_POOL_MIN_IDLE: "1"
+      INTERACTION_FLYWAY_ENABLED: "false"
+      INTERACTION_RUNTIME_OUTBOX_ENABLED: "false"
   content-aggregate:
     port: 8202
     env: { DC_USER_URI: http://dc-identity:8201 }

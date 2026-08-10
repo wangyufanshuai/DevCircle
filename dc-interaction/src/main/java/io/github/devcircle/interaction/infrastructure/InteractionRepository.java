@@ -7,6 +7,7 @@ import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.event.EventEnvelope;
 import io.github.devcircle.common.event.EventTopics;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,12 +18,13 @@ public class InteractionRepository {
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
 
-    public InteractionRepository(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+    public InteractionRepository(@Qualifier("interactionJdbcClient") JdbcClient jdbcClient,
+                                 ObjectMapper objectMapper) {
         this.jdbcClient = jdbcClient;
         this.objectMapper = objectMapper;
     }
 
-    @Transactional
+    @Transactional(transactionManager = "interactionTransactionManager")
     public InteractionWriteResult insertLike(Long userId, Long postId, long baselineLikeCount,
                                              long receiverId, String idempotencyKey) {
         requireValidReceiver(receiverId);
@@ -48,7 +50,7 @@ public class InteractionRepository {
         return new InteractionWriteResult(rows > 0, false);
     }
 
-    @Transactional
+    @Transactional(transactionManager = "interactionTransactionManager")
     public InteractionWriteResult insertFavorite(Long userId, Long postId, long baselineLikeCount,
                                                  long receiverId, String idempotencyKey) {
         requireValidReceiver(receiverId);
@@ -76,7 +78,7 @@ public class InteractionRepository {
         return new InteractionWriteResult(rows > 0, false);
     }
 
-    @Transactional
+    @Transactional(transactionManager = "interactionTransactionManager")
     public InteractionWriteResult deleteLike(Long userId, Long postId, long baselineLikeCount,
                                              long receiverId, String idempotencyKey) {
         requireValidReceiver(receiverId);
@@ -100,7 +102,7 @@ public class InteractionRepository {
         return new InteractionWriteResult(rows > 0, false);
     }
 
-    @Transactional
+    @Transactional(transactionManager = "interactionTransactionManager")
     public InteractionWriteResult deleteFavorite(Long userId, Long postId, long baselineLikeCount,
                                                  long receiverId, String idempotencyKey) {
         requireValidReceiver(receiverId);

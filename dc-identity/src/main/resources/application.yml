@@ -26,6 +26,10 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
 management:
   endpoints:
     web:
@@ -78,6 +82,19 @@ devcircle:
       maximum-pool-size: ${IDENTITY_USER_DB_POOL_MAX_SIZE:6}
       minimum-idle: ${IDENTITY_USER_DB_POOL_MIN_IDLE:1}
       connection-timeout: ${IDENTITY_USER_DB_POOL_CONNECTION_TIMEOUT_MS:3000}
+  interaction-runtime:
+    flyway-enabled: ${INTERACTION_FLYWAY_ENABLED:true}
+    flyway-locations: classpath:db/interaction-migration
+    outbox:
+      enabled: ${INTERACTION_RUNTIME_OUTBOX_ENABLED:${devcircle.outbox.enabled:true}}
+      service-name: dc-interaction
+    datasource:
+      url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${INTERACTION_MYSQL_DATABASE:dc_interaction}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+      username: ${MYSQL_USER:devcircle}
+      password: ${MYSQL_PASSWORD:devcircle}
+      maximum-pool-size: ${IDENTITY_INTERACTION_DB_POOL_MAX_SIZE:5}
+      minimum-idle: ${IDENTITY_INTERACTION_DB_POOL_MIN_IDLE:1}
+      connection-timeout: ${IDENTITY_INTERACTION_DB_POOL_CONNECTION_TIMEOUT_MS:3000}
   internal:
     content-uri: ${DC_CONTENT_URI:http://localhost:8103}
     interaction-uri: ${DC_INTERACTION_URI:http://localhost:8105}

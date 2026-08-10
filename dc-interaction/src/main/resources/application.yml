@@ -10,6 +10,8 @@ spring:
     url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/dc_interaction?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
     username: ${MYSQL_USER:devcircle}
     password: ${MYSQL_PASSWORD:devcircle}
+  flyway:
+    locations: classpath:db/interaction-migration
   data:
     redis:
       host: ${REDIS_HOST:localhost}

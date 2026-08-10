@@ -5,6 +5,8 @@ import io.github.devcircle.messaging.config.ReliableMessagingConfig;
 import io.github.devcircle.messaging.config.KafkaConsumerReliabilityConfig;
 import io.github.devcircle.user.infrastructure.LegacyProfileBackfillRepository;
 import io.github.devcircle.user.infrastructure.UserGraphRepository;
+import io.github.devcircle.interaction.infrastructure.HttpPostPublicationGateway;
+import io.github.devcircle.interaction.infrastructure.InteractionRepository;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Import;
@@ -16,7 +18,9 @@ import org.springframework.kafka.annotation.EnableKafka;
         "io.github.devcircle.auth.application",
         "io.github.devcircle.auth.config",
         "io.github.devcircle.user.api",
-        "io.github.devcircle.user.application"
+        "io.github.devcircle.user.application",
+        "io.github.devcircle.interaction.api",
+        "io.github.devcircle.interaction.application"
 })
 @EnableKafka
 @Import({
@@ -25,7 +29,9 @@ import org.springframework.kafka.annotation.EnableKafka;
         KafkaConsumerReliabilityConfig.class,
         IdentityDataSourceConfig.class,
         UserGraphRepository.class,
-        LegacyProfileBackfillRepository.class
+        LegacyProfileBackfillRepository.class,
+        InteractionRepository.class,
+        HttpPostPublicationGateway.class
 })
 public class IdentityApplication {
     public static void main(String[] args) {

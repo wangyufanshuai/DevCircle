@@ -60,6 +60,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "devcircle.user-runtime.datasource.minimum-idle=0",
         "devcircle.user-runtime.flyway-enabled=true",
         "devcircle.user-runtime.flyway-locations=classpath:db/identity-user-test-migration",
+        "devcircle.interaction-runtime.flyway-enabled=false",
+        "devcircle.interaction-runtime.datasource.url=jdbc:h2:mem:identity-user-interaction;MODE=MySQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;DB_CLOSE_DELAY=-1",
+        "devcircle.interaction-runtime.datasource.username=sa",
+        "devcircle.interaction-runtime.datasource.password=",
         "devcircle.user.profile-backfill.enabled=false",
         "devcircle.outbox.enabled=true",
         "devcircle.outbox.initial-delay-ms=3600000",
@@ -86,6 +90,10 @@ class IdentityEmbeddedUserRuntimeTest {
     @Autowired
     @Qualifier("userJdbcClient")
     private JdbcClient userJdbcClient;
+
+    @Autowired
+    @Qualifier("interactionJdbcClient")
+    private JdbcClient interactionJdbcClient;
 
     @Autowired
     private PlatformTransactionManager transactionManager;
@@ -131,8 +139,10 @@ class IdentityEmbeddedUserRuntimeTest {
     @BeforeEach
     void cleanUserState() {
         ensureOutboxTable();
+        ensureInteractionOutboxTable();
         jdbcClient.sql("DELETE FROM outbox_event").update();
         userJdbcClient.sql("DELETE FROM outbox_event").update();
+        interactionJdbcClient.sql("DELETE FROM outbox_event").update();
         userJdbcClient.sql("DELETE FROM consumer_dedup").update();
         userJdbcClient.sql("DELETE FROM user_idempotency").update();
         userJdbcClient.sql("DELETE FROM user_follow").update();
@@ -299,7 +309,8 @@ class IdentityEmbeddedUserRuntimeTest {
                         .header("X-Internal-Ops-Key", "local-development-internal-ops-key"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.auth.service").value("dc-auth"))
-                .andExpect(jsonPath("$.user.service").value("dc-user"));
+                .andExpect(jsonPath("$.user.service").value("dc-user"))
+                .andExpect(jsonPath("$.interaction.service").value("dc-interaction"));
         mockMvc.perform(get("/internal/ops/identity/outbox/auth/status")
                         .header("X-Internal-Ops-Key", "local-development-internal-ops-key"))
                 .andExpect(status().isOk())
@@ -358,6 +369,27 @@ class IdentityEmbeddedUserRuntimeTest {
 
     private void ensureOutboxTable() {
         userJdbcClient.sql("""
+                CREATE TABLE IF NOT EXISTS outbox_event (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    event_id CHAR(36) NOT NULL UNIQUE,
+                    topic VARCHAR(128) NOT NULL,
+                    aggregate_type VARCHAR(64) NOT NULL,
+                    aggregate_id VARCHAR(64) NOT NULL,
+                    payload JSON NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'NEW',
+                    attempts INT NOT NULL DEFAULT 0,
+                    next_attempt_at TIMESTAMP,
+                    locked_at TIMESTAMP,
+                    locked_by VARCHAR(64),
+                    last_error VARCHAR(1000),
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    published_at TIMESTAMP
+                )
+                """).update();
+    }
+
+    private void ensureInteractionOutboxTable() {
+        interactionJdbcClient.sql("""
                 CREATE TABLE IF NOT EXISTS outbox_event (
                     id BIGINT AUTO_INCREMENT PRIMARY KEY,
                     event_id CHAR(36) NOT NULL UNIQUE,

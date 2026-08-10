@@ -19,11 +19,12 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
 
-/** Owns the auth and user persistence resources while both schemas share one deployment. */
+/** Owns Auth, User and Interaction persistence while their schemas share one deployment. */
 @Configuration(proxyBeanMethods = false)
 class IdentityDataSourceConfig {
     static final String AUTH_MIGRATION_LOCATION = "classpath:db/migration";
     static final String USER_MIGRATION_LOCATION = "classpath:db/user-migration";
+    static final String INTERACTION_MIGRATION_LOCATION = "classpath:db/interaction-migration";
 
     @Bean("authDataSourceProperties")
     @ConfigurationProperties("devcircle.identity.auth-datasource")
@@ -34,6 +35,12 @@ class IdentityDataSourceConfig {
     @Bean("userDataSourceProperties")
     @ConfigurationProperties("devcircle.user-runtime.datasource")
     IdentityDataSourceProperties userDataSourceProperties() {
+        return new IdentityDataSourceProperties();
+    }
+
+    @Bean("interactionDataSourceProperties")
+    @ConfigurationProperties("devcircle.interaction-runtime.datasource")
+    IdentityDataSourceProperties interactionDataSourceProperties() {
         return new IdentityDataSourceProperties();
     }
 
@@ -50,6 +57,12 @@ class IdentityDataSourceConfig {
         return dataSource("identity-user", properties);
     }
 
+    @Bean(name = "interactionDataSource", destroyMethod = "close")
+    DataSource interactionDataSource(
+            @Qualifier("interactionDataSourceProperties") IdentityDataSourceProperties properties) {
+        return dataSource("identity-interaction", properties);
+    }
+
     @Bean
     @Primary
     JdbcClient jdbcClient(@Qualifier("dataSource") DataSource dataSource) {
@@ -61,6 +74,11 @@ class IdentityDataSourceConfig {
         return JdbcClient.create(dataSource);
     }
 
+    @Bean("interactionJdbcClient")
+    JdbcClient interactionJdbcClient(@Qualifier("interactionDataSource") DataSource dataSource) {
+        return JdbcClient.create(dataSource);
+    }
+
     @Bean
     @Primary
     PlatformTransactionManager transactionManager(@Qualifier("dataSource") DataSource dataSource) {
@@ -69,6 +87,12 @@ class IdentityDataSourceConfig {
 
     @Bean("userTransactionManager")
     PlatformTransactionManager userTransactionManager(@Qualifier("userDataSource") DataSource dataSource) {
+        return new DataSourceTransactionManager(dataSource);
+    }
+
+    @Bean("interactionTransactionManager")
+    PlatformTransactionManager interactionTransactionManager(
+            @Qualifier("interactionDataSource") DataSource dataSource) {
         return new DataSourceTransactionManager(dataSource);
     }
 
@@ -111,6 +135,29 @@ class IdentityDataSourceConfig {
     FlywayMigrationInitializer userFlywayInitializer(@Qualifier("userFlyway") Flyway userFlyway) {
         FlywayMigrationInitializer initializer = new FlywayMigrationInitializer(userFlyway);
         initializer.setOrder(1);
+        return initializer;
+    }
+
+    @Bean("interactionFlyway")
+    @ConditionalOnProperty(name = "devcircle.interaction-runtime.flyway-enabled",
+            havingValue = "true", matchIfMissing = true)
+    Flyway interactionFlyway(
+            @Qualifier("interactionDataSource") DataSource dataSource,
+            @Value("${devcircle.interaction-runtime.flyway-locations:"
+                    + INTERACTION_MIGRATION_LOCATION + "}") String migrationLocations) {
+        return Flyway.configure()
+                .dataSource(dataSource)
+                .locations(migrationLocations)
+                .load();
+    }
+
+    @Bean("interactionFlywayInitializer")
+    @ConditionalOnProperty(name = "devcircle.interaction-runtime.flyway-enabled",
+            havingValue = "true", matchIfMissing = true)
+    FlywayMigrationInitializer interactionFlywayInitializer(
+            @Qualifier("interactionFlyway") Flyway interactionFlyway) {
+        FlywayMigrationInitializer initializer = new FlywayMigrationInitializer(interactionFlyway);
+        initializer.setOrder(2);
         return initializer;
     }
 

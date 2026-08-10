@@ -18,14 +18,17 @@ import java.security.MessageDigest;
 final class IdentityOutboxStatusController {
     private final OutboxStatusService authStatus;
     private final IdentityUserOutboxStatus userStatus;
+    private final IdentityInteractionOutboxStatus interactionStatus;
     private final byte[] internalKey;
 
     IdentityOutboxStatusController(
             @Qualifier("outboxStatusService") OutboxStatusService authStatus,
             IdentityUserOutboxStatus userStatus,
+            IdentityInteractionOutboxStatus interactionStatus,
             @Value("${devcircle.internal.ops-key:local-development-internal-ops-key}") String internalKey) {
         this.authStatus = authStatus;
         this.userStatus = userStatus;
+        this.interactionStatus = interactionStatus;
         this.internalKey = bytes(internalKey);
     }
 
@@ -33,7 +36,8 @@ final class IdentityOutboxStatusController {
     IdentityOutboxStatusView status(
             @RequestHeader(value = "X-Internal-Ops-Key", required = false) String providedKey) {
         authorize(providedKey);
-        return new IdentityOutboxStatusView(authStatus.snapshot(), userStatus.snapshot());
+        return new IdentityOutboxStatusView(
+                authStatus.snapshot(), userStatus.snapshot(), interactionStatus.snapshot());
     }
 
     @GetMapping("/internal/ops/identity/outbox/auth/status")
@@ -50,6 +54,13 @@ final class IdentityOutboxStatusController {
         return userStatus.snapshot();
     }
 
+    @GetMapping("/internal/ops/identity/outbox/interaction/status")
+    OutboxStatusView interactionStatus(
+            @RequestHeader(value = "X-Internal-Ops-Key", required = false) String providedKey) {
+        authorize(providedKey);
+        return interactionStatus.snapshot();
+    }
+
     private void authorize(String providedKey) {
         if (!MessageDigest.isEqual(internalKey, bytes(providedKey))) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "Invalid internal operations credential");
@@ -60,6 +71,7 @@ final class IdentityOutboxStatusController {
         return (value == null ? "" : value).getBytes(StandardCharsets.UTF_8);
     }
 
-    record IdentityOutboxStatusView(OutboxStatusView auth, OutboxStatusView user) {
+    record IdentityOutboxStatusView(
+            OutboxStatusView auth, OutboxStatusView user, OutboxStatusView interaction) {
     }
 }

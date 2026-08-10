@@ -13,10 +13,11 @@ import org.springframework.web.client.RestClientException;
 import java.util.Map;
 
 @Component
-class HttpPostPublicationGateway implements PostPublicationGateway {
+public class HttpPostPublicationGateway implements PostPublicationGateway {
     private final RestClient restClient;
 
-    HttpPostPublicationGateway(@Value("${devcircle.internal.content-uri:http://localhost:8103}") String contentUri) {
+    public HttpPostPublicationGateway(
+            @Value("${devcircle.internal.content-uri:http://localhost:8103}") String contentUri) {
         this.restClient = BoundedRestClientFactory.create(contentUri);
     }
 

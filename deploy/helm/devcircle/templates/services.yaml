@@ -32,11 +32,19 @@
 {{- end }}
 {{- $authPool := int (required "production identity Auth pool budget is required" (index $identityEnv "IDENTITY_AUTH_DB_POOL_MAX_SIZE")) }}
 {{- $userPool := int (required "production identity User pool budget is required" (index $identityEnv "IDENTITY_USER_DB_POOL_MAX_SIZE")) }}
-{{- if or (lt $authPool 1) (lt $userPool 1) }}
-{{- fail "production identity Auth and User pool budgets must both be positive" }}
+{{- $interactionPool := int (required "production identity Interaction pool budget is required" (index $identityEnv "IDENTITY_INTERACTION_DB_POOL_MAX_SIZE")) }}
+{{- if or (lt $authPool 1) (lt $userPool 1) (lt $interactionPool 1) }}
+{{- fail "production identity Auth, User and Interaction pool budgets must all be positive" }}
 {{- end }}
-{{- if gt (mul (add $authPool $userPool) (.Values.replicaCount | int)) 40 }}
-{{- fail "production identity aggregate DB pool ceiling must not exceed 40 connections" }}
+{{- $identityConnectionBudget := int (required "production identity database connection budget is required" .Values.identityDatabaseConnectionBudget) }}
+{{- if lt $identityConnectionBudget 1 }}
+{{- fail "production identity database connection budget must be positive" }}
+{{- end }}
+{{- if gt $identityConnectionBudget (mul 16 (.Values.replicaCount | int)) }}
+{{- fail "production identity database connection budget must not exceed 16 connections per replica" }}
+{{- end }}
+{{- if gt (mul (add (add $authPool $userPool) $interactionPool) (.Values.replicaCount | int)) $identityConnectionBudget }}
+{{- fail "production identity aggregate DB pools must fit identityDatabaseConnectionBudget" }}
 {{- end }}
 {{- $globalSecretRefs := (.Values.secretEnvRefs | default dict) }}
 {{- if ne (toString (index $globalSecretRefs "DEVCIRCLE_INTERNAL_OPS_KEY")) "DEVCIRCLE_INTERNAL_OPS_KEY" }}

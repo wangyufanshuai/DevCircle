@@ -204,6 +204,7 @@ jobs:
       - run: python -m unittest scripts/ops/test_assert_production_resource_budgets.py
       - run: python -m unittest scripts/ops/test_assert_critical_state_coverage.py
       - run: python -m unittest scripts/ops/test_assert_migration_versions.py
+      - run: python -m unittest scripts/ops/test_interaction_embedding_contract.py
       - run: python -m unittest scripts/ops/test_k6_contract.py
       - run: python -m unittest scripts/ops/test_linux_acceptance_contract.py
       - run: python scripts/ops/assert-actions-pinned.py
@@ -283,9 +284,9 @@ jobs:
         run: |
           if [[ "${{ matrix.module }}" == "dc-auth" ]]; then
             path="dc-auth/target/dc-auth-0.1.0-SNAPSHOT-exec.jar"
-          elif [[ "${{ matrix.module }}" == "dc-user" || "${{ matrix.module }}" == "dc-search" || "${{ matrix.module }}" == "dc-content" || "${{ matrix.module }}" == "dc-file" ]]; then
-            # Legacy rollback images use executable classifiers; production
-            # aggregates embed the ordinary thin dependency artifacts.
+          elif [[ "${{ matrix.module }}" == "dc-user" || "${{ matrix.module }}" == "dc-interaction" || "${{ matrix.module }}" == "dc-search" || "${{ matrix.module }}" == "dc-content" || "${{ matrix.module }}" == "dc-file" ]]; then
+            # Standalone or legacy rollback images use executable classifiers;
+            # aggregate processes embed the ordinary thin dependency artifacts.
             path="${{ matrix.module }}/target/${{ matrix.module }}-0.1.0-SNAPSHOT-exec.jar"
           else
             path="${{ matrix.module }}/target/${{ matrix.module }}-0.1.0-SNAPSHOT.jar"

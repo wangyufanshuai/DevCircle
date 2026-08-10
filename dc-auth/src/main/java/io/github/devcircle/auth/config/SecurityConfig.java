@@ -54,6 +54,21 @@ public class SecurityConfig {
                     || PUBLIC_USER_BATCH_READ_TRAILING_SLASH.matches(request)
                     || PUBLIC_USER_PROFILE_READ.matches(request)
                     || PUBLIC_USER_PROFILE_READ_TRAILING_SLASH.matches(request);
+    private static final RequestMatcher INTERACTION_STATE_READ =
+            PathPatternRequestMatcher.pathPattern(HttpMethod.GET, "/api/posts/{id:[0-9]+}/interaction-state");
+    private static final RequestMatcher INTERACTION_LIKE_WRITE = request ->
+            PathPatternRequestMatcher.pathPattern(HttpMethod.POST, "/api/posts/{id:[0-9]+}/like").matches(request)
+                    || PathPatternRequestMatcher.pathPattern(HttpMethod.DELETE, "/api/posts/{id:[0-9]+}/like")
+                    .matches(request);
+    private static final RequestMatcher INTERACTION_FAVORITE_WRITE = request ->
+            PathPatternRequestMatcher.pathPattern(HttpMethod.POST, "/api/posts/{id:[0-9]+}/favorite")
+                    .matches(request)
+                    || PathPatternRequestMatcher.pathPattern(HttpMethod.DELETE, "/api/posts/{id:[0-9]+}/favorite")
+                    .matches(request);
+    private static final RequestMatcher INTERACTION_API = request ->
+            INTERACTION_STATE_READ.matches(request)
+                    || INTERACTION_LIKE_WRITE.matches(request)
+                    || INTERACTION_FAVORITE_WRITE.matches(request);
 
     @Bean
     PasswordEncoder passwordEncoder() {
@@ -104,6 +119,7 @@ public class SecurityConfig {
                                 "/internal/ops/identity/outbox/**",
                                 "/v3/api-docs/**", "/swagger-ui/**").permitAll()
                         .requestMatchers(PUBLIC_USER_READ).permitAll()
+                        .requestMatchers(INTERACTION_API).authenticated()
                         .requestMatchers("/api/users/**").authenticated()
                         .requestMatchers("/api/me/**").authenticated()
                         .anyRequest().denyAll())

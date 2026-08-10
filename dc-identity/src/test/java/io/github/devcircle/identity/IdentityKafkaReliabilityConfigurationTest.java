@@ -16,6 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "devcircle.identity.auth-datasource.password=",
         "spring.flyway.enabled=false",
         "devcircle.user-runtime.flyway-enabled=false",
+        "devcircle.interaction-runtime.flyway-enabled=false",
         "devcircle.user.profile-backfill.enabled=false",
         "devcircle.outbox.enabled=false",
         "spring.kafka.listener.auto-startup=false",

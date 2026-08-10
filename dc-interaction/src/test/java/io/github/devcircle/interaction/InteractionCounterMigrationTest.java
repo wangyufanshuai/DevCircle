@@ -28,7 +28,7 @@ class InteractionCounterMigrationTest {
 
         try (Connection connection = dataSource.getConnection()) {
             ScriptUtils.executeSqlScript(connection,
-                    new ClassPathResource("db/migration/V4__interaction_counter_versions.sql"));
+                    new ClassPathResource("db/interaction-migration/V4__interaction_counter_versions.sql"));
         }
 
         jdbcClient.sql("INSERT INTO post_counter(post_id, like_count) VALUES (1002, 4)").update();

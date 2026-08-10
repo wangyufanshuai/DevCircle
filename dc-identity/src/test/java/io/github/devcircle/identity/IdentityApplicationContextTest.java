@@ -28,6 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "devcircle.identity.auth-datasource.password=",
         "spring.flyway.enabled=false",
         "devcircle.user-runtime.flyway-enabled=false",
+        "devcircle.interaction-runtime.flyway-enabled=false",
         "devcircle.user.profile-backfill.enabled=false",
         "devcircle.outbox.enabled=false",
         "spring.kafka.listener.auto-startup=false",
@@ -50,7 +51,9 @@ class IdentityApplicationContextTest {
         assertThat(context.getBeansOfType(OutboxStatusService.class))
                 .containsOnlyKeys("outboxStatusService");
         assertThat(context.getBean(IdentityUserOutboxStatus.class)).isNotNull();
+        assertThat(context.getBean(IdentityInteractionOutboxStatus.class)).isNotNull();
         assertThat(context.containsBean("userReliableOutboxWorker")).isFalse();
+        assertThat(context.containsBean("interactionReliableOutboxWorker")).isFalse();
         assertThat(context.containsBean("authApplication")).isFalse();
         assertThat(Arrays.stream(context.getBeanDefinitionNames()))
                 .noneMatch(name -> name.toLowerCase().contains("routedefinition"));

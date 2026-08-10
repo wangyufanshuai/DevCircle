@@ -260,8 +260,8 @@ class InteractionRepositoryStateTest {
             return JdbcClient.create(dataSource);
         }
 
-        @Bean
-        PlatformTransactionManager transactionManager(DataSource dataSource) {
+        @Bean("interactionTransactionManager")
+        PlatformTransactionManager interactionTransactionManager(DataSource dataSource) {
             return new DataSourceTransactionManager(dataSource);
         }
 

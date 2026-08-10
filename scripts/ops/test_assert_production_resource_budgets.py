@@ -117,7 +117,8 @@ def valid_compose() -> dict:
     })
     services["dc-identity"]["environment"].update({
         "IDENTITY_AUTH_DB_POOL_MAX_SIZE": "6",
-        "IDENTITY_USER_DB_POOL_MAX_SIZE": "6",
+        "IDENTITY_USER_DB_POOL_MAX_SIZE": "5",
+        "IDENTITY_INTERACTION_DB_POOL_MAX_SIZE": "5",
     })
     services["dc-content-aggregate"]["environment"].update({
         "DC_USER_URI": "http://dc-identity:8201",
@@ -192,10 +193,11 @@ class ProductionResourceBudgetTest(unittest.TestCase):
 
         self.compose = valid_compose()
         self.compose["services"]["dc-identity"]["environment"].update({
-            "IDENTITY_AUTH_DB_POOL_MAX_SIZE": "9",
-            "IDENTITY_USER_DB_POOL_MAX_SIZE": "9",
+            "IDENTITY_AUTH_DB_POOL_MAX_SIZE": "6",
+            "IDENTITY_USER_DB_POOL_MAX_SIZE": "6",
+            "IDENTITY_INTERACTION_DB_POOL_MAX_SIZE": "6",
         })
-        with self.assertRaisesRegex(ValueError, "aggregate Auth and User pool ceiling"):
+        with self.assertRaisesRegex(ValueError, "aggregate Auth, User and Interaction pool ceiling"):
             budgets.validate(self.compose)
 
     def test_rejects_a_missing_memory_limit(self) -> None:
@@ -464,10 +466,21 @@ class HelmTopologyContractTest(unittest.TestCase):
         excessive["services"]["identity"]["env"].update({
             "IDENTITY_AUTH_DB_POOL_MAX_SIZE": "10",
             "IDENTITY_USER_DB_POOL_MAX_SIZE": "10",
+            "IDENTITY_INTERACTION_DB_POOL_MAX_SIZE": "10",
         })
         excessive["replicaCount"] = "3"
-        with self.assertRaisesRegex(ValueError, "aggregate DB pool ceiling"):
+        with self.assertRaisesRegex(ValueError, "fit identityDatabaseConnectionBudget"):
             budgets.validate_helm_topology(self.values, excessive, self.template)
+
+        unbounded = copy.deepcopy(self.production)
+        unbounded["identityDatabaseConnectionBudget"] = "33"
+        with self.assertRaisesRegex(ValueError, "must not exceed 16 connections per replica"):
+            budgets.validate_helm_topology(self.values, unbounded, self.template)
+
+        undersized = copy.deepcopy(self.production)
+        undersized["identityDatabaseConnectionBudget"] = "31"
+        with self.assertRaisesRegex(ValueError, "fit identityDatabaseConnectionBudget"):
+            budgets.validate_helm_topology(self.values, undersized, self.template)
 
     def test_rejects_internal_or_mismatched_browser_object_storage_endpoints(self) -> None:
         internal = copy.deepcopy(self.production)
