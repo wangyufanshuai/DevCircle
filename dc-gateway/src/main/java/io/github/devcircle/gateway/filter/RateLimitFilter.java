@@ -2,7 +2,6 @@ package io.github.devcircle.gateway.filter;
 
 import io.netty.util.NetUtil;
 import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
@@ -27,11 +26,6 @@ class RateLimitFilter implements GlobalFilter, Ordered {
     RateLimitFilter(RateLimitStore store, MeterRegistry metrics) {
         this.store = store;
         this.metrics = metrics;
-    }
-
-    /** Package-private test constructor; production wiring always supplies the application registry. */
-    RateLimitFilter(RateLimitStore store) {
-        this(store, new SimpleMeterRegistry());
     }
 
     @Override

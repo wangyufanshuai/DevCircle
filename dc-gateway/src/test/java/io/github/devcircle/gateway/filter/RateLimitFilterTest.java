@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RateLimitFilterTest {
     private static final InetSocketAddress INTERNAL_PROXY = new InetSocketAddress("172.18.0.9", 8080);
     private final SharedFakeStore sharedStore = new SharedFakeStore();
-    private final RateLimitFilter filter = new RateLimitFilter(sharedStore);
+    private final RateLimitFilter filter = new RateLimitFilter(sharedStore, new SimpleMeterRegistry());
 
     @Test
     void trustedProxyClientsReceiveIndependentAuthenticationBudgets() {
@@ -52,7 +52,7 @@ class RateLimitFilterTest {
 
     @Test
     void separateFilterInstancesShareTheSameCounterStore() {
-        RateLimitFilter second = new RateLimitFilter(sharedStore);
+        RateLimitFilter second = new RateLimitFilter(sharedStore, new SimpleMeterRegistry());
         for (int request = 0; request < 19; request++) {
             assertAllowed(authRequest(INTERNAL_PROXY, "203.0.113.9"));
         }
@@ -62,7 +62,8 @@ class RateLimitFilterTest {
 
     @Test
     void storeFailureFailsClosedWithoutCallingDownstream() {
-        RateLimitFilter unavailable = new RateLimitFilter((key, expiry) -> Mono.error(new IllegalStateException("redis down")));
+        RateLimitFilter unavailable = new RateLimitFilter(
+                (key, expiry) -> Mono.error(new IllegalStateException("redis down")), new SimpleMeterRegistry());
         var exchange = authRequest(INTERNAL_PROXY, "203.0.113.10");
         AtomicInteger downstreamCalls = new AtomicInteger();
 
