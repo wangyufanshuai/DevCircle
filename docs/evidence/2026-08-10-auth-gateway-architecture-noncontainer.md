@@ -5,6 +5,7 @@
 - Branch: `overhaul/mysticverse-production`
 - Auth commit: `9a001416cc204bf2bc693aea666764035b7bbffb`
 - Gateway commit: `c5d280b7f07efa12a8b0c19172ac9618fa3f02fe`
+- Verified code commit: `b8e165b873b540d5b9216bd0aa52bc00dae7529a`
 - Host: Windows 11, Java 21
 - Scope: authentication persistence responsibility split and shared Gateway rate limiting
 
@@ -20,6 +21,9 @@
 - The key includes the client identity, auth/write/read bucket, and UTC epoch minute, so separate
   Gateway replicas share the same budget.
 - Redis errors fail closed with `503 RATE_LIMIT_DEPENDENCY_UNAVAILABLE`; there is no production memory fallback.
+- Gateway publishes bounded-cardinality `allowed`, `limited`, and `dependency_unavailable` counters.
+- Prometheus raises `DevCircleGatewayRateLimitDependencyUnavailable`, and the alert is linked to an
+  executable runbook section.
 
 ## Verification executed on this SHA
 
@@ -41,8 +45,8 @@ Results:
 - Auth targeted tests: 28 passed, 0 failed/error/skipped.
 - Gateway module tests: 40 passed, 0 failed/error/skipped.
 - Full non-container Reactor: 19/19 projects succeeded.
-- Full non-container Surefire: 478 tests, 0 failures, 0 errors, 0 skipped.
-- Aggregate JaCoCo: line 81.15%, branch 74.27%.
+- Full non-container Surefire: 110 suites, 481 tests, 0 failures, 0 errors, 0 skipped.
+- Aggregate JaCoCo: line 81.16%, branch 74.27%.
 - Critical state-machine branch gate: all 14 classes at or above 85%.
 - Ops Python: 49 tests passed.
 - Shell syntax and `git diff --check`: passed.
