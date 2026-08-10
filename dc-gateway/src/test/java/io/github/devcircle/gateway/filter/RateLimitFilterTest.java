@@ -1,6 +1,7 @@
 package io.github.devcircle.gateway.filter;
 
 import org.junit.jupiter.api.Test;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
@@ -73,6 +74,25 @@ class RateLimitFilterTest {
         assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
         assertThat(exchange.getResponse().getBodyAsString().block()).contains("RATE_LIMIT_DEPENDENCY_UNAVAILABLE");
         assertThat(downstreamCalls).hasValue(0);
+    }
+
+    @Test
+    void recordsAllowedLimitedAndDependencyFailureOutcomes() {
+        var metrics = new SimpleMeterRegistry();
+        RateLimitFilter target = new RateLimitFilter(sharedStore, metrics);
+        assertAllowedWith(target, authRequest(INTERNAL_PROXY, "203.0.113.11"));
+        for (int request = 0; request < 21; request++) {
+            target.filter(authRequest(INTERNAL_PROXY, "203.0.113.12"), ignored -> Mono.empty()).block();
+        }
+        RateLimitFilter unavailable = new RateLimitFilter((key, expiry) -> Mono.error(new IllegalStateException("redis down")), metrics);
+        unavailable.filter(authRequest(INTERNAL_PROXY, "203.0.113.13"), ignored -> Mono.empty()).block();
+
+        assertThat(metrics.get("devcircle.gateway.rate.limit")
+                .tag("bucket", "auth").tag("outcome", "allowed").counter().count()).isEqualTo(21.0);
+        assertThat(metrics.get("devcircle.gateway.rate.limit")
+                .tag("bucket", "auth").tag("outcome", "limited").counter().count()).isEqualTo(1.0);
+        assertThat(metrics.get("devcircle.gateway.rate.limit")
+                .tag("bucket", "auth").tag("outcome", "dependency_unavailable").counter().count()).isEqualTo(1.0);
     }
 
     private MockServerWebExchange authRequest(InetSocketAddress remote, String forwardedFor) {

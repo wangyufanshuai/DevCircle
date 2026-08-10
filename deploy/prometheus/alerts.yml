@@ -28,6 +28,15 @@ groups:
           description: "{{ $labels.service }} active Hikari connections exceed 90%."
           runbook_url: "https://github.com/wangyufanshuai/DevCircle/blob/main/docs/observability-runbook.md#mysql-pool-exhausted"
 
+      - alert: DevCircleGatewayRateLimitDependencyUnavailable
+        expr: increase(devcircle_gateway_rate_limit_total{outcome="dependency_unavailable"}[5m]) > 0
+        for: 2m
+        labels: { severity: critical, team: platform }
+        annotations:
+          summary: "Gateway shared rate-limit store is unavailable"
+          description: "Gateway requests are failing closed because Redis rate-limit counters are unavailable."
+          runbook_url: "https://github.com/wangyufanshuai/DevCircle/blob/main/docs/observability-runbook.md#rate-limit-dependency-unavailable"
+
   - name: devcircle-events
     rules:
       - alert: DevCircleOutboxFleetIncomplete

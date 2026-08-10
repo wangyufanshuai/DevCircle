@@ -1,6 +1,8 @@
 package io.github.devcircle.gateway.filter;
 
 import io.netty.util.NetUtil;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
@@ -19,10 +21,17 @@ import java.time.Instant;
 class RateLimitFilter implements GlobalFilter, Ordered {
     private static final String KEY_PREFIX = "devcircle:gateway:rate-limit:v1:";
     private final RateLimitStore store;
+    private final MeterRegistry metrics;
 
     @Autowired
-    RateLimitFilter(RateLimitStore store) {
+    RateLimitFilter(RateLimitStore store, MeterRegistry metrics) {
         this.store = store;
+        this.metrics = metrics;
+    }
+
+    /** Package-private test constructor; production wiring always supplies the application registry. */
+    RateLimitFilter(RateLimitStore store) {
+        this(store, new SimpleMeterRegistry());
     }
 
     @Override
@@ -40,14 +49,23 @@ class RateLimitFilter implements GlobalFilter, Ordered {
             exchange.getResponse().getHeaders().set("X-RateLimit-Limit", String.valueOf(limit));
             exchange.getResponse().getHeaders().set("X-RateLimit-Remaining", String.valueOf(Math.max(0, limit - used)));
             if (used > limit) {
+                record(bucket, "limited");
                 exchange.getResponse().getHeaders().set("Retry-After", String.valueOf(expiry.toSeconds()));
                 return GatewayResponses.error(exchange, HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED",
                         "请求过于频繁，请稍后再试");
             }
+            record(bucket, "allowed");
             return chain.filter(exchange);
         }).onErrorResume(RateLimitStoreUnavailableException.class,
-                ignored -> GatewayResponses.error(exchange, HttpStatus.SERVICE_UNAVAILABLE,
-                        "RATE_LIMIT_DEPENDENCY_UNAVAILABLE", "服务暂时不可用，请稍后重试"));
+                ignored -> {
+                    record(bucket, "dependency_unavailable");
+                    return GatewayResponses.error(exchange, HttpStatus.SERVICE_UNAVAILABLE,
+                            "RATE_LIMIT_DEPENDENCY_UNAVAILABLE", "服务暂时不可用，请稍后重试");
+                });
+    }
+
+    private void record(String bucket, String outcome) {
+        metrics.counter("devcircle.gateway.rate.limit", "bucket", bucket, "outcome", outcome).increment();
     }
 
     private String bucket(ServerWebExchange exchange) {

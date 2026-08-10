@@ -54,6 +54,13 @@
 4. 使用管理员身份、操作理由和原幂等键执行精确重放。
 5. 确认 DEAD、blocked 均归零，下游投影只生效一次且审计日志存在。
 
+## rate-limit-dependency-unavailable
+
+1. Check Redis health, authentication, latency, and connection errors from the Gateway logs.
+2. Confirm the Redis service is reachable from every Gateway replica and that the configured password is current.
+3. Keep the fail-closed behavior while restoring Redis; do not re-enable an in-process counter as a production workaround.
+4. After recovery, verify the `devcircle_gateway_rate_limit_total` dependency-unavailable counter stops increasing and exercise one authenticated request from two Gateway replicas.
+
 ## outbox-backlog-high
 
 区分持续新增和恢复追平。检查发布速率、Kafka ACK、消费者 Lag 和失败重试；依赖恢复后记录 backlog 回零所需时间。积压继续增长时应停止非必要写流量并升级响应级别。
