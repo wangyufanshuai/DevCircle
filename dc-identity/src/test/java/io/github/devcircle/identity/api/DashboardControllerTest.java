@@ -2,6 +2,7 @@ package io.github.devcircle.identity.api;
 
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
+import io.github.devcircle.identity.application.DashboardService;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
@@ -88,8 +89,9 @@ class DashboardControllerTest {
     }
 
     private DashboardController controller(RestClient.Builder builder) {
-        return new DashboardController(builder, "https://user.test", "https://content.test",
+        DashboardService service = new DashboardService(builder, "https://user.test", "https://content.test",
                 "https://interaction.test", "https://notification.test", Runnable::run);
+        return new DashboardController(service);
     }
 
     private void expect(MockRestServiceServer server, String uri, String data) {
