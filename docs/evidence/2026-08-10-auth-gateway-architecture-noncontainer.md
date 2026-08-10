@@ -5,7 +5,8 @@
 - Branch: `overhaul/mysticverse-production`
 - Auth commit: `9a001416cc204bf2bc693aea666764035b7bbffb`
 - Gateway commit: `c5d280b7f07efa12a8b0c19172ac9618fa3f02fe`
-- Verified code commit: `b8e165b873b540d5b9216bd0aa52bc00dae7529a`
+- Identity orchestration commit: `17ed45951fbeb3e1b87552e96c7c21fcce5ea8ed`
+- Verified code commit: `17ed45951fbeb3e1b87552e96c7c21fcce5ea8ed`
 - Host: Windows 11, Java 21
 - Scope: authentication persistence responsibility split and shared Gateway rate limiting
 
@@ -16,6 +17,9 @@
   and token hashing now have separate focused persistence collaborators.
 - Existing constructors, records, public methods, transaction annotations, and
   `TokenRevokedException` no-rollback behavior remain compatible with current callers.
+- `DashboardController` now owns only HTTP authentication and response adaptation; required-source
+  parallel orchestration, bounded client calls, response validation, and fail-closed aggregation live
+  in `DashboardService`.
 - Gateway rate limiting no longer stores production counters in a JVM-local map.
 - `RedisRateLimitStore` uses an atomic Redis Lua `INCR` + first-write `EXPIRE` fixed-window operation.
 - The key includes the client identity, auth/write/read bucket, and UTC epoch minute, so separate
@@ -46,7 +50,7 @@ Results:
 - Gateway module tests: 40 passed, 0 failed/error/skipped.
 - Full non-container Reactor: 19/19 projects succeeded.
 - Full non-container Surefire: 110 suites, 481 tests, 0 failures, 0 errors, 0 skipped.
-- Aggregate JaCoCo: line 81.16%, branch 74.27%.
+- Aggregate JaCoCo: line 81.17%, branch 74.25%.
 - Critical state-machine branch gate: all 14 classes at or above 85%.
 - Ops Python: 49 tests passed.
 - Shell syntax and `git diff --check`: passed.
