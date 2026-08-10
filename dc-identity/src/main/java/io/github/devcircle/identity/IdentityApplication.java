@@ -20,7 +20,11 @@ import org.springframework.kafka.annotation.EnableKafka;
         "io.github.devcircle.user.api",
         "io.github.devcircle.user.application",
         "io.github.devcircle.interaction.api",
-        "io.github.devcircle.interaction.application"
+        "io.github.devcircle.interaction.application",
+        "io.github.devcircle.notification.api",
+        "io.github.devcircle.notification.application",
+        "io.github.devcircle.notification.config",
+        "io.github.devcircle.notification.infrastructure"
 })
 @EnableKafka
 @Import({

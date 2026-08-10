@@ -17,8 +17,10 @@ import static org.assertj.core.api.Assertions.assertThat;
         "spring.flyway.enabled=false",
         "devcircle.user-runtime.flyway-enabled=false",
         "devcircle.interaction-runtime.flyway-enabled=false",
+        "devcircle.notification-runtime.flyway-enabled=false",
         "devcircle.user.profile-backfill.enabled=false",
         "devcircle.outbox.enabled=false",
+        "devcircle.kafka.topics.enabled=false",
         "spring.kafka.listener.auto-startup=false",
         "management.tracing.enabled=false"
 })

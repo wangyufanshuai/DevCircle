@@ -5,6 +5,7 @@ import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.user.application.UserGraphService;
 import io.github.devcircle.user.infrastructure.UserGraphRepository;
 import io.github.devcircle.interaction.infrastructure.InteractionRepository;
+import io.github.devcircle.notification.infrastructure.NotificationRepository;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -26,19 +27,19 @@ public class DashboardService {
     private final UserGraphService userGraphService;
     private final RestClient contentClient;
     private final InteractionRepository interactionRepository;
-    private final RestClient notificationClient;
+    private final NotificationRepository notificationRepository;
     private final Executor dashboardExecutor;
 
     public DashboardService(UserGraphService userGraphService,
                             RestClient.Builder restClientBuilder,
                             @Value("${devcircle.internal.content-uri:http://localhost:8103}") String contentUri,
-                            @Value("${devcircle.internal.notification-uri:http://localhost:8108}") String notificationUri,
                             InteractionRepository interactionRepository,
+                            NotificationRepository notificationRepository,
                             @Qualifier("dashboardExecutor") Executor dashboardExecutor) {
         this.userGraphService = userGraphService;
         this.contentClient = restClientBuilder.clone().baseUrl(contentUri).build();
-        this.notificationClient = restClientBuilder.clone().baseUrl(notificationUri).build();
         this.interactionRepository = interactionRepository;
+        this.notificationRepository = notificationRepository;
         this.dashboardExecutor = dashboardExecutor;
     }
 
@@ -51,8 +52,9 @@ public class DashboardService {
                 () -> localFavoriteIds(userId), dashboardExecutor);
         CompletableFuture<JsonNode> favorites = favoriteIds.thenApplyAsync(
                 ids -> favoriteSummaries(ids, userId, traceId), dashboardExecutor);
-        CompletableFuture<JsonNode> unread = asyncGet(
-                notificationClient, "/api/notifications/unread-count", userId, traceId);
+        CompletableFuture<JsonNode> unread = CompletableFuture.supplyAsync(
+                () -> JsonNodeFactory.instance.numberNode(notificationRepository.unreadCount(userId)),
+                dashboardExecutor);
         CompletableFuture<JsonNode> deductionStats = asyncGet(
                 contentClient, "/api/deduction/me/stats", userId, traceId);
 

@@ -6,6 +6,7 @@ import io.github.devcircle.identity.application.DashboardService;
 import io.github.devcircle.user.application.UserGraphService;
 import io.github.devcircle.user.infrastructure.UserGraphRepository;
 import io.github.devcircle.interaction.infrastructure.InteractionRepository;
+import io.github.devcircle.notification.infrastructure.NotificationRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
@@ -42,7 +43,6 @@ class DashboardControllerTest {
         expect(server, "https://content.test/api/me/submissions", "[]");
         expect(server, "https://content.test/api/posts/summaries?ids=1001",
                 "[{\"id\":1001,\"title\":\"Clocktower Case\"}]");
-        expect(server, "https://notification.test/api/notifications/unread-count", "2");
         expect(server, "https://content.test/api/deduction/me/stats",
                 "{\"attempts\":3,\"correctCount\":2,\"revealedCount\":0,\"totalPoints\":40}");
         UserGraphService users = mock(UserGraphService.class);
@@ -50,7 +50,9 @@ class DashboardControllerTest {
                 2L, "Observer", null, "Orbit reader", 7, 3)));
         InteractionRepository interactions = mock(InteractionRepository.class);
         when(interactions.favoritePostIds(2L, 30)).thenReturn(List.of(1001L));
-        DashboardController controller = controller(builder, users, interactions);
+        NotificationRepository notifications = mock(NotificationRepository.class);
+        when(notifications.unreadCount(2L)).thenReturn(2L);
+        DashboardController controller = controller(builder, users, interactions, notifications);
 
         var authentication = UsernamePasswordAuthenticationToken.authenticated("2", null, List.of());
         var response = controller.dashboard(authentication, TRACE_ID);
@@ -71,13 +73,13 @@ class DashboardControllerTest {
         expect(server, "https://content.test/api/me/reading-progress", "[]");
         expect(server, "https://content.test/api/me/submissions", "[]");
         expect(server, "https://content.test/api/posts/summaries?ids=1001", "[]");
-        expect(server, "https://notification.test/api/notifications/unread-count", "0");
         expect(server, "https://content.test/api/deduction/me/stats", "{}");
         UserGraphService users = mock(UserGraphService.class);
         when(users.profile(2L)).thenThrow(new IllegalStateException("user database unavailable"));
         InteractionRepository interactions = mock(InteractionRepository.class);
         when(interactions.favoritePostIds(2L, 30)).thenReturn(List.of(1001L));
-        DashboardController controller = controller(builder, users, interactions);
+        DashboardController controller = controller(builder, users, interactions,
+                mock(NotificationRepository.class));
         var authentication = UsernamePasswordAuthenticationToken.authenticated("2", null, List.of());
 
         assertThatThrownBy(() -> controller.dashboard(authentication, TRACE_ID))
@@ -89,7 +91,7 @@ class DashboardControllerTest {
     @Test
     void rejectsAnInvalidAuthenticatedPrincipalBeforeCallingDependencies() {
         DashboardController controller = controller(RestClient.builder(), mock(UserGraphService.class),
-                mock(InteractionRepository.class));
+                mock(InteractionRepository.class), mock(NotificationRepository.class));
         var authentication = UsernamePasswordAuthenticationToken.authenticated("not-a-user", null, List.of());
 
         assertThatThrownBy(() -> controller.dashboard(authentication, TRACE_ID))
@@ -98,9 +100,10 @@ class DashboardControllerTest {
     }
 
     private DashboardController controller(RestClient.Builder builder, UserGraphService users,
-                                           InteractionRepository interactions) {
+                                           InteractionRepository interactions,
+                                           NotificationRepository notifications) {
         DashboardService service = new DashboardService(users, builder, "https://content.test",
-                "https://notification.test", interactions, Runnable::run);
+                interactions, notifications, Runnable::run);
         return new DashboardController(service);
     }
 

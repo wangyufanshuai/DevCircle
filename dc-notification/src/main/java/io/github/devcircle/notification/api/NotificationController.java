@@ -4,6 +4,7 @@ import io.github.devcircle.common.api.ApiResponse;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.notification.infrastructure.NotificationRepository;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,6 +18,8 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/notifications")
+@ConditionalOnProperty(prefix = "devcircle.notification-runtime", name = "api-enabled",
+        havingValue = "true", matchIfMissing = true)
 class NotificationController {
     private final NotificationRepository notificationRepository;
 

@@ -7,6 +7,7 @@ import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.notification.infrastructure.NotificationRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
@@ -14,6 +15,8 @@ import java.util.Map;
 import java.util.Set;
 
 @Component
+@ConditionalOnProperty(prefix = "devcircle.notification-runtime", name = "consumer-enabled",
+        havingValue = "true", matchIfMissing = true)
 class NotificationEventConsumer {
     private static final Map<String, Set<String>> EVENT_CONTRACTS = Map.of(
             EventTopics.AUDIT_COMPLETED, Set.of("dc-admin"),

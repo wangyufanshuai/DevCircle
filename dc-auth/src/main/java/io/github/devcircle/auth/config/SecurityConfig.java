@@ -120,6 +120,7 @@ public class SecurityConfig {
                                 "/v3/api-docs/**", "/swagger-ui/**").permitAll()
                         .requestMatchers(PUBLIC_USER_READ).permitAll()
                         .requestMatchers(INTERACTION_API).authenticated()
+                        .requestMatchers("/api/notifications/**").authenticated()
                         .requestMatchers("/api/users/**").authenticated()
                         .requestMatchers("/api/me/**").authenticated()
                         .anyRequest().denyAll())

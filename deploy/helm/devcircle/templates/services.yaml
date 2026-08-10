@@ -36,11 +36,30 @@
 {{- if ne (toString (index $identityEnv "INTERACTION_RUNTIME_OUTBOX_ENABLED")) "true" }}
 {{- fail "production identity must enable Interaction Outbox" }}
 {{- end }}
+{{- if ne (toString (index $identityEnv "NOTIFICATION_RUNTIME_API_ENABLED")) "false" }}
+{{- fail "production identity must disable Notification API before cutover" }}
+{{- end }}
+{{- if ne (toString (index $identityEnv "NOTIFICATION_FLYWAY_ENABLED")) "false" }}
+{{- fail "production identity must disable Notification Flyway before cutover" }}
+{{- end }}
+{{- if ne (toString (index $identityEnv "NOTIFICATION_RUNTIME_CONSUMER_ENABLED")) "false" }}
+{{- fail "production identity must disable Notification consumer before cutover" }}
+{{- end }}
+{{- if ne (toString (index $identityEnv "NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED")) "false" }}
+{{- fail "production identity must disable Notification topic admin before cutover" }}
+{{- end }}
+{{- if ne (toString (index $identityEnv "NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED")) "false" }}
+{{- fail "production identity must disable Notification WebSocket before cutover" }}
+{{- end }}
+{{- if ne (toString (index $identityEnv "DC_NOTIFICATION_URI")) "http://dc-notification:8108" }}
+{{- fail "production identity must retain DC_NOTIFICATION_URI for one-version rollback compatibility" }}
+{{- end }}
 {{- $authPool := int (required "production identity Auth pool budget is required" (index $identityEnv "IDENTITY_AUTH_DB_POOL_MAX_SIZE")) }}
 {{- $userPool := int (required "production identity User pool budget is required" (index $identityEnv "IDENTITY_USER_DB_POOL_MAX_SIZE")) }}
 {{- $interactionPool := int (required "production identity Interaction pool budget is required" (index $identityEnv "IDENTITY_INTERACTION_DB_POOL_MAX_SIZE")) }}
-{{- if or (lt $authPool 1) (lt $userPool 1) (lt $interactionPool 1) }}
-{{- fail "production identity Auth, User and Interaction pool budgets must all be positive" }}
+{{- $notificationPool := int (required "production identity Notification pool budget is required" (index $identityEnv "IDENTITY_NOTIFICATION_DB_POOL_MAX_SIZE")) }}
+{{- if or (lt $authPool 1) (lt $userPool 1) (lt $interactionPool 1) (lt $notificationPool 1) }}
+{{- fail "production identity Auth, User, Interaction and Notification pool budgets must all be positive" }}
 {{- end }}
 {{- $identityConnectionBudget := int (required "production identity database connection budget is required" .Values.identityDatabaseConnectionBudget) }}
 {{- if lt $identityConnectionBudget 1 }}
@@ -49,8 +68,13 @@
 {{- if gt $identityConnectionBudget (mul 16 (.Values.replicaCount | int)) }}
 {{- fail "production identity database connection budget must not exceed 16 connections per replica" }}
 {{- end }}
-{{- if gt (mul (add (add $authPool $userPool) $interactionPool) (.Values.replicaCount | int)) $identityConnectionBudget }}
+{{- if gt (mul (add (add (add $authPool $userPool) $interactionPool) $notificationPool) (.Values.replicaCount | int)) $identityConnectionBudget }}
 {{- fail "production identity aggregate DB pools must fit identityDatabaseConnectionBudget" }}
+{{- end }}
+{{- $notification := required "production notification service is required before Identity cutover" (index .Values.services "notification") }}
+{{- $notificationEnv := ($notification.env | default dict) }}
+{{- if ne (toString (index $notificationEnv "PUBLIC_ORIGIN")) $publicOrigin }}
+{{- fail "production notification PUBLIC_ORIGIN must match publicOrigin" }}
 {{- end }}
 {{- $globalSecretRefs := (.Values.secretEnvRefs | default dict) }}
 {{- if ne (toString (index $globalSecretRefs "DEVCIRCLE_INTERNAL_OPS_KEY")) "DEVCIRCLE_INTERNAL_OPS_KEY" }}

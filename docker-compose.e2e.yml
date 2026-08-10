@@ -159,18 +159,26 @@ services:
       args: { JAR_FILE: dc-identity/target/dc-identity-0.1.0-SNAPSHOT.jar }
     environment:
       <<: *app-env
-      # Three explicit pools keep Identity's E2E ceiling at 3 + 3 + 2 = 8 connections.
+      # Four explicit pools retain Identity's E2E ceiling at 3 + 2 + 2 + 1 = 8.
       IDENTITY_AUTH_DB_POOL_MAX_SIZE: ${REAL_E2E_IDENTITY_AUTH_DB_POOL_MAX_SIZE:-3}
       IDENTITY_AUTH_DB_POOL_MIN_IDLE: ${REAL_E2E_IDENTITY_AUTH_DB_POOL_MIN_IDLE:-1}
       IDENTITY_AUTH_DB_POOL_CONNECTION_TIMEOUT_MS: ${REAL_E2E_DB_CONNECTION_TIMEOUT_MS:-3000}
-      IDENTITY_USER_DB_POOL_MAX_SIZE: ${REAL_E2E_IDENTITY_USER_DB_POOL_MAX_SIZE:-3}
+      IDENTITY_USER_DB_POOL_MAX_SIZE: ${REAL_E2E_IDENTITY_USER_DB_POOL_MAX_SIZE:-2}
       IDENTITY_USER_DB_POOL_MIN_IDLE: ${REAL_E2E_IDENTITY_USER_DB_POOL_MIN_IDLE:-1}
       IDENTITY_USER_DB_POOL_CONNECTION_TIMEOUT_MS: ${REAL_E2E_DB_CONNECTION_TIMEOUT_MS:-3000}
       IDENTITY_INTERACTION_DB_POOL_MAX_SIZE: ${REAL_E2E_IDENTITY_INTERACTION_DB_POOL_MAX_SIZE:-2}
       IDENTITY_INTERACTION_DB_POOL_MIN_IDLE: ${REAL_E2E_IDENTITY_INTERACTION_DB_POOL_MIN_IDLE:-0}
       IDENTITY_INTERACTION_DB_POOL_CONNECTION_TIMEOUT_MS: ${REAL_E2E_DB_CONNECTION_TIMEOUT_MS:-3000}
+      IDENTITY_NOTIFICATION_DB_POOL_MAX_SIZE: ${REAL_E2E_IDENTITY_NOTIFICATION_DB_POOL_MAX_SIZE:-1}
+      IDENTITY_NOTIFICATION_DB_POOL_MIN_IDLE: ${REAL_E2E_IDENTITY_NOTIFICATION_DB_POOL_MIN_IDLE:-0}
+      IDENTITY_NOTIFICATION_DB_POOL_CONNECTION_TIMEOUT_MS: ${REAL_E2E_DB_CONNECTION_TIMEOUT_MS:-3000}
       INTERACTION_FLYWAY_ENABLED: "true"
       INTERACTION_RUNTIME_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
+      NOTIFICATION_RUNTIME_API_ENABLED: "false"
+      NOTIFICATION_FLYWAY_ENABLED: "false"
+      NOTIFICATION_RUNTIME_CONSUMER_ENABLED: "false"
+      NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED: "false"
+      NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: "false"
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
       MYSQL_USER: devcircle
@@ -180,6 +188,7 @@ services:
       DEVCIRCLE_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
       DC_CONTENT_URI: http://dc-content-aggregate:8202
       DC_INTERACTION_URI: http://dc-identity:8201
+      # Retained only so the immediately previous Identity image remains rollback-safe.
       DC_NOTIFICATION_URI: http://dc-notification:8108
     mem_limit: 256m
     depends_on:
@@ -251,13 +260,14 @@ services:
     profiles: ["community"]
     build:
       <<: *service-build
-      args: { JAR_FILE: dc-notification/target/dc-notification-0.1.0-SNAPSHOT.jar }
+      args: { JAR_FILE: dc-notification/target/dc-notification-0.1.0-SNAPSHOT-exec.jar }
     environment:
       <<: *app-env
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
       MYSQL_USER: devcircle
       MYSQL_PASSWORD: e2e-database-password
+      PUBLIC_ORIGIN: http://127.0.0.1:5511
     mem_limit: 256m
     depends_on:
       mysql: { condition: service_healthy }

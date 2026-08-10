@@ -53,6 +53,7 @@ HELM_GATEWAY_ENVIRONMENT = {
     "DC_DISCOVERY_URI": "http://dc-discovery:8203",
     "DC_SEARCH_URI": "http://dc-discovery:8203",
     "DC_RECOMMEND_URI": "http://dc-recommend:8107",
+    "DC_NOTIFICATION_URI": "http://dc-notification:8108",
 }
 PRODUCTION_MODE_APPLICATIONS = (
     "dc-auth", "dc-identity", "dc-content-deployment", "dc-content",
@@ -346,6 +347,10 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
         fail("Helm identity must use its embedded User runtime instead of an HTTP self-call")
     if "DC_INTERACTION_URI" in identity_environment or "DC_INTERACTION_URI" in global_environment:
         fail("Helm identity dashboard must use its embedded Interaction runtime without an HTTP self-call")
+    if "DC_NOTIFICATION_URI" in global_environment:
+        fail("Helm must scope the Notification rollback URI to identity")
+    if identity_environment.get("DC_NOTIFICATION_URI") != "http://dc-notification:8108":
+        fail("Helm identity must retain DC_NOTIFICATION_URI for one-version rollback compatibility")
     public_origin = _public_https_origin(values.get("publicOrigin"), "publicOrigin")
     if global_environment.get("S3_PRESIGN_ENDPOINT") != public_origin:
         fail("Helm S3_PRESIGN_ENDPOINT must match publicOrigin")
@@ -369,11 +374,21 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
         fail("Helm production identity must enable Interaction Flyway")
     if str(identity_environment.get("INTERACTION_RUNTIME_OUTBOX_ENABLED", "")).lower() != "true":
         fail("Helm production identity must enable Interaction Outbox")
+    for key, label in {
+        "NOTIFICATION_RUNTIME_API_ENABLED": "API",
+        "NOTIFICATION_FLYWAY_ENABLED": "Flyway",
+        "NOTIFICATION_RUNTIME_CONSUMER_ENABLED": "consumer",
+        "NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED": "topic admin",
+        "NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED": "WebSocket",
+    }.items():
+        if str(identity_environment.get(key, "")).lower() != "false":
+            fail(f"Helm production identity must disable Notification {label} before cutover")
     identity_pool_sizes = {}
     for domain, key in {
         "Auth": "IDENTITY_AUTH_DB_POOL_MAX_SIZE",
         "User": "IDENTITY_USER_DB_POOL_MAX_SIZE",
         "Interaction": "IDENTITY_INTERACTION_DB_POOL_MAX_SIZE",
+        "Notification": "IDENTITY_NOTIFICATION_DB_POOL_MAX_SIZE",
     }.items():
         try:
             identity_pool_sizes[domain] = int(identity_environment.get(key, "0"))
@@ -397,6 +412,12 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
     required_identity_connections = sum(identity_pool_sizes.values()) * replica_count
     if required_identity_connections > identity_connection_budget:
         fail("Helm identity aggregate DB pools must fit identityDatabaseConnectionBudget")
+    notification_environment = _mapping(
+        _mapping(services.get("notification"), "services.notification").get("env", {}),
+        "services.notification.env",
+    )
+    if notification_environment.get("PUBLIC_ORIGIN") != public_origin:
+        fail("Helm notification PUBLIC_ORIGIN must match publicOrigin")
     identity_secret_refs = projected_secret_refs.get("identity", {})
     for key in ("DEVCIRCLE_INTERNAL_OPS_KEY", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"):
         if identity_secret_refs.get(key) != key:
@@ -449,7 +470,14 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
         "production identity AUTH_FRONTEND_CALLBACK_URI must derive from publicOrigin",
         "production identity GITHUB_CALLBACK_URI must derive from publicOrigin",
         "production identity must project GitHub OAuth credentials from a Secret",
-        "production identity Auth, User and Interaction pool budgets must all be positive",
+        "production identity Auth, User, Interaction and Notification pool budgets must all be positive",
+        "production identity must disable Notification API before cutover",
+        "production identity must disable Notification Flyway before cutover",
+        "production identity must disable Notification consumer before cutover",
+        "production identity must disable Notification topic admin before cutover",
+        "production identity must disable Notification WebSocket before cutover",
+        "production identity must retain DC_NOTIFICATION_URI for one-version rollback compatibility",
+        "production notification PUBLIC_ORIGIN must match publicOrigin",
         "production identity database connection budget is required",
         "production identity database connection budget must be positive",
         "production identity database connection budget must not exceed 16 connections per replica",
@@ -528,15 +556,27 @@ def validate(data: dict) -> tuple[int, int]:
         fail("dc-identity must embed authentication instead of proxying DC_AUTH_URI")
     if "DC_USER_URI" in identity_environment:
         fail("dc-identity must use its embedded User runtime instead of an HTTP self-call")
+    if identity_environment.get("DC_NOTIFICATION_URI") != "http://dc-notification:8108":
+        fail("dc-identity must retain DC_NOTIFICATION_URI for one-version rollback compatibility")
     if identity_environment.get("INTERACTION_FLYWAY_ENABLED") != "true":
         fail("dc-identity must enable Interaction Flyway in the default production topology")
     if identity_environment.get("INTERACTION_RUNTIME_OUTBOX_ENABLED") != "true":
         fail("dc-identity must enable Interaction Outbox in the default production topology")
+    for key, label in {
+        "NOTIFICATION_RUNTIME_API_ENABLED": "API",
+        "NOTIFICATION_FLYWAY_ENABLED": "Flyway",
+        "NOTIFICATION_RUNTIME_CONSUMER_ENABLED": "consumer",
+        "NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED": "topic admin",
+        "NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED": "WebSocket",
+    }.items():
+        if identity_environment.get(key) != "false":
+            fail(f"dc-identity must disable Notification {label} before cutover")
     identity_pool_sizes = {}
     for domain, key in {
         "Auth": "IDENTITY_AUTH_DB_POOL_MAX_SIZE",
         "User": "IDENTITY_USER_DB_POOL_MAX_SIZE",
         "Interaction": "IDENTITY_INTERACTION_DB_POOL_MAX_SIZE",
+        "Notification": "IDENTITY_NOTIFICATION_DB_POOL_MAX_SIZE",
     }.items():
         try:
             identity_pool_sizes[domain] = int(identity_environment.get(key, "0"))
@@ -545,7 +585,12 @@ def validate(data: dict) -> tuple[int, int]:
         if not 1 <= identity_pool_sizes[domain] <= 10:
             fail(f"dc-identity {domain} pool budget must be between 1 and 10")
     if sum(identity_pool_sizes.values()) > 16:
-        fail("dc-identity aggregate Auth, User and Interaction pool ceiling must not exceed 16 connections")
+        fail("dc-identity aggregate Auth, User, Interaction and Notification pool ceiling must not exceed 16 connections")
+    notification_environment = services["dc-notification"].get("environment") or {}
+    if (not notification_environment.get("PUBLIC_ORIGIN")
+            or notification_environment.get("PUBLIC_ORIGIN")
+            != notification_environment.get("S3_PRESIGN_ENDPOINT")):
+        fail("dc-notification PUBLIC_ORIGIN must match the production public origin")
     admin_environment = services["dc-admin"].get("environment") or {}
     if admin_environment.get("DC_AUTH_URI") != "http://dc-identity:8201":
         fail("dc-admin must read the logical dc-auth Outbox source from dc-identity")
@@ -585,6 +630,9 @@ def validate(data: dict) -> tuple[int, int]:
     for dependency in ("dc-identity", "dc-content-aggregate", "dc-discovery", "dc-recommend"):
         if dependency not in gateway_dependencies:
             fail(f"dc-gateway must depend on {dependency} for aggregate routing")
+    notification_dependency = gateway_dependencies.get("dc-notification") or {}
+    if notification_dependency.get("condition") != "service_healthy":
+        fail("dc-gateway must wait for healthy dc-notification before Notification cutover")
     discovery_environment = services["dc-discovery"].get("environment") or {}
     if "DC_SEARCH_URI" in discovery_environment:
         fail("dc-discovery must embed search instead of proxying DC_SEARCH_URI")

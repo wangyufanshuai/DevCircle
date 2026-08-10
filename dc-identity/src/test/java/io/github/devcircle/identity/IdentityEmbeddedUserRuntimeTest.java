@@ -61,12 +61,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "devcircle.user-runtime.flyway-enabled=true",
         "devcircle.user-runtime.flyway-locations=classpath:db/identity-user-test-migration",
         "devcircle.interaction-runtime.flyway-enabled=false",
+        "devcircle.notification-runtime.flyway-enabled=false",
         "devcircle.interaction-runtime.datasource.url=jdbc:h2:mem:identity-user-interaction;MODE=MySQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;DB_CLOSE_DELAY=-1",
         "devcircle.interaction-runtime.datasource.username=sa",
         "devcircle.interaction-runtime.datasource.password=",
         "devcircle.user.profile-backfill.enabled=false",
         "devcircle.outbox.enabled=true",
         "devcircle.outbox.initial-delay-ms=3600000",
+        "devcircle.kafka.topics.enabled=false",
         "spring.kafka.listener.auto-startup=false",
         "management.tracing.enabled=false"
 })

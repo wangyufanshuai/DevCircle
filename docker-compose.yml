@@ -234,7 +234,7 @@ services:
     profiles: ["app", "demo"]
     build:
       <<: *service-build
-      args: { JAR_FILE: dc-notification/target/dc-notification-0.1.0-SNAPSHOT.jar }
+      args: { JAR_FILE: dc-notification/target/dc-notification-0.1.0-SNAPSHOT-exec.jar }
     environment: *service-env
     ports: ["8108:8108"]
     depends_on:

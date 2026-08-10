@@ -31,6 +31,8 @@ def app_environment() -> dict[str, str]:
         "SPRINGDOC_SWAGGER_UI_ENABLED": "false",
         "MANAGEMENT_METRICS_DISTRIBUTION_PERCENTILES_HISTOGRAM_HTTP_SERVER_REQUESTS": "true",
         "OTEL_EXPORTER_OTLP_ENDPOINT": "http://jaeger:4318",
+        "PUBLIC_ORIGIN": "https://mysticverse.example.com",
+        "S3_PRESIGN_ENDPOINT": "https://mysticverse.example.com",
         "DEVCIRCLE_INTERNAL_OPS_KEY": "Ops-4w-N8-kR2-sV7-xM5-qL9-cD1-pT6-yH",
     }
 
@@ -107,7 +109,10 @@ def valid_compose() -> dict:
     })
     services["dc-gateway"]["depends_on"] = {
         name: {"condition": "service_healthy"}
-        for name in ("dc-identity", "dc-content-aggregate", "dc-discovery", "dc-recommend")
+        for name in (
+            "dc-identity", "dc-content-aggregate", "dc-discovery", "dc-recommend",
+            "dc-notification",
+        )
     }
     services["dc-admin"]["environment"].update({
         "DC_AUTH_URI": "http://dc-identity:8201",
@@ -119,10 +124,17 @@ def valid_compose() -> dict:
     })
     services["dc-identity"]["environment"].update({
         "IDENTITY_AUTH_DB_POOL_MAX_SIZE": "6",
-        "IDENTITY_USER_DB_POOL_MAX_SIZE": "5",
-        "IDENTITY_INTERACTION_DB_POOL_MAX_SIZE": "5",
+        "IDENTITY_USER_DB_POOL_MAX_SIZE": "4",
+        "IDENTITY_INTERACTION_DB_POOL_MAX_SIZE": "3",
+        "IDENTITY_NOTIFICATION_DB_POOL_MAX_SIZE": "3",
         "INTERACTION_FLYWAY_ENABLED": "true",
         "INTERACTION_RUNTIME_OUTBOX_ENABLED": "true",
+        "NOTIFICATION_RUNTIME_API_ENABLED": "false",
+        "NOTIFICATION_FLYWAY_ENABLED": "false",
+        "NOTIFICATION_RUNTIME_CONSUMER_ENABLED": "false",
+        "NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED": "false",
+        "NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED": "false",
+        "DC_NOTIFICATION_URI": "http://dc-notification:8108",
     })
     services["dc-content-aggregate"]["environment"].update({
         "DC_USER_URI": "http://dc-identity:8201",
@@ -235,8 +247,21 @@ class ProductionResourceBudgetTest(unittest.TestCase):
             "IDENTITY_AUTH_DB_POOL_MAX_SIZE": "6",
             "IDENTITY_USER_DB_POOL_MAX_SIZE": "6",
             "IDENTITY_INTERACTION_DB_POOL_MAX_SIZE": "6",
+            "IDENTITY_NOTIFICATION_DB_POOL_MAX_SIZE": "6",
         })
-        with self.assertRaisesRegex(ValueError, "aggregate Auth, User and Interaction pool ceiling"):
+        with self.assertRaisesRegex(ValueError, "aggregate Auth, User, Interaction and Notification pool ceiling"):
+            budgets.validate(self.compose)
+
+    def test_rejects_notification_dual_ownership_or_broken_rollback_uri(self) -> None:
+        self.compose["services"]["dc-identity"]["environment"][
+            "NOTIFICATION_RUNTIME_CONSUMER_ENABLED"
+        ] = "true"
+        with self.assertRaisesRegex(ValueError, "disable Notification consumer"):
+            budgets.validate(self.compose)
+
+        self.compose = valid_compose()
+        self.compose["services"]["dc-identity"]["environment"]["DC_NOTIFICATION_URI"] = "http://wrong:8108"
+        with self.assertRaisesRegex(ValueError, "rollback compatibility"):
             budgets.validate(self.compose)
 
     def test_rejects_a_missing_memory_limit(self) -> None:
@@ -342,6 +367,18 @@ class ProductionResourceBudgetTest(unittest.TestCase):
         self.compose = valid_compose()
         del self.compose["services"]["dc-gateway"]["environment"]["DC_USER_URI"]
         with self.assertRaisesRegex(ValueError, "DC_USER_URI"):
+            budgets.validate(self.compose)
+
+        self.compose = valid_compose()
+        del self.compose["services"]["dc-gateway"]["depends_on"]["dc-notification"]
+        with self.assertRaisesRegex(ValueError, "wait for healthy dc-notification"):
+            budgets.validate(self.compose)
+
+        self.compose = valid_compose()
+        self.compose["services"]["dc-gateway"]["depends_on"]["dc-notification"][
+            "condition"
+        ] = "service_started"
+        with self.assertRaisesRegex(ValueError, "wait for healthy dc-notification"):
             budgets.validate(self.compose)
 
         self.compose = valid_compose()
@@ -548,6 +585,7 @@ class HelmTopologyContractTest(unittest.TestCase):
             "IDENTITY_AUTH_DB_POOL_MAX_SIZE": "10",
             "IDENTITY_USER_DB_POOL_MAX_SIZE": "10",
             "IDENTITY_INTERACTION_DB_POOL_MAX_SIZE": "10",
+            "IDENTITY_NOTIFICATION_DB_POOL_MAX_SIZE": "10",
         })
         excessive["replicaCount"] = "3"
         with self.assertRaisesRegex(ValueError, "fit identityDatabaseConnectionBudget"):
@@ -562,6 +600,17 @@ class HelmTopologyContractTest(unittest.TestCase):
         undersized["identityDatabaseConnectionBudget"] = "31"
         with self.assertRaisesRegex(ValueError, "fit identityDatabaseConnectionBudget"):
             budgets.validate_helm_topology(self.values, undersized, self.template)
+
+    def test_rejects_helm_notification_dual_ownership_or_broken_rollback_uri(self) -> None:
+        dual_owner = copy.deepcopy(self.production)
+        dual_owner["services"]["identity"]["env"]["NOTIFICATION_FLYWAY_ENABLED"] = "true"
+        with self.assertRaisesRegex(ValueError, "disable Notification Flyway"):
+            budgets.validate_helm_topology(self.values, dual_owner, self.template)
+
+        self_http = copy.deepcopy(self.values)
+        self_http["services"]["identity"]["env"]["DC_NOTIFICATION_URI"] = "http://wrong:8108"
+        with self.assertRaisesRegex(ValueError, "rollback compatibility"):
+            budgets.validate_helm_topology(self_http, self.production, self.template)
 
     def test_rejects_internal_or_mismatched_browser_object_storage_endpoints(self) -> None:
         internal = copy.deepcopy(self.production)

@@ -19,12 +19,13 @@ import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
 
-/** Owns Auth, User and Interaction persistence while their schemas share one deployment. */
+/** Owns Auth, User, Interaction and Notification persistence while their schemas share one deployment. */
 @Configuration(proxyBeanMethods = false)
 class IdentityDataSourceConfig {
     static final String AUTH_MIGRATION_LOCATION = "classpath:db/migration";
     static final String USER_MIGRATION_LOCATION = "classpath:db/user-migration";
     static final String INTERACTION_MIGRATION_LOCATION = "classpath:db/interaction-migration";
+    static final String NOTIFICATION_MIGRATION_LOCATION = "classpath:db/notification-migration";
 
     @Bean("authDataSourceProperties")
     @ConfigurationProperties("devcircle.identity.auth-datasource")
@@ -41,6 +42,12 @@ class IdentityDataSourceConfig {
     @Bean("interactionDataSourceProperties")
     @ConfigurationProperties("devcircle.interaction-runtime.datasource")
     IdentityDataSourceProperties interactionDataSourceProperties() {
+        return new IdentityDataSourceProperties();
+    }
+
+    @Bean("notificationDataSourceProperties")
+    @ConfigurationProperties("devcircle.notification-runtime.datasource")
+    IdentityDataSourceProperties notificationDataSourceProperties() {
         return new IdentityDataSourceProperties();
     }
 
@@ -63,6 +70,12 @@ class IdentityDataSourceConfig {
         return dataSource("identity-interaction", properties);
     }
 
+    @Bean(name = "notificationDataSource", destroyMethod = "close")
+    DataSource notificationDataSource(
+            @Qualifier("notificationDataSourceProperties") IdentityDataSourceProperties properties) {
+        return dataSource("identity-notification", properties);
+    }
+
     @Bean
     @Primary
     JdbcClient jdbcClient(@Qualifier("dataSource") DataSource dataSource) {
@@ -76,6 +89,11 @@ class IdentityDataSourceConfig {
 
     @Bean("interactionJdbcClient")
     JdbcClient interactionJdbcClient(@Qualifier("interactionDataSource") DataSource dataSource) {
+        return JdbcClient.create(dataSource);
+    }
+
+    @Bean("notificationJdbcClient")
+    JdbcClient notificationJdbcClient(@Qualifier("notificationDataSource") DataSource dataSource) {
         return JdbcClient.create(dataSource);
     }
 
@@ -93,6 +111,12 @@ class IdentityDataSourceConfig {
     @Bean("interactionTransactionManager")
     PlatformTransactionManager interactionTransactionManager(
             @Qualifier("interactionDataSource") DataSource dataSource) {
+        return new DataSourceTransactionManager(dataSource);
+    }
+
+    @Bean("notificationTransactionManager")
+    PlatformTransactionManager notificationTransactionManager(
+            @Qualifier("notificationDataSource") DataSource dataSource) {
         return new DataSourceTransactionManager(dataSource);
     }
 
@@ -158,6 +182,29 @@ class IdentityDataSourceConfig {
             @Qualifier("interactionFlyway") Flyway interactionFlyway) {
         FlywayMigrationInitializer initializer = new FlywayMigrationInitializer(interactionFlyway);
         initializer.setOrder(2);
+        return initializer;
+    }
+
+    @Bean("notificationFlyway")
+    @ConditionalOnProperty(name = "devcircle.notification-runtime.flyway-enabled",
+            havingValue = "true", matchIfMissing = true)
+    Flyway notificationFlyway(
+            @Qualifier("notificationDataSource") DataSource dataSource,
+            @Value("${devcircle.notification-runtime.flyway-locations:"
+                    + NOTIFICATION_MIGRATION_LOCATION + "}") String migrationLocations) {
+        return Flyway.configure()
+                .dataSource(dataSource)
+                .locations(migrationLocations)
+                .load();
+    }
+
+    @Bean("notificationFlywayInitializer")
+    @ConditionalOnProperty(name = "devcircle.notification-runtime.flyway-enabled",
+            havingValue = "true", matchIfMissing = true)
+    FlywayMigrationInitializer notificationFlywayInitializer(
+            @Qualifier("notificationFlyway") Flyway notificationFlyway) {
+        FlywayMigrationInitializer initializer = new FlywayMigrationInitializer(notificationFlyway);
+        initializer.setOrder(3);
         return initializer;
     }
 

@@ -7,9 +7,12 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 30s
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/dc_notification?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${NOTIFICATION_MYSQL_DATABASE:dc_notification}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
     username: ${MYSQL_USER:devcircle}
     password: ${MYSQL_PASSWORD:devcircle}
+  flyway:
+    enabled: true
+    locations: classpath:db/notification-migration
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     consumer:
@@ -26,6 +29,14 @@ spring:
     listener:
       ack-mode: record
 devcircle:
+  notification-runtime:
+    # The standalone deployment owns these capabilities until production traffic
+    # is deliberately cut over to dc-identity.
+    api-enabled: true
+    consumer-enabled: true
+    topic-admin-enabled: true
+    websocket-enabled: true
+    allowed-origin: ${PUBLIC_ORIGIN:http://localhost:5501}
   content:
     base-url: ${DEVCIRCLE_CONTENT_BASE_URL:http://localhost:8103}
 management:

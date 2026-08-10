@@ -23,6 +23,7 @@ x-app-env: &app-env
   S3_ENDPOINT: http://minio:9000
   S3_PRESIGN_ENDPOINT: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN is required}
   S3_PUBLIC_BASE_URL: ${PUBLIC_ORIGIN}/devcircle
+  PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN is required}
   S3_BUCKET: devcircle
   S3_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
   S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
@@ -297,20 +298,31 @@ services:
     image: ghcr.io/wangyufanshuai/devcircle/dc-identity:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
     environment:
       <<: *app-env
-      # Identity owns three bounded logical pools: 6 Auth + 5 User + 5 Interaction = 16.
+      # Four logical schemas share the existing 16-connection per-replica ceiling.
+      # Notification remains read-only here until its explicit production cutover.
       IDENTITY_AUTH_DB_POOL_MAX_SIZE: ${IDENTITY_AUTH_DB_POOL_MAX_SIZE:-6}
       IDENTITY_AUTH_DB_POOL_MIN_IDLE: ${IDENTITY_AUTH_DB_POOL_MIN_IDLE:-1}
       IDENTITY_AUTH_DB_POOL_CONNECTION_TIMEOUT_MS: ${IDENTITY_AUTH_DB_POOL_CONNECTION_TIMEOUT_MS:-3000}
-      IDENTITY_USER_DB_POOL_MAX_SIZE: ${IDENTITY_USER_DB_POOL_MAX_SIZE:-5}
+      IDENTITY_USER_DB_POOL_MAX_SIZE: ${IDENTITY_USER_DB_POOL_MAX_SIZE:-4}
       IDENTITY_USER_DB_POOL_MIN_IDLE: ${IDENTITY_USER_DB_POOL_MIN_IDLE:-1}
       IDENTITY_USER_DB_POOL_CONNECTION_TIMEOUT_MS: ${IDENTITY_USER_DB_POOL_CONNECTION_TIMEOUT_MS:-3000}
-      IDENTITY_INTERACTION_DB_POOL_MAX_SIZE: ${IDENTITY_INTERACTION_DB_POOL_MAX_SIZE:-5}
+      IDENTITY_INTERACTION_DB_POOL_MAX_SIZE: ${IDENTITY_INTERACTION_DB_POOL_MAX_SIZE:-3}
       IDENTITY_INTERACTION_DB_POOL_MIN_IDLE: ${IDENTITY_INTERACTION_DB_POOL_MIN_IDLE:-1}
       IDENTITY_INTERACTION_DB_POOL_CONNECTION_TIMEOUT_MS: ${IDENTITY_INTERACTION_DB_POOL_CONNECTION_TIMEOUT_MS:-3000}
+      IDENTITY_NOTIFICATION_DB_POOL_MAX_SIZE: ${IDENTITY_NOTIFICATION_DB_POOL_MAX_SIZE:-3}
+      IDENTITY_NOTIFICATION_DB_POOL_MIN_IDLE: ${IDENTITY_NOTIFICATION_DB_POOL_MIN_IDLE:-1}
+      IDENTITY_NOTIFICATION_DB_POOL_CONNECTION_TIMEOUT_MS: ${IDENTITY_NOTIFICATION_DB_POOL_CONNECTION_TIMEOUT_MS:-3000}
       # Identity is the sole Interaction owner in the default production topology.
       INTERACTION_FLYWAY_ENABLED: "true"
       INTERACTION_RUNTIME_OUTBOX_ENABLED: "true"
+      # Standalone dc-notification is the only API/migration/consumer/topic/WebSocket owner.
+      NOTIFICATION_RUNTIME_API_ENABLED: "false"
+      NOTIFICATION_FLYWAY_ENABLED: "false"
+      NOTIFICATION_RUNTIME_CONSUMER_ENABLED: "false"
+      NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED: "false"
+      NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: "false"
       DC_CONTENT_URI: http://dc-content-aggregate:8202
+      # One-version compatibility for rollback to the previous Dashboard implementation.
       DC_NOTIFICATION_URI: http://dc-notification:8108
     expose: ["8201"]
     depends_on:
@@ -369,6 +381,7 @@ services:
       dc-content-aggregate: { condition: service_healthy }
       dc-discovery: { condition: service_healthy }
       dc-recommend: { condition: service_healthy }
+      dc-notification: { condition: service_healthy }
       dc-comment: { condition: service_healthy }
       dc-admin: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }

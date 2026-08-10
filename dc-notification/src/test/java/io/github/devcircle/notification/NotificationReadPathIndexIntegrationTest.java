@@ -25,7 +25,7 @@ class NotificationReadPathIndexIntegrationTest {
     static void migrate() {
         Flyway.configure()
                 .dataSource(mysql.getJdbcUrl(), mysql.getUsername(), mysql.getPassword())
-                .locations("classpath:db/migration")
+                .locations("classpath:db/notification-migration")
                 .load()
                 .migrate();
         jdbc = new JdbcTemplate(new DriverManagerDataSource(

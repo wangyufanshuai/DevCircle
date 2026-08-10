@@ -29,8 +29,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "spring.flyway.enabled=false",
         "devcircle.user-runtime.flyway-enabled=false",
         "devcircle.interaction-runtime.flyway-enabled=false",
+        "devcircle.notification-runtime.flyway-enabled=false",
         "devcircle.user.profile-backfill.enabled=false",
         "devcircle.outbox.enabled=false",
+        "devcircle.kafka.topics.enabled=false",
         "spring.kafka.listener.auto-startup=false",
         "management.tracing.enabled=false"
 })
@@ -54,6 +56,11 @@ class IdentityApplicationContextTest {
         assertThat(context.getBean(IdentityInteractionOutboxStatus.class)).isNotNull();
         assertThat(context.containsBean("userReliableOutboxWorker")).isFalse();
         assertThat(context.containsBean("interactionReliableOutboxWorker")).isFalse();
+        assertThat(context.containsBean("notificationEventConsumer")).isFalse();
+        assertThat(context.containsBean("notificationFlyway")).isFalse();
+        assertThat(context.containsBean("notificationController")).isFalse();
+        assertThat(context.containsBean("notificationKafkaTopics")).isFalse();
+        assertThat(context.containsBean("webSocketConfig")).isFalse();
         assertThat(context.containsBean("authApplication")).isFalse();
         assertThat(Arrays.stream(context.getBeanDefinitionNames()))
                 .noneMatch(name -> name.toLowerCase().contains("routedefinition"));

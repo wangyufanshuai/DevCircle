@@ -7,7 +7,7 @@ image:
 
 replicaCount: 2
 
-# 2 replicas * (6 Auth + 5 User + 5 Interaction) = 32 connections.
+# 2 replicas * (6 Auth + 4 User + 3 Interaction + 3 Notification) = 32 connections.
 # This is the complete Identity share of the single-host MySQL 120-connection ceiling.
 identityDatabaseConnectionBudget: 32
 
@@ -21,19 +21,29 @@ services:
       GITHUB_CALLBACK_URI: https://mysticverse.example.com/api/auth/oauth2/github/callback
       GITHUB_OAUTH_ENABLED: "true"
       PUBLIC_ORIGIN: https://mysticverse.example.com
-      # Per replica: 6 Auth + 5 User + 5 Interaction = 16; two replicas cap at 32.
+      # Per replica: 6 Auth + 4 User + 3 Interaction + 3 Notification = 16.
       IDENTITY_AUTH_DB_POOL_MAX_SIZE: "6"
       IDENTITY_AUTH_DB_POOL_MIN_IDLE: "1"
-      IDENTITY_USER_DB_POOL_MAX_SIZE: "5"
+      IDENTITY_USER_DB_POOL_MAX_SIZE: "4"
       IDENTITY_USER_DB_POOL_MIN_IDLE: "1"
-      IDENTITY_INTERACTION_DB_POOL_MAX_SIZE: "5"
+      IDENTITY_INTERACTION_DB_POOL_MAX_SIZE: "3"
       IDENTITY_INTERACTION_DB_POOL_MIN_IDLE: "1"
+      IDENTITY_NOTIFICATION_DB_POOL_MAX_SIZE: "3"
+      IDENTITY_NOTIFICATION_DB_POOL_MIN_IDLE: "1"
       # Identity is the sole Interaction owner in the default production topology.
       INTERACTION_FLYWAY_ENABLED: "true"
       INTERACTION_RUNTIME_OUTBOX_ENABLED: "true"
+      NOTIFICATION_RUNTIME_API_ENABLED: "false"
+      NOTIFICATION_FLYWAY_ENABLED: "false"
+      NOTIFICATION_RUNTIME_CONSUMER_ENABLED: "false"
+      NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED: "false"
+      NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: "false"
     secretEnvRefs:
       GITHUB_CLIENT_ID: GITHUB_CLIENT_ID
       GITHUB_CLIENT_SECRET: GITHUB_CLIENT_SECRET
+  notification:
+    env:
+      PUBLIC_ORIGIN: https://mysticverse.example.com
 
 env:
   DEVCIRCLE_PRODUCTION_MODE: "true"

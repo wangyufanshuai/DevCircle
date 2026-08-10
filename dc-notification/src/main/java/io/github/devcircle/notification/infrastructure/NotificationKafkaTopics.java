@@ -9,9 +9,12 @@ import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.KafkaAdmin;
 
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(prefix = "devcircle.kafka.topics", name = "enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(prefix = "devcircle.notification-runtime", name = "topic-admin-enabled",
+        havingValue = "true", matchIfMissing = true)
 class NotificationKafkaTopics {
     @Bean
+    @ConditionalOnProperty(prefix = "devcircle.kafka.topics", name = "enabled",
+            havingValue = "true", matchIfMissing = true)
     KafkaAdmin.NewTopics notificationTopics() {
         return new KafkaAdmin.NewTopics(
                 topic(EventTopics.AUDIT_COMPLETED), deadLetter(EventTopics.AUDIT_COMPLETED),

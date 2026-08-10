@@ -6,7 +6,7 @@ image:
 
 replicaCount: 1
 
-# Explicit aggregate ceiling for Identity's Auth/User/Interaction Hikari pools.
+# Explicit aggregate ceiling for Identity's Auth/User/Interaction/Notification Hikari pools.
 # The production override accounts for all replicas on the target MySQL host.
 identityDatabaseConnectionBudget: 12
 
@@ -23,17 +23,27 @@ services:
       DC_DISCOVERY_URI: http://dc-discovery:8203
       DC_SEARCH_URI: http://dc-discovery:8203
       DC_RECOMMEND_URI: http://dc-recommend:8107
+      DC_NOTIFICATION_URI: http://dc-notification:8108
   identity:
     port: 8201
     env:
       IDENTITY_AUTH_DB_POOL_MAX_SIZE: "4"
       IDENTITY_AUTH_DB_POOL_MIN_IDLE: "1"
-      IDENTITY_USER_DB_POOL_MAX_SIZE: "4"
+      IDENTITY_USER_DB_POOL_MAX_SIZE: "3"
       IDENTITY_USER_DB_POOL_MIN_IDLE: "1"
-      IDENTITY_INTERACTION_DB_POOL_MAX_SIZE: "4"
+      IDENTITY_INTERACTION_DB_POOL_MAX_SIZE: "3"
       IDENTITY_INTERACTION_DB_POOL_MIN_IDLE: "1"
+      IDENTITY_NOTIFICATION_DB_POOL_MAX_SIZE: "2"
+      IDENTITY_NOTIFICATION_DB_POOL_MIN_IDLE: "1"
       INTERACTION_FLYWAY_ENABLED: "true"
       INTERACTION_RUNTIME_OUTBOX_ENABLED: "true"
+      NOTIFICATION_RUNTIME_API_ENABLED: "false"
+      NOTIFICATION_FLYWAY_ENABLED: "false"
+      NOTIFICATION_RUNTIME_CONSUMER_ENABLED: "false"
+      NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED: "false"
+      NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: "false"
+      # One-version rollback compatibility; current Dashboard does not consume it.
+      DC_NOTIFICATION_URI: http://dc-notification:8108
   content-aggregate:
     port: 8202
     env:
@@ -42,7 +52,10 @@ services:
   discovery: { port: 8203 }
   comment: { port: 8104 }
   recommend: { port: 8107 }
-  notification: { port: 8108 }
+  notification:
+    port: 8108
+    env:
+      PUBLIC_ORIGIN: http://devcircle.local
   admin:
     port: 8110
     env:
@@ -65,7 +78,6 @@ env:
   DEVCIRCLE_CONTENT_BASE_URL: http://dc-content-aggregate:8202
   DC_CONTENT_URI: http://dc-content-aggregate:8202
   DC_COMMENT_URI: http://dc-comment:8104
-  DC_NOTIFICATION_URI: http://dc-notification:8108
   DC_ADMIN_URI: http://dc-admin:8110
 
 secretEnv: {}

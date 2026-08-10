@@ -196,7 +196,7 @@ class NotificationRepositoryStateTest {
             return JdbcClient.create(dataSource);
         }
 
-        @Bean
+        @Bean("notificationTransactionManager")
         PlatformTransactionManager transactionManager(DataSource dataSource) {
             return new DataSourceTransactionManager(dataSource);
         }

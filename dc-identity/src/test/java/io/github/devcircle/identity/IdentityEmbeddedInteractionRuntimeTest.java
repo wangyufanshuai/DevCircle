@@ -65,9 +65,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "devcircle.interaction-runtime.datasource.minimum-idle=0",
         "devcircle.interaction-runtime.flyway-enabled=true",
         "devcircle.interaction-runtime.flyway-locations=classpath:db/identity-interaction-test-migration",
+        "devcircle.notification-runtime.flyway-enabled=false",
         "devcircle.user.profile-backfill.enabled=false",
         "devcircle.outbox.enabled=true",
         "devcircle.outbox.initial-delay-ms=3600000",
+        "devcircle.kafka.topics.enabled=false",
         "spring.kafka.listener.auto-startup=false",
         "management.tracing.enabled=false"
 })

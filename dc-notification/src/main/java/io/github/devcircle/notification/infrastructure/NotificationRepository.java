@@ -3,6 +3,7 @@ package io.github.devcircle.notification.infrastructure;
 import io.github.devcircle.notification.api.NotificationView;
 import io.github.devcircle.common.event.EventFingerprint;
 import io.github.devcircle.common.event.ValidatedEvent;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,7 +17,7 @@ public class NotificationRepository {
     private static final String LEGACY_EVENT_FINGERPRINT = "0".repeat(64);
     private final JdbcClient jdbcClient;
 
-    public NotificationRepository(JdbcClient jdbcClient) {
+    public NotificationRepository(@Qualifier("notificationJdbcClient") JdbcClient jdbcClient) {
         this.jdbcClient = jdbcClient;
     }
 
@@ -59,7 +60,7 @@ public class NotificationRepository {
         return count == null ? 0 : count;
     }
 
-    @Transactional
+    @Transactional(transactionManager = "notificationTransactionManager")
     public boolean createOnce(ValidatedEvent sourceEvent, Long receiverId, Long actorId, String type,
                               String title, String content, String targetType, Long targetId, String targetRoute) {
         if (!claimConsumerEvent(sourceEvent)) return false;
@@ -134,7 +135,7 @@ public class NotificationRepository {
         }
     }
 
-    @Transactional
+    @Transactional(transactionManager = "notificationTransactionManager")
     public long markAllRead(Long receiverId, String idempotencyKey) {
         int claimed = jdbcClient.sql("""
                         INSERT IGNORE INTO notification_idempotency_record(idempotency_key, user_id, operation, resource_id)
@@ -166,7 +167,7 @@ public class NotificationRepository {
         return updated;
     }
 
-    @Transactional
+    @Transactional(transactionManager = "notificationTransactionManager")
     public boolean markRead(Long receiverId, Long notificationId, String idempotencyKey) {
         int claimed = jdbcClient.sql("""
                         INSERT IGNORE INTO notification_idempotency_record(idempotency_key, user_id, operation, resource_id)
