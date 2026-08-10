@@ -9,6 +9,7 @@ import io.github.devcircle.common.event.EventFingerprint;
 import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.common.event.ValidatedEvent;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,7 +23,7 @@ public class UserGraphRepository {
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
 
-    public UserGraphRepository(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+    public UserGraphRepository(@Qualifier("userJdbcClient") JdbcClient jdbcClient, ObjectMapper objectMapper) {
         this.jdbcClient = jdbcClient;
         this.objectMapper = objectMapper;
     }
@@ -115,7 +116,7 @@ public class UserGraphRepository {
                 new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "用户不存在或资料尚未完成同步"));
     }
 
-    @Transactional
+    @Transactional(transactionManager = "userTransactionManager")
     public boolean synchronizeProfile(ValidatedEvent event, Long userId, String displayName) {
         if (!claimConsumerEvent(event)) return false;
         jdbcClient.sql("INSERT IGNORE INTO user_profile(user_id, username) VALUES (:userId, :username)")

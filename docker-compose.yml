@@ -161,7 +161,7 @@ services:
     profiles: ["app", "demo"]
     build:
       <<: *service-build
-      args: { JAR_FILE: dc-user/target/dc-user-0.1.0-SNAPSHOT.jar }
+      args: { JAR_FILE: dc-user/target/dc-user-0.1.0-SNAPSHOT-exec.jar }
     environment: *service-env
     ports: ["8102:8102"]
     depends_on:

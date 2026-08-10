@@ -1,6 +1,7 @@
 package io.github.devcircle.user.infrastructure;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -9,7 +10,7 @@ public class LegacyProfileBackfillRepository {
     private final JdbcClient jdbcClient;
     private final String authSchema;
 
-    public LegacyProfileBackfillRepository(JdbcClient jdbcClient,
+    public LegacyProfileBackfillRepository(@Qualifier("userJdbcClient") JdbcClient jdbcClient,
                                            @Value("${devcircle.user.auth-schema:dc_auth}") String authSchema) {
         if (authSchema == null || !authSchema.matches("[A-Za-z0-9_]+")) {
             throw new IllegalArgumentException("Invalid auth schema name");

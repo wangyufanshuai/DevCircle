@@ -27,7 +27,7 @@ public class UserGraphService {
         this(repository);
     }
 
-    @Transactional
+    @Transactional(transactionManager = "userTransactionManager")
     public FollowResult follow(Long userId, Long targetUserId, String idempotencyKey) {
         validate(userId, targetUserId, idempotencyKey);
         UserGraphRepository.UserProfile actor = repository.requireProfile(userId);
@@ -40,7 +40,7 @@ public class UserGraphService {
         return new FollowResult(targetUserId, true, !inserted);
     }
 
-    @Transactional
+    @Transactional(transactionManager = "userTransactionManager")
     public FollowResult unfollow(Long userId, Long targetUserId, String idempotencyKey) {
         validate(userId, targetUserId, idempotencyKey);
         UserGraphRepository.UserProfile actor = repository.requireProfile(userId);

@@ -276,7 +276,7 @@ jobs:
         run: |
           if [[ "${{ matrix.module }}" == "dc-auth" ]]; then
             path="dc-auth/target/dc-auth-0.1.0-SNAPSHOT-exec.jar"
-          elif [[ "${{ matrix.module }}" == "dc-search" || "${{ matrix.module }}" == "dc-content" || "${{ matrix.module }}" == "dc-file" ]]; then
+          elif [[ "${{ matrix.module }}" == "dc-user" || "${{ matrix.module }}" == "dc-search" || "${{ matrix.module }}" == "dc-content" || "${{ matrix.module }}" == "dc-file" ]]; then
             # Legacy rollback images use executable classifiers; production
             # aggregates embed the ordinary thin dependency artifacts.
             path="${{ matrix.module }}/target/${{ matrix.module }}-0.1.0-SNAPSHOT-exec.jar"

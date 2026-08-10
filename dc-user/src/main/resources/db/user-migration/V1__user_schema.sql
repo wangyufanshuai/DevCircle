@@ -18,4 +18,3 @@ CREATE TABLE IF NOT EXISTS user_follow (
     UNIQUE KEY uk_follow_pair (follower_id, followee_id),
     INDEX idx_followee (followee_id)
 );
-

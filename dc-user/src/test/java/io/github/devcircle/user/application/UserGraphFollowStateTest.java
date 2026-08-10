@@ -236,7 +236,7 @@ class UserGraphFollowStateTest {
         }
 
         @Bean
-        PlatformTransactionManager transactionManager(DataSource dataSource) {
+        PlatformTransactionManager userTransactionManager(DataSource dataSource) {
             return new DataSourceTransactionManager(dataSource);
         }
 
