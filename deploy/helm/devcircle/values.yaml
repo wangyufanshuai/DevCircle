@@ -18,6 +18,7 @@ services:
       DC_AUTH_URI: http://dc-identity:8201
       DC_IDENTITY_URI: http://dc-identity:8201
       DC_USER_URI: http://dc-identity:8201
+      DC_INTERACTION_URI: http://dc-identity:8201
       DC_CONTENT_AGGREGATE_URI: http://dc-content-aggregate:8202
       DC_DISCOVERY_URI: http://dc-discovery:8203
       DC_SEARCH_URI: http://dc-discovery:8203
@@ -31,14 +32,15 @@ services:
       IDENTITY_USER_DB_POOL_MIN_IDLE: "1"
       IDENTITY_INTERACTION_DB_POOL_MAX_SIZE: "4"
       IDENTITY_INTERACTION_DB_POOL_MIN_IDLE: "1"
-      INTERACTION_FLYWAY_ENABLED: "false"
-      INTERACTION_RUNTIME_OUTBOX_ENABLED: "false"
+      INTERACTION_FLYWAY_ENABLED: "true"
+      INTERACTION_RUNTIME_OUTBOX_ENABLED: "true"
   content-aggregate:
     port: 8202
-    env: { DC_USER_URI: http://dc-identity:8201 }
+    env:
+      DC_USER_URI: http://dc-identity:8201
+      DC_INTERACTION_URI: http://dc-identity:8201
   discovery: { port: 8203 }
   comment: { port: 8104 }
-  interaction: { port: 8105 }
   recommend: { port: 8107 }
   notification: { port: 8108 }
   admin:
@@ -48,6 +50,8 @@ services:
       DC_USER_URI: http://dc-identity:8201
       DC_AUTH_OUTBOX_PATH: /internal/ops/identity/outbox/auth/status
       DC_USER_OUTBOX_PATH: /internal/ops/identity/outbox/user/status
+      DC_INTERACTION_URI: http://dc-identity:8201
+      DC_INTERACTION_OUTBOX_PATH: /internal/ops/identity/outbox/interaction/status
 
 env:
   MYSQL_HOST: mysql
@@ -61,7 +65,6 @@ env:
   DEVCIRCLE_CONTENT_BASE_URL: http://dc-content-aggregate:8202
   DC_CONTENT_URI: http://dc-content-aggregate:8202
   DC_COMMENT_URI: http://dc-comment:8104
-  DC_INTERACTION_URI: http://dc-interaction:8105
   DC_NOTIFICATION_URI: http://dc-notification:8108
   DC_ADMIN_URI: http://dc-admin:8110
 

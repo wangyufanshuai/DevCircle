@@ -20,6 +20,7 @@ class OutboxFleetHealthConfigurationTest {
                     "devcircle.internal.content-uri=http://127.0.0.1:8103",
                     "devcircle.internal.comment-uri=http://127.0.0.1:8104",
                     "devcircle.internal.interaction-uri=http://127.0.0.1:8105",
+                    "devcircle.internal.interaction-outbox-path=/internal/ops/identity/outbox/interaction/status",
                     "devcircle.internal.ops-key=test-internal-operations-key");
 
     @Test

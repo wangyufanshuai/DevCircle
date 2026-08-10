@@ -18,7 +18,7 @@ GIB = 1024 * MIB
 IDENTITY_DB_CONNECTIONS_PER_REPLICA = 16
 APP_SERVICES = {
     "dc-admin", "dc-comment", "dc-content-aggregate",
-    "dc-discovery", "dc-gateway", "dc-identity", "dc-interaction",
+    "dc-discovery", "dc-gateway", "dc-identity",
     "dc-notification", "dc-recommend",
 }
 OBSERVABILITY_SERVICES = {"prometheus", "alertmanager", "jaeger"}
@@ -48,6 +48,7 @@ HELM_GATEWAY_ENVIRONMENT = {
     "DC_AUTH_URI": "http://dc-identity:8201",
     "DC_IDENTITY_URI": "http://dc-identity:8201",
     "DC_USER_URI": "http://dc-identity:8201",
+    "DC_INTERACTION_URI": "http://dc-identity:8201",
     "DC_CONTENT_AGGREGATE_URI": "http://dc-content-aggregate:8202",
     "DC_DISCOVERY_URI": "http://dc-discovery:8203",
     "DC_SEARCH_URI": "http://dc-discovery:8203",
@@ -314,6 +315,8 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
     for key, expected in HELM_GATEWAY_ENVIRONMENT.items():
         if gateway_service_environment.get(key) != expected or gateway.get(key) != expected:
             fail(f"Helm gateway must explicitly set {key}={expected}")
+    if "interaction" in services:
+        fail("Helm must not deploy standalone Interaction by default")
 
     discovery_environment = _mapping(
         _mapping(services.get("discovery"), "services.discovery").get("env", {}),
@@ -321,6 +324,17 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
     )
     if "DC_SEARCH_URI" in discovery_environment or "DC_SEARCH_URI" in global_environment:
         fail("Helm discovery must embed search instead of proxying DC_SEARCH_URI")
+
+    content_environment = _mapping(
+        _mapping(services.get("content-aggregate"), "services.content-aggregate").get("env", {}),
+        "services.content-aggregate.env",
+    )
+    for key, expected in {
+        "DC_USER_URI": "http://dc-identity:8201",
+        "DC_INTERACTION_URI": "http://dc-identity:8201",
+    }.items():
+        if content_environment.get(key) != expected:
+            fail(f"Helm content-aggregate must set {key}={expected}")
 
     identity_environment = _mapping(
         _mapping(services.get("identity"), "services.identity").get("env", {}),
@@ -330,6 +344,8 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
         fail("Helm identity must embed authentication instead of proxying DC_AUTH_URI")
     if "DC_USER_URI" in identity_environment or "DC_USER_URI" in global_environment:
         fail("Helm identity must use its embedded User runtime instead of an HTTP self-call")
+    if "DC_INTERACTION_URI" in identity_environment or "DC_INTERACTION_URI" in global_environment:
+        fail("Helm identity dashboard must use its embedded Interaction runtime without an HTTP self-call")
     public_origin = _public_https_origin(values.get("publicOrigin"), "publicOrigin")
     if global_environment.get("S3_PRESIGN_ENDPOINT") != public_origin:
         fail("Helm S3_PRESIGN_ENDPOINT must match publicOrigin")
@@ -349,6 +365,10 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
             fail(f"Helm identity {key} must derive from the public HTTPS origin")
     if str(identity_environment.get("GITHUB_OAUTH_ENABLED", "")).lower() != "true":
         fail("Helm production identity must explicitly enable GitHub OAuth")
+    if str(identity_environment.get("INTERACTION_FLYWAY_ENABLED", "")).lower() != "true":
+        fail("Helm production identity must enable Interaction Flyway")
+    if str(identity_environment.get("INTERACTION_RUNTIME_OUTBOX_ENABLED", "")).lower() != "true":
+        fail("Helm production identity must enable Interaction Outbox")
     identity_pool_sizes = {}
     for domain, key in {
         "Auth": "IDENTITY_AUTH_DB_POOL_MAX_SIZE",
@@ -389,9 +409,12 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
         fail("Helm admin must read the logical dc-auth Outbox source from dc-identity")
     if admin_environment.get("DC_USER_URI") != "http://dc-identity:8201":
         fail("Helm admin must read the logical dc-user Outbox source from dc-identity")
+    if admin_environment.get("DC_INTERACTION_URI") != "http://dc-identity:8201":
+        fail("Helm admin must read the logical dc-interaction Outbox source from dc-identity")
     for key, expected in {
         "DC_AUTH_OUTBOX_PATH": "/internal/ops/identity/outbox/auth/status",
         "DC_USER_OUTBOX_PATH": "/internal/ops/identity/outbox/user/status",
+        "DC_INTERACTION_OUTBOX_PATH": "/internal/ops/identity/outbox/interaction/status",
     }.items():
         if admin_environment.get(key) != expected:
             fail(f"Helm admin must set {key}={expected}")
@@ -448,7 +471,7 @@ def validate(data: dict) -> tuple[int, int]:
     unexpected_services = set(services).difference(EXPECTED_SERVICES)
     if missing_services or unexpected_services:
         fail(
-            "production services do not match the 19-service contract: "
+            "production services do not match the 18-service contract: "
             f"missing={sorted(missing_services)} unexpected={sorted(unexpected_services)}"
         )
 
@@ -505,6 +528,10 @@ def validate(data: dict) -> tuple[int, int]:
         fail("dc-identity must embed authentication instead of proxying DC_AUTH_URI")
     if "DC_USER_URI" in identity_environment:
         fail("dc-identity must use its embedded User runtime instead of an HTTP self-call")
+    if identity_environment.get("INTERACTION_FLYWAY_ENABLED") != "true":
+        fail("dc-identity must enable Interaction Flyway in the default production topology")
+    if identity_environment.get("INTERACTION_RUNTIME_OUTBOX_ENABLED") != "true":
+        fail("dc-identity must enable Interaction Outbox in the default production topology")
     identity_pool_sizes = {}
     for domain, key in {
         "Auth": "IDENTITY_AUTH_DB_POOL_MAX_SIZE",
@@ -524,16 +551,19 @@ def validate(data: dict) -> tuple[int, int]:
         fail("dc-admin must read the logical dc-auth Outbox source from dc-identity")
     if admin_environment.get("DC_USER_URI") != "http://dc-identity:8201":
         fail("dc-admin must read the logical dc-user Outbox source from dc-identity")
+    if admin_environment.get("DC_INTERACTION_URI") != "http://dc-identity:8201":
+        fail("dc-admin must read the logical dc-interaction Outbox source from dc-identity")
     for key, expected in {
         "DC_AUTH_OUTBOX_PATH": "/internal/ops/identity/outbox/auth/status",
         "DC_USER_OUTBOX_PATH": "/internal/ops/identity/outbox/user/status",
+        "DC_INTERACTION_OUTBOX_PATH": "/internal/ops/identity/outbox/interaction/status",
     }.items():
         if admin_environment.get(key) != expected:
             fail(f"dc-admin must set {key}={expected}")
     content_environment = services["dc-content-aggregate"].get("environment") or {}
     for key, expected in {
         "DC_USER_URI": "http://dc-identity:8201",
-        "DC_INTERACTION_URI": "http://dc-interaction:8105",
+        "DC_INTERACTION_URI": "http://dc-identity:8201",
     }.items():
         if content_environment.get(key) != expected:
             fail(f"dc-content-aggregate must set {key}={expected} for detail composition")
@@ -542,7 +572,7 @@ def validate(data: dict) -> tuple[int, int]:
         "DC_AUTH_URI": "http://dc-identity:8201",
         "DC_IDENTITY_URI": "http://dc-identity:8201",
         "DC_USER_URI": "http://dc-identity:8201",
-        "DC_INTERACTION_URI": "http://dc-interaction:8105",
+        "DC_INTERACTION_URI": "http://dc-identity:8201",
         "DC_NOTIFICATION_URI": "http://dc-notification:8108",
         "DC_DISCOVERY_URI": "http://dc-discovery:8203",
         "DC_SEARCH_URI": "http://dc-discovery:8203",
@@ -683,12 +713,106 @@ def validate_legacy_user_rollback(
     return len(services), total_memory
 
 
+def validate_legacy_interaction_rollback(
+        production: dict,
+        rollback: dict,
+        production_prometheus: Path,
+        rollback_prometheus: Path,
+) -> tuple[int, int]:
+    """Validate the bounded, single-owner standalone Interaction rollback topology."""
+    validate(production)
+    services = rollback.get("services") or {}
+    expected_services = EXPECTED_SERVICES | {"dc-interaction"}
+    if set(services) != expected_services:
+        fail(
+            "legacy Interaction rollback services do not match the 19-service contract: "
+            f"missing={sorted(expected_services.difference(services))} "
+            f"unexpected={sorted(set(services).difference(expected_services))}"
+        )
+
+    interaction = services["dc-interaction"]
+    memory = int(positive_number("dc-interaction", interaction, "mem_limit"))
+    if not 384 * MIB <= memory <= 768 * MIB:
+        fail("legacy dc-interaction memory limit must stay between 384 and 768 MiB")
+    if positive_number("dc-interaction", interaction, "cpus") > 2:
+        fail("legacy dc-interaction CPU limit exceeds the single-host budget")
+    if int(positive_number("dc-interaction", interaction, "pids_limit")) > 512:
+        fail("legacy dc-interaction PID limit exceeds 512")
+    port_contract("dc-interaction", interaction)
+    logging_contract("dc-interaction", interaction)
+    if "8105" not in {str(port) for port in interaction.get("expose", [])}:
+        fail("legacy dc-interaction must expose its internal HTTP port 8105")
+    health_test = (interaction.get("healthcheck") or {}).get("test") or []
+    if "http://localhost:8105/actuator/health/readiness" not in health_test:
+        fail("legacy dc-interaction must use the readiness actuator health check")
+    interaction_environment = interaction.get("environment") or {}
+    for key, expected in PRODUCTION_ENVIRONMENT.items():
+        if str(interaction_environment.get(key, "")).lower() != expected:
+            fail(f"legacy dc-interaction must set {key}={expected}")
+    for option in ("-XX:MaxRAMPercentage=", "-XX:+ExitOnOutOfMemoryError"):
+        if option not in interaction_environment.get("JAVA_TOOL_OPTIONS", ""):
+            fail(f"legacy dc-interaction JAVA_TOOL_OPTIONS is missing {option}")
+    if not 1 <= int(interaction_environment.get("SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE", "0")) <= 10:
+        fail("legacy dc-interaction Hikari maximum pool size must be between 1 and 10")
+    if not 500 <= int(interaction_environment.get("SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT", "0")) <= 5000:
+        fail("legacy dc-interaction Hikari connection timeout must be between 500 and 5000 ms")
+    if not 8 <= int(interaction_environment.get("SERVER_TOMCAT_THREADS_MAX", "0")) <= 64:
+        fail("legacy dc-interaction Tomcat thread ceiling must be between 8 and 64")
+    if len(str(interaction_environment.get("DEVCIRCLE_INTERNAL_OPS_KEY", ""))) < 32:
+        fail("legacy dc-interaction must receive DEVCIRCLE_INTERNAL_OPS_KEY")
+
+    expected_route = "http://dc-interaction:8105"
+    for owner in ("dc-identity", "dc-gateway", "dc-content-aggregate", "dc-admin"):
+        environment = services[owner].get("environment") or {}
+        if environment.get("DC_INTERACTION_URI") != expected_route:
+            fail(f"legacy Interaction rollback must set {owner} DC_INTERACTION_URI={expected_route}")
+        dependency = (services[owner].get("depends_on") or {}).get("dc-interaction") or {}
+        if dependency.get("condition") != "service_healthy":
+            fail(f"legacy Interaction rollback must make {owner} wait for healthy dc-interaction")
+    identity_environment = services["dc-identity"].get("environment") or {}
+    for switch in ("INTERACTION_FLYWAY_ENABLED", "INTERACTION_RUNTIME_OUTBOX_ENABLED"):
+        if str(identity_environment.get(switch, "")).lower() != "false":
+            fail(f"legacy Interaction rollback must disable {switch} in dc-identity")
+    admin_environment = services["dc-admin"].get("environment") or {}
+    if admin_environment.get("DC_INTERACTION_OUTBOX_PATH") != "/internal/ops/outbox/status":
+        fail("legacy Interaction rollback must restore the standalone Outbox status path")
+
+    config_mounts = [
+        volume for volume in (services["prometheus"].get("volumes") or [])
+        if volume.get("target") == "/etc/prometheus/prometheus.yml"
+    ]
+    if len(config_mounts) != 1 or not str(config_mounts[0].get("source", "")).replace("\\", "/").endswith(
+            "/deploy/prometheus/prometheus.legacy-interaction-rollback.yml"):
+        fail("legacy Interaction rollback must mount prometheus.legacy-interaction-rollback.yml")
+    production_text = production_prometheus.read_text(encoding="utf-8")
+    rollback_text = rollback_prometheus.read_text(encoding="utf-8")
+    if "dc-interaction:8105" in production_text or "service: dc-interaction" in production_text:
+        fail("normal production Prometheus must not scrape the absent dc-interaction target")
+    if "targets: [\"dc-interaction:8105\"]" not in rollback_text \
+            or "labels: { service: dc-interaction }" not in rollback_text:
+        fail("legacy Interaction rollback Prometheus must scrape dc-interaction actuator metrics")
+
+    total_memory = sum(int(positive_number(name, config, "mem_limit"))
+                       for name, config in services.items())
+    if total_memory > 15 * GIB:
+        fail(
+            "legacy Interaction rollback aggregate container memory ceiling "
+            f"{total_memory / GIB:.2f} GiB exceeds 15 GiB"
+        )
+    return len(services), total_memory
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--compose-file", default="docker-compose.prod.yml", type=Path)
     parser.add_argument(
         "--legacy-user-overlay",
         default="deploy/compose/docker-compose.legacy-user-rollback.yml",
+        type=Path,
+    )
+    parser.add_argument(
+        "--legacy-interaction-overlay",
+        default="deploy/compose/docker-compose.legacy-interaction-rollback.yml",
         type=Path,
     )
     parser.add_argument("--env-file", default=".env.production.example", type=Path)
@@ -710,6 +834,12 @@ def main() -> int:
             Path("deploy/prometheus/prometheus.prod.yml"),
             Path("deploy/prometheus/prometheus.legacy-user-rollback.yml"),
         )
+        interaction_rollback_count, interaction_rollback_memory = validate_legacy_interaction_rollback(
+            production,
+            rendered_compose([args.compose_file, args.legacy_interaction_overlay], args.env_file),
+            Path("deploy/prometheus/prometheus.prod.yml"),
+            Path("deploy/prometheus/prometheus.legacy-interaction-rollback.yml"),
+        )
         validate_caddyfile(args.caddyfile)
         validate_production_mode_bindings(Path("."))
         validate_helm_topology(
@@ -725,6 +855,8 @@ def main() -> int:
         f"memory_ceiling={total_memory / GIB:.2f}GiB published_services={len(PUBLISHED_PORTS)} "
         f"legacy_user_services={rollback_count} "
         f"legacy_user_memory_ceiling={rollback_memory / GIB:.2f}GiB "
+        f"legacy_interaction_services={interaction_rollback_count} "
+        f"legacy_interaction_memory_ceiling={interaction_rollback_memory / GIB:.2f}GiB "
         "helm_identity_runtime=dc-auth+dc-user@dc-identity:8201"
     )
     return 0

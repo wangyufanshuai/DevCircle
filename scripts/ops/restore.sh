@@ -18,6 +18,12 @@ elif [[ "${LEGACY_USER_ROLLBACK:-false}" != "false" ]]; then
   echo "LEGACY_USER_ROLLBACK must be true or false" >&2
   exit 2
 fi
+if [[ "${LEGACY_INTERACTION_ROLLBACK:-false}" == "true" ]]; then
+  COMPOSE+=(-f "${ROOT_DIR}/deploy/compose/docker-compose.legacy-interaction-rollback.yml")
+elif [[ "${LEGACY_INTERACTION_ROLLBACK:-false}" != "false" ]]; then
+  echo "LEGACY_INTERACTION_ROLLBACK must be true or false" >&2
+  exit 2
+fi
 if [[ "${LEGACY_CONTENT_ROLLBACK:-false}" == "true" ]]; then
   COMPOSE+=(-f "${ROOT_DIR}/deploy/compose/docker-compose.legacy-content-rollback.yml")
 elif [[ "${LEGACY_CONTENT_ROLLBACK:-false}" != "false" ]]; then
@@ -58,12 +64,15 @@ else
   exit 2
 fi
 
-APP_SERVICES=(web web-static dc-gateway dc-identity dc-content-aggregate dc-discovery dc-comment dc-interaction dc-recommend dc-notification dc-admin)
+APP_SERVICES=(web web-static dc-gateway dc-identity dc-content-aggregate dc-discovery dc-comment dc-recommend dc-notification dc-admin)
 if [[ "${LEGACY_AUTH_ROLLBACK:-false}" == "true" ]]; then
   APP_SERVICES+=(dc-auth)
 fi
 if [[ "${LEGACY_USER_ROLLBACK:-false}" == "true" ]]; then
   APP_SERVICES+=(dc-user)
+fi
+if [[ "${LEGACY_INTERACTION_ROLLBACK:-false}" == "true" ]]; then
+  APP_SERVICES+=(dc-interaction)
 fi
 if [[ "${LEGACY_CONTENT_ROLLBACK:-false}" == "true" ]]; then
   APP_SERVICES+=(dc-content dc-file)

@@ -169,8 +169,8 @@ services:
       IDENTITY_INTERACTION_DB_POOL_MAX_SIZE: ${REAL_E2E_IDENTITY_INTERACTION_DB_POOL_MAX_SIZE:-2}
       IDENTITY_INTERACTION_DB_POOL_MIN_IDLE: ${REAL_E2E_IDENTITY_INTERACTION_DB_POOL_MIN_IDLE:-0}
       IDENTITY_INTERACTION_DB_POOL_CONNECTION_TIMEOUT_MS: ${REAL_E2E_DB_CONNECTION_TIMEOUT_MS:-3000}
-      INTERACTION_FLYWAY_ENABLED: "false"
-      INTERACTION_RUNTIME_OUTBOX_ENABLED: "false"
+      INTERACTION_FLYWAY_ENABLED: "true"
+      INTERACTION_RUNTIME_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
       MYSQL_USER: devcircle
@@ -179,7 +179,7 @@ services:
       AUTH_FRONTEND_CALLBACK_URI: http://127.0.0.1:5511/auth/callback
       DEVCIRCLE_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
       DC_CONTENT_URI: http://dc-content-aggregate:8202
-      DC_INTERACTION_URI: http://dc-interaction:8105
+      DC_INTERACTION_URI: http://dc-identity:8201
       DC_NOTIFICATION_URI: http://dc-notification:8108
     mem_limit: 256m
     depends_on:
@@ -209,7 +209,7 @@ services:
       DEVCIRCLE_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
       SPRING_KAFKA_LISTENER_AUTO_STARTUP: "false"
       DC_USER_URI: http://dc-identity:8201
-      DC_INTERACTION_URI: http://dc-interaction:8105
+      DC_INTERACTION_URI: http://dc-identity:8201
     mem_limit: 256m
     depends_on:
       mysql: { condition: service_healthy }
@@ -294,7 +294,9 @@ services:
 
   dc-interaction:
     <<: *app-defaults
-    profiles: ["community", "performance"]
+    # Explicit rollback-only profile. The default community/performance topology
+    # embeds Interaction in dc-identity and must not run a second writer.
+    profiles: ["legacy-interaction"]
     build:
       <<: *service-build
       args: { JAR_FILE: dc-interaction/target/dc-interaction-0.1.0-SNAPSHOT-exec.jar }
@@ -310,7 +312,10 @@ services:
     depends_on:
       mysql: { condition: service_healthy }
       redis: { condition: service_healthy }
-      dc-content-aggregate: { condition: service_healthy }
+      # A profile-only `config` lint does not activate the community Content
+      # aggregate. When community is active, Compose still honors the healthy
+      # condition before starting the rollback Interaction runtime.
+      dc-content-aggregate: { condition: service_healthy, required: false }
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8105/actuator/health/readiness"]
       interval: 5s
@@ -365,9 +370,10 @@ services:
       DC_USER_URI: http://dc-identity:8201
       DC_AUTH_OUTBOX_PATH: /internal/ops/identity/outbox/auth/status
       DC_USER_OUTBOX_PATH: /internal/ops/identity/outbox/user/status
+      DC_INTERACTION_URI: http://dc-identity:8201
+      DC_INTERACTION_OUTBOX_PATH: /internal/ops/identity/outbox/interaction/status
       DC_CONTENT_URI: http://dc-content-aggregate:8202
       DC_COMMENT_URI: http://dc-comment:8104
-      DC_INTERACTION_URI: http://dc-interaction:8105
     mem_limit: 256m
     depends_on:
       dc-content-aggregate: { condition: service_healthy }
@@ -422,7 +428,7 @@ services:
       DC_USER_URI: http://dc-identity:8201
       SPRING_PROFILES_ACTIVE: aggregate
       DC_CONTENT_AGGREGATE_URI: http://dc-content-aggregate:8202
-      DC_INTERACTION_URI: http://dc-interaction:8105
+      DC_INTERACTION_URI: http://dc-identity:8201
       DC_SEARCH_URI: ${REAL_E2E_SEARCH_URI:-http://dc-discovery:8203}
       DC_RECOMMEND_URI: http://dc-recommend:8107
       DC_NOTIFICATION_URI: http://dc-notification:8108
@@ -435,7 +441,6 @@ services:
       dc-auth: { condition: service_healthy, required: false }
       dc-admin: { condition: service_healthy, required: false }
       dc-content-aggregate: { condition: service_healthy, required: false }
-      dc-interaction: { condition: service_healthy, required: false }
       dc-discovery: { condition: service_healthy, required: false }
       dc-search: { condition: service_healthy, required: false }
       dc-recommend: { condition: service_healthy, required: false }

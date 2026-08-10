@@ -12,7 +12,7 @@ test -n "${BACKUP_DIR}" || { echo "Usage: PREVIOUS_IMAGE_TAG=<sha> $0 <pre-migra
 export IMAGE_TAG="${PREVIOUS_IMAGE_TAG}"
 ENV_FILE="${ENV_FILE}" CONFIRM_RESTORE=RESTORE "${ROOT_DIR}/scripts/ops/restore.sh" "${BACKUP_DIR}"
 COMPOSE_FILES=(-f "${ROOT_DIR}/docker-compose.prod.yml")
-ROLLBACK_SERVICES=(dc-comment dc-interaction dc-recommend dc-notification dc-admin dc-identity dc-content-aggregate dc-discovery dc-gateway web-static web)
+ROLLBACK_SERVICES=(dc-comment dc-recommend dc-notification dc-admin dc-identity dc-content-aggregate dc-discovery dc-gateway web-static web)
 if [[ "${LEGACY_AUTH_ROLLBACK:-false}" == "true" ]]; then
   COMPOSE_FILES+=(-f "${ROOT_DIR}/deploy/compose/docker-compose.legacy-auth-rollback.yml")
   ROLLBACK_SERVICES=(dc-auth "${ROLLBACK_SERVICES[@]}")
@@ -25,6 +25,13 @@ if [[ "${LEGACY_USER_ROLLBACK:-false}" == "true" ]]; then
   ROLLBACK_SERVICES+=(dc-user)
 elif [[ "${LEGACY_USER_ROLLBACK:-false}" != "false" ]]; then
   echo "LEGACY_USER_ROLLBACK must be true or false" >&2
+  exit 2
+fi
+if [[ "${LEGACY_INTERACTION_ROLLBACK:-false}" == "true" ]]; then
+  COMPOSE_FILES+=(-f "${ROOT_DIR}/deploy/compose/docker-compose.legacy-interaction-rollback.yml")
+  ROLLBACK_SERVICES+=(dc-interaction)
+elif [[ "${LEGACY_INTERACTION_ROLLBACK:-false}" != "false" ]]; then
+  echo "LEGACY_INTERACTION_ROLLBACK must be true or false" >&2
   exit 2
 fi
 if [[ "${LEGACY_CONTENT_ROLLBACK:-false}" == "true" ]]; then

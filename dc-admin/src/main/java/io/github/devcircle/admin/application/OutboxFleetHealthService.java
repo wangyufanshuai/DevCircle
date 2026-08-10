@@ -40,6 +40,8 @@ public class OutboxFleetHealthService {
             @Value("${devcircle.internal.content-uri:http://localhost:8103}") String contentUri,
             @Value("${devcircle.internal.comment-uri:http://localhost:8104}") String commentUri,
             @Value("${devcircle.internal.interaction-uri:http://localhost:8105}") String interactionUri,
+            @Value("${devcircle.internal.interaction-outbox-path:/internal/ops/outbox/status}")
+            String interactionOutboxPath,
             @Value("${devcircle.internal.ops-key:local-development-internal-ops-key}") String internalOpsKey,
             @Value("${devcircle.admin.outbox-fleet-timeout-ms:2000}") long fleetTimeoutMillis,
             @Value("${devcircle.admin.outbox-fleet-max-concurrent-snapshots:2}") int maxConcurrentSnapshots) {
@@ -48,7 +50,8 @@ public class OutboxFleetHealthService {
         clients.put("dc-user", new HttpOutboxNodeClient(userUri, userOutboxPath, internalOpsKey));
         clients.put("dc-content", new HttpOutboxNodeClient(contentUri, "/internal/ops/outbox/status", internalOpsKey));
         clients.put("dc-comment", new HttpOutboxNodeClient(commentUri, "/internal/ops/outbox/status", internalOpsKey));
-        clients.put("dc-interaction", new HttpOutboxNodeClient(interactionUri, "/internal/ops/outbox/status", internalOpsKey));
+        clients.put("dc-interaction", new HttpOutboxNodeClient(
+                interactionUri, interactionOutboxPath, internalOpsKey));
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
         this.fleetTimeoutMillis = Math.max(100, fleetTimeoutMillis);
         this.snapshotPermits = new Semaphore(Math.max(1, maxConcurrentSnapshots));

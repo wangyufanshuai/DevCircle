@@ -17,7 +17,7 @@ spring:
               predicates:
                 - Path=/api/users/**
             - id: identity-interaction-compatibility
-              uri: ${DC_INTERACTION_URI:http://localhost:8105}
+              uri: ${DC_INTERACTION_URI:${DC_IDENTITY_URI:http://localhost:8201}}
               predicates:
                 - Path=/api/posts/*/like,/api/posts/*/favorite,/api/posts/*/interaction-state
             - id: identity-notification-compatibility

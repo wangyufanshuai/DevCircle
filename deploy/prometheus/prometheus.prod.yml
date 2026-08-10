@@ -25,8 +25,6 @@ scrape_configs:
         labels: { service: dc-discovery }
       - targets: ["dc-comment:8104"]
         labels: { service: dc-comment }
-      - targets: ["dc-interaction:8105"]
-        labels: { service: dc-interaction }
       - targets: ["dc-recommend:8107"]
         labels: { service: dc-recommend }
       - targets: ["dc-notification:8108"]

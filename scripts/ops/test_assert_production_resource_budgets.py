@@ -99,7 +99,7 @@ def valid_compose() -> dict:
         "DC_AUTH_URI": "http://dc-identity:8201",
         "DC_IDENTITY_URI": "http://dc-identity:8201",
         "DC_USER_URI": "http://dc-identity:8201",
-        "DC_INTERACTION_URI": "http://dc-interaction:8105",
+        "DC_INTERACTION_URI": "http://dc-identity:8201",
         "DC_NOTIFICATION_URI": "http://dc-notification:8108",
         "DC_DISCOVERY_URI": "http://dc-discovery:8203",
         "DC_SEARCH_URI": "http://dc-discovery:8203",
@@ -114,15 +114,19 @@ def valid_compose() -> dict:
         "DC_USER_URI": "http://dc-identity:8201",
         "DC_AUTH_OUTBOX_PATH": "/internal/ops/identity/outbox/auth/status",
         "DC_USER_OUTBOX_PATH": "/internal/ops/identity/outbox/user/status",
+        "DC_INTERACTION_URI": "http://dc-identity:8201",
+        "DC_INTERACTION_OUTBOX_PATH": "/internal/ops/identity/outbox/interaction/status",
     })
     services["dc-identity"]["environment"].update({
         "IDENTITY_AUTH_DB_POOL_MAX_SIZE": "6",
         "IDENTITY_USER_DB_POOL_MAX_SIZE": "5",
         "IDENTITY_INTERACTION_DB_POOL_MAX_SIZE": "5",
+        "INTERACTION_FLYWAY_ENABLED": "true",
+        "INTERACTION_RUNTIME_OUTBOX_ENABLED": "true",
     })
     services["dc-content-aggregate"]["environment"].update({
         "DC_USER_URI": "http://dc-identity:8201",
-        "DC_INTERACTION_URI": "http://dc-interaction:8105",
+        "DC_INTERACTION_URI": "http://dc-identity:8201",
     })
     services["dc-discovery"]["depends_on"] = {
         name: {"condition": "service_healthy"}
@@ -168,14 +172,49 @@ def valid_legacy_user_rollback() -> dict:
     return rollback
 
 
+def valid_legacy_interaction_rollback() -> dict:
+    rollback = copy.deepcopy(valid_compose())
+    services = rollback["services"]
+    services["dc-interaction"] = {
+        **service(),
+        "environment": app_environment(),
+        "expose": ["8105"],
+        "healthcheck": {
+            "test": [
+                "CMD", "curl", "-fsS",
+                "http://localhost:8105/actuator/health/readiness",
+            ],
+        },
+    }
+    for owner in ("dc-identity", "dc-gateway", "dc-content-aggregate", "dc-admin"):
+        services[owner]["environment"]["DC_INTERACTION_URI"] = "http://dc-interaction:8105"
+        services[owner].setdefault("depends_on", {})["dc-interaction"] = {
+            "condition": "service_healthy",
+        }
+    services["dc-identity"]["environment"].update({
+        "INTERACTION_FLYWAY_ENABLED": "false",
+        "INTERACTION_RUNTIME_OUTBOX_ENABLED": "false",
+    })
+    services["dc-admin"]["environment"]["DC_INTERACTION_OUTBOX_PATH"] = (
+        "/internal/ops/outbox/status"
+    )
+    services["prometheus"]["volumes"] = [{
+        "type": "bind",
+        "source": str(ROOT / "deploy/prometheus/prometheus.legacy-interaction-rollback.yml"),
+        "target": "/etc/prometheus/prometheus.yml",
+        "read_only": True,
+    }]
+    return rollback
+
+
 class ProductionResourceBudgetTest(unittest.TestCase):
     def setUp(self) -> None:
         self.compose = valid_compose()
 
-    def test_accepts_the_19_service_production_contract(self) -> None:
+    def test_accepts_the_18_service_production_contract(self) -> None:
         service_count, total_memory = budgets.validate(self.compose)
 
-        self.assertEqual(19, service_count)
+        self.assertEqual(18, service_count)
         self.assertLessEqual(total_memory, 15 * budgets.GIB)
 
     def test_rejects_missing_internal_operations_key(self) -> None:
@@ -361,7 +400,7 @@ class LegacyUserRollbackResourceBudgetTest(unittest.TestCase):
     def test_accepts_the_bounded_observable_legacy_user_topology(self) -> None:
         service_count, total_memory = self.validate()
 
-        self.assertEqual(20, service_count)
+        self.assertEqual(19, service_count)
         self.assertLessEqual(total_memory, 15 * budgets.GIB)
 
     def test_rejects_identity_without_the_legacy_dashboard_user_route(self) -> None:
@@ -388,6 +427,48 @@ class LegacyUserRollbackResourceBudgetTest(unittest.TestCase):
         ] = "true"
 
         with self.assertRaisesRegex(ValueError, "disable USER_RUNTIME_OUTBOX_ENABLED"):
+            self.validate()
+
+
+class LegacyInteractionRollbackResourceBudgetTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.production = valid_compose()
+        self.rollback = valid_legacy_interaction_rollback()
+        self.production_prometheus = ROOT / "deploy/prometheus/prometheus.prod.yml"
+        self.rollback_prometheus = (
+            ROOT / "deploy/prometheus/prometheus.legacy-interaction-rollback.yml"
+        )
+
+    def validate(self) -> tuple[int, int]:
+        return budgets.validate_legacy_interaction_rollback(
+            self.production,
+            self.rollback,
+            self.production_prometheus,
+            self.rollback_prometheus,
+        )
+
+    def test_accepts_the_bounded_observable_legacy_interaction_topology(self) -> None:
+        service_count, total_memory = self.validate()
+
+        self.assertEqual(19, service_count)
+        self.assertLessEqual(total_memory, 15 * budgets.GIB)
+
+    def test_rejects_public_api_documentation_on_legacy_interaction(self) -> None:
+        environment = self.rollback["services"]["dc-interaction"]["environment"]
+        environment["SPRINGDOC_API_DOCS_ENABLED"] = "true"
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "legacy dc-interaction must set SPRINGDOC_API_DOCS_ENABLED=false",
+        ):
+            self.validate()
+
+    def test_rejects_dual_identity_interaction_writers(self) -> None:
+        self.rollback["services"]["dc-identity"]["environment"][
+            "INTERACTION_RUNTIME_OUTBOX_ENABLED"
+        ] = "true"
+
+        with self.assertRaisesRegex(ValueError, "disable INTERACTION_RUNTIME_OUTBOX_ENABLED"):
             self.validate()
 
 

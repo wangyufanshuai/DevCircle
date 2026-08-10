@@ -49,9 +49,56 @@ class AggregateRouteContractTest {
                 .contains("id: identity-user")
                 .contains("uri: ${DC_USER_URI:${DC_IDENTITY_URI:http://localhost:8201}}")
                 .contains("id: identity-interaction-compatibility")
+                .contains("uri: ${DC_INTERACTION_URI:${DC_IDENTITY_URI:http://localhost:8201}}")
                 .contains("id: identity-notification-compatibility")
                 .doesNotContain("Path=/api/auth/**,/api/me/**")
                 .doesNotContain("Path=/api/auth/**,/api/users/**");
+    }
+
+    @Test
+    void productionOwnsInteractionsInIdentityAndLegacyInteractionIsRollbackOnly() throws IOException {
+        String production = repositoryFile("docker-compose.prod.yml");
+        String e2e = repositoryFile("docker-compose.e2e.yml");
+        String legacyOverlay = repositoryFile(
+                "deploy/compose/docker-compose.legacy-interaction-rollback.yml");
+        String productionPrometheus = repositoryFile("deploy/prometheus/prometheus.prod.yml");
+        String legacyPrometheus = repositoryFile(
+                "deploy/prometheus/prometheus.legacy-interaction-rollback.yml");
+        String rollback = repositoryFile("scripts/ops/rollback.sh");
+        String restore = repositoryFile("scripts/ops/restore.sh");
+        String rollbackIdentity = composeServiceBlock(legacyOverlay, "dc-identity");
+
+        assertThat(production)
+                .contains("DC_INTERACTION_URI: http://dc-identity:8201")
+                .contains("DC_INTERACTION_OUTBOX_PATH: /internal/ops/identity/outbox/interaction/status")
+                .contains("INTERACTION_FLYWAY_ENABLED: \"true\"")
+                .contains("INTERACTION_RUNTIME_OUTBOX_ENABLED: \"true\"")
+                .doesNotContain("\n  dc-interaction:");
+        assertThat(e2e)
+                .contains("DC_INTERACTION_URI: http://dc-identity:8201")
+                .contains("profiles: [\"legacy-interaction\"]");
+        assertThat(legacyOverlay)
+                .contains("\n  dc-interaction:")
+                .contains("DC_INTERACTION_URI: http://dc-interaction:8105")
+                .contains("SPRINGDOC_API_DOCS_ENABLED: \"false\"")
+                .contains("SPRINGDOC_SWAGGER_UI_ENABLED: \"false\"");
+        assertThat(rollbackIdentity)
+                .contains("INTERACTION_FLYWAY_ENABLED: \"false\"")
+                .contains("INTERACTION_RUNTIME_OUTBOX_ENABLED: \"false\"");
+        assertThat(productionPrometheus)
+                .doesNotContain("dc-interaction:8105")
+                .doesNotContain("service: dc-interaction");
+        assertThat(legacyPrometheus)
+                .contains("targets: [\"dc-interaction:8105\"]")
+                .contains("labels: { service: dc-interaction }");
+        assertThat(rollback)
+                .contains("LEGACY_INTERACTION_ROLLBACK:-false")
+                .contains("docker-compose.legacy-interaction-rollback.yml")
+                .contains("ROLLBACK_SERVICES+=(dc-interaction)");
+        assertThat(restore)
+                .contains("LEGACY_INTERACTION_ROLLBACK:-false")
+                .contains("docker-compose.legacy-interaction-rollback.yml")
+                .contains("APP_SERVICES+=(dc-interaction)");
     }
 
     @Test

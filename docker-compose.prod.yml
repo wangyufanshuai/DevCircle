@@ -250,17 +250,6 @@ services:
       kafka: { condition: service_healthy }
     healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8104/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
 
-  dc-interaction:
-    <<: *app-defaults
-    image: ghcr.io/wangyufanshuai/devcircle/dc-interaction:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
-    environment: *app-env
-    expose: ["8105"]
-    depends_on:
-      mysql: { condition: service_healthy }
-      redis: { condition: service_healthy }
-      kafka: { condition: service_healthy }
-    healthcheck: { test: ["CMD", "curl", "-fsS", "http://localhost:8105/actuator/health/readiness"], interval: 15s, timeout: 5s, retries: 12 }
-
   dc-recommend:
     <<: *app-defaults
     image: ghcr.io/wangyufanshuai/devcircle/dc-recommend:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
@@ -291,9 +280,10 @@ services:
       DC_USER_URI: http://dc-identity:8201
       DC_AUTH_OUTBOX_PATH: /internal/ops/identity/outbox/auth/status
       DC_USER_OUTBOX_PATH: /internal/ops/identity/outbox/user/status
+      DC_INTERACTION_URI: http://dc-identity:8201
+      DC_INTERACTION_OUTBOX_PATH: /internal/ops/identity/outbox/interaction/status
       DC_CONTENT_URI: http://dc-content-aggregate:8202
       DC_COMMENT_URI: http://dc-comment:8104
-      DC_INTERACTION_URI: http://dc-interaction:8105
     expose: ["8110"]
     depends_on:
       mysql: { condition: service_healthy }
@@ -317,11 +307,10 @@ services:
       IDENTITY_INTERACTION_DB_POOL_MAX_SIZE: ${IDENTITY_INTERACTION_DB_POOL_MAX_SIZE:-5}
       IDENTITY_INTERACTION_DB_POOL_MIN_IDLE: ${IDENTITY_INTERACTION_DB_POOL_MIN_IDLE:-1}
       IDENTITY_INTERACTION_DB_POOL_CONNECTION_TIMEOUT_MS: ${IDENTITY_INTERACTION_DB_POOL_CONNECTION_TIMEOUT_MS:-3000}
-      # The standalone service remains authoritative until the later route cutover batch.
-      INTERACTION_FLYWAY_ENABLED: "false"
-      INTERACTION_RUNTIME_OUTBOX_ENABLED: "false"
+      # Identity is the sole Interaction owner in the default production topology.
+      INTERACTION_FLYWAY_ENABLED: "true"
+      INTERACTION_RUNTIME_OUTBOX_ENABLED: "true"
       DC_CONTENT_URI: http://dc-content-aggregate:8202
-      DC_INTERACTION_URI: http://dc-interaction:8105
       DC_NOTIFICATION_URI: http://dc-notification:8108
     expose: ["8201"]
     depends_on:
@@ -336,7 +325,7 @@ services:
     environment:
       <<: *app-env
       DC_USER_URI: http://dc-identity:8201
-      DC_INTERACTION_URI: http://dc-interaction:8105
+      DC_INTERACTION_URI: http://dc-identity:8201
     expose: ["8202"]
     depends_on:
       mysql: { condition: service_healthy }
@@ -370,7 +359,7 @@ services:
       DC_SEARCH_URI: http://dc-discovery:8203
       DC_RECOMMEND_URI: http://dc-recommend:8107
       DC_USER_URI: http://dc-identity:8201
-      DC_INTERACTION_URI: http://dc-interaction:8105
+      DC_INTERACTION_URI: http://dc-identity:8201
       DC_NOTIFICATION_URI: http://dc-notification:8108
       DC_COMMENT_URI: http://dc-comment:8104
       DC_ADMIN_URI: http://dc-admin:8110

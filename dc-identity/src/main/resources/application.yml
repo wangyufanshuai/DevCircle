@@ -97,5 +97,4 @@ devcircle:
       connection-timeout: ${IDENTITY_INTERACTION_DB_POOL_CONNECTION_TIMEOUT_MS:3000}
   internal:
     content-uri: ${DC_CONTENT_URI:http://localhost:8103}
-    interaction-uri: ${DC_INTERACTION_URI:http://localhost:8105}
     notification-uri: ${DC_NOTIFICATION_URI:http://localhost:8108}

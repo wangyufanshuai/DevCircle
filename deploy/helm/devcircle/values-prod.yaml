@@ -28,9 +28,9 @@ services:
       IDENTITY_USER_DB_POOL_MIN_IDLE: "1"
       IDENTITY_INTERACTION_DB_POOL_MAX_SIZE: "5"
       IDENTITY_INTERACTION_DB_POOL_MIN_IDLE: "1"
-      # Keep the existing dc-interaction deployment authoritative until route cutover.
-      INTERACTION_FLYWAY_ENABLED: "false"
-      INTERACTION_RUNTIME_OUTBOX_ENABLED: "false"
+      # Identity is the sole Interaction owner in the default production topology.
+      INTERACTION_FLYWAY_ENABLED: "true"
+      INTERACTION_RUNTIME_OUTBOX_ENABLED: "true"
     secretEnvRefs:
       GITHUB_CLIENT_ID: GITHUB_CLIENT_ID
       GITHUB_CLIENT_SECRET: GITHUB_CLIENT_SECRET

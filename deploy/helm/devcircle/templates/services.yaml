@@ -30,6 +30,12 @@
 {{- if ne (toString (index $identityEnv "GITHUB_OAUTH_ENABLED")) "true" }}
 {{- fail "production identity must explicitly enable GitHub OAuth" }}
 {{- end }}
+{{- if ne (toString (index $identityEnv "INTERACTION_FLYWAY_ENABLED")) "true" }}
+{{- fail "production identity must enable Interaction Flyway" }}
+{{- end }}
+{{- if ne (toString (index $identityEnv "INTERACTION_RUNTIME_OUTBOX_ENABLED")) "true" }}
+{{- fail "production identity must enable Interaction Outbox" }}
+{{- end }}
 {{- $authPool := int (required "production identity Auth pool budget is required" (index $identityEnv "IDENTITY_AUTH_DB_POOL_MAX_SIZE")) }}
 {{- $userPool := int (required "production identity User pool budget is required" (index $identityEnv "IDENTITY_USER_DB_POOL_MAX_SIZE")) }}
 {{- $interactionPool := int (required "production identity Interaction pool budget is required" (index $identityEnv "IDENTITY_INTERACTION_DB_POOL_MAX_SIZE")) }}

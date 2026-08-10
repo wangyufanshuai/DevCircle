@@ -1,0 +1,87 @@
+# Explicit rollback overlay for a release that predates the embedded Interaction
+# runtime. The default production topology owns interaction APIs and Outbox in
+# dc-identity; this overlay restores the standalone executable and disables the
+# Identity Interaction writer to prevent duplicate consumers/producers.
+services:
+  dc-interaction:
+    image: ghcr.io/wangyufanshuai/devcircle/dc-interaction:${IMAGE_TAG:?IMAGE_TAG must be a commit SHA}
+    restart: unless-stopped
+    stop_grace_period: 40s
+    mem_limit: 512m
+    cpus: 0.75
+    pids_limit: 256
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-devcircle}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      DEVCIRCLE_PRODUCTION_MODE: "true"
+      DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
+      DEVCIRCLE_THEME_CONTENT_SEED_ENABLED: "false"
+      SPRINGDOC_API_DOCS_ENABLED: "false"
+      SPRINGDOC_SWAGGER_UI_ENABLED: "false"
+      DEVCIRCLE_INTERNAL_OPS_KEY: ${DEVCIRCLE_INTERNAL_OPS_KEY:?DEVCIRCLE_INTERNAL_OPS_KEY is required}
+      DEVCIRCLE_OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-50}
+      DEVCIRCLE_OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-8}
+      DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS: ${OUTBOX_SEND_TIMEOUT_MS:-15000}
+      MANAGEMENT_TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLE_RATE:-0.1}
+      MANAGEMENT_METRICS_DISTRIBUTION_PERCENTILES_HISTOGRAM_HTTP_SERVER_REQUESTS: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60.0 -XX:InitialRAMPercentage=20.0 -XX:+ExitOnOutOfMemoryError"
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${DB_POOL_MAX_SIZE:-8}
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: ${DB_POOL_MIN_IDLE:-1}
+      SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: ${DB_POOL_CONNECTION_TIMEOUT_MS:-3000}
+      SERVER_TOMCAT_THREADS_MAX: ${SERVER_TOMCAT_THREADS_MAX:-48}
+      SERVER_TOMCAT_ACCEPT_COUNT: ${SERVER_TOMCAT_ACCEPT_COUNT:-64}
+    expose: ["8105"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8105/actuator/health/readiness"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    networks: [devcircle]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  dc-identity:
+    environment:
+      # Older Identity dashboard images aggregate favorites over HTTP.
+      DC_INTERACTION_URI: http://dc-interaction:8105
+      INTERACTION_FLYWAY_ENABLED: "false"
+      INTERACTION_RUNTIME_OUTBOX_ENABLED: "false"
+    depends_on:
+      dc-interaction: { condition: service_healthy }
+
+  dc-gateway:
+    environment:
+      DC_INTERACTION_URI: http://dc-interaction:8105
+    depends_on:
+      dc-interaction: { condition: service_healthy }
+
+  dc-content-aggregate:
+    environment:
+      DC_INTERACTION_URI: http://dc-interaction:8105
+    depends_on:
+      dc-interaction: { condition: service_healthy }
+
+  dc-admin:
+    environment:
+      DC_INTERACTION_URI: http://dc-interaction:8105
+      DC_INTERACTION_OUTBOX_PATH: /internal/ops/outbox/status
+    depends_on:
+      dc-interaction: { condition: service_healthy }
+
+  prometheus:
+    volumes:
+      # Compose resolves overlay bind paths relative to the first Compose file.
+      - ./deploy/prometheus/prometheus.legacy-interaction-rollback.yml:/etc/prometheus/prometheus.yml:ro

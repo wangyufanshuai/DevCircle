@@ -43,7 +43,7 @@ class InteractionEmbeddingContractTest(unittest.TestCase):
     def test_ci_resolves_the_standalone_interaction_image_to_the_exec_jar(self) -> None:
         source = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn(
-            "module: dc-interaction, image: dc-interaction, release_class: production",
+            "module: dc-interaction, image: dc-interaction, release_class: legacy-rollback",
             source,
         )
         classifier_branch = next(
@@ -56,21 +56,43 @@ class InteractionEmbeddingContractTest(unittest.TestCase):
             source,
         )
 
-    def test_production_routes_remain_on_the_standalone_runtime(self) -> None:
+    def test_production_routes_and_workers_are_owned_by_identity(self) -> None:
         compose = (ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
         helm_values = (ROOT / "deploy/helm/devcircle/values.yaml").read_text(encoding="utf-8")
         helm_prod = (ROOT / "deploy/helm/devcircle/values-prod.yaml").read_text(encoding="utf-8")
 
-        self.assertIn("  dc-interaction:\n", compose)
-        self.assertGreaterEqual(
-            compose.count("DC_INTERACTION_URI: http://dc-interaction:8105"), 3
+        self.assertNotIn("\n  dc-interaction:\n", compose)
+        self.assertGreaterEqual(compose.count("DC_INTERACTION_URI: http://dc-identity:8201"), 3)
+        self.assertIn('INTERACTION_FLYWAY_ENABLED: "true"', compose)
+        self.assertIn('INTERACTION_RUNTIME_OUTBOX_ENABLED: "true"', compose)
+        self.assertNotIn("  interaction: { port: 8105 }", helm_values)
+        self.assertIn("DC_INTERACTION_URI: http://dc-identity:8201", helm_values)
+        self.assertIn('INTERACTION_FLYWAY_ENABLED: "true"', helm_prod)
+        self.assertIn('INTERACTION_RUNTIME_OUTBOX_ENABLED: "true"', helm_prod)
+
+    def test_legacy_overlay_restores_only_the_standalone_interaction_owner(self) -> None:
+        overlay = (ROOT / "deploy/compose/docker-compose.legacy-interaction-rollback.yml").read_text(
+            encoding="utf-8"
         )
-        self.assertIn('INTERACTION_FLYWAY_ENABLED: "false"', compose)
-        self.assertIn('INTERACTION_RUNTIME_OUTBOX_ENABLED: "false"', compose)
-        self.assertIn("  interaction: { port: 8105 }", helm_values)
-        self.assertIn("DC_INTERACTION_URI: http://dc-interaction:8105", helm_values)
-        self.assertIn('INTERACTION_FLYWAY_ENABLED: "false"', helm_prod)
-        self.assertIn('INTERACTION_RUNTIME_OUTBOX_ENABLED: "false"', helm_prod)
+        prometheus = (ROOT / "deploy/prometheus/prometheus.legacy-interaction-rollback.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("\n  dc-interaction:\n", overlay)
+        self.assertGreaterEqual(overlay.count("DC_INTERACTION_URI: http://dc-interaction:8105"), 3)
+        self.assertIn('SPRINGDOC_API_DOCS_ENABLED: "false"', overlay)
+        self.assertIn('SPRINGDOC_SWAGGER_UI_ENABLED: "false"', overlay)
+        self.assertIn('INTERACTION_FLYWAY_ENABLED: "false"', overlay)
+        self.assertIn('INTERACTION_RUNTIME_OUTBOX_ENABLED: "false"', overlay)
+        self.assertIn("targets: [\"dc-interaction:8105\"]", prometheus)
+
+    def test_dashboard_reads_embedded_interaction_repository_without_http_loopback(self) -> None:
+        source = (ROOT / "dc-identity/src/main/java/io/github/devcircle/identity/application/DashboardService.java").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("InteractionRepository interactionRepository", source)
+        self.assertIn("interactionRepository.favoritePostIds(userId, 30)", source)
+        self.assertNotIn("interactionClient", source)
+        self.assertNotIn("devcircle.internal.interaction-uri", source)
 
 
 if __name__ == "__main__":

@@ -129,6 +129,7 @@ configure_community_auth_profile
 [[ "$(community_outbox_runtime_sources | head -n 1)" == \
   "dc-identity:8201:dc-auth:/internal/ops/identity/outbox/auth/status" ]]
 grep -qx 'dc-identity:8201:dc-user:/internal/ops/identity/outbox/user/status' < <(community_outbox_runtime_sources)
+grep -qx 'dc-identity:8201:dc-interaction:/internal/ops/identity/outbox/interaction/status' < <(community_outbox_runtime_sources)
 grep -qx 'dc-content-aggregate:8202:dc-content:/internal/ops/outbox/status' < <(community_outbox_runtime_sources)
 REAL_E2E_AUTH_PROFILE=legacy-auth
 configure_community_auth_profile
@@ -174,12 +175,42 @@ legacy_community_auth_routes="$(grep -E '^      DC_AUTH_URI:' <<<"${legacy_commu
 
 community_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
   --profile community config --services | sort)"
-expected_community_services="$(printf '%s\n' dc-admin dc-comment dc-content-aggregate dc-gateway dc-identity dc-interaction \
+expected_community_services="$(printf '%s\n' dc-admin dc-comment dc-content-aggregate dc-gateway dc-identity \
   dc-notification dc-recommend kafka minio mysql redis | sort)"
 [[ "${community_services}" == "${expected_community_services}" ]] || {
   echo "Unexpected community services: ${community_services}" >&2
   exit 1
 }
+default_community_interaction_routes="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
+  --profile community config | grep -E '^      DC_INTERACTION_URI:' | sort -u)"
+[[ "${default_community_interaction_routes}" == "      DC_INTERACTION_URI: http://dc-identity:8201" ]] || {
+  echo "Community interaction routes must default to dc-identity: ${default_community_interaction_routes}" >&2
+  exit 1
+}
+standalone_legacy_interaction_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
+  --profile legacy-interaction config --services | sort)"
+expected_standalone_legacy_interaction_services="$(printf '%s\n' dc-gateway dc-identity dc-interaction mysql redis | sort)"
+[[ "${standalone_legacy_interaction_services}" == "${expected_standalone_legacy_interaction_services}" ]] || {
+  echo "Unexpected standalone legacy-interaction services: ${standalone_legacy_interaction_services}" >&2
+  exit 1
+}
+legacy_interaction_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
+  --profile community --profile legacy-interaction config --services | sort)"
+expected_legacy_interaction_services="$(printf '%s\n' dc-admin dc-comment dc-content-aggregate dc-gateway dc-identity dc-interaction \
+  dc-notification dc-recommend kafka minio mysql redis | sort)"
+[[ "${legacy_interaction_services}" == "${expected_legacy_interaction_services}" ]] || {
+  echo "Unexpected legacy-interaction services: ${legacy_interaction_services}" >&2
+  exit 1
+}
+docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
+  --profile community --profile legacy-interaction config --format json | python3 -c '
+import json, sys
+services = json.load(sys.stdin)["services"]
+assert "dc-content-aggregate" in services
+dependency = services["dc-interaction"]["depends_on"]["dc-content-aggregate"]
+assert dependency["condition"] == "service_healthy"
+assert dependency["required"] is False
+'
 
 search_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
   --profile search-recovery config --services | sort)"
@@ -272,5 +303,37 @@ assert mounts[0]["source"].replace("\\", "/").endswith("/deploy/prometheus/prome
 grep -Fq 'labels: io.github.devcircle.release-class=${{ matrix.release_class }}' \
   "${ROOT_DIR}/.github/workflows/ci.yml"
 grep -Fq 'docker-compose.legacy-user-rollback.yml' "${ROOT_DIR}/.github/workflows/ci.yml"
+legacy_interaction_compose=("${production_compose[@]}" \
+  -f "${ROOT_DIR}/deploy/compose/docker-compose.legacy-interaction-rollback.yml")
+if "${production_compose[@]}" config --services | grep -qx 'dc-interaction'; then
+  echo "Default production must not start rollback-only dc-interaction" >&2
+  exit 1
+fi
+if grep -q 'dc-interaction:8105' "${ROOT_DIR}/deploy/prometheus/prometheus.prod.yml"; then
+  echo "Default production Prometheus must not scrape an absent dc-interaction" >&2
+  exit 1
+fi
+"${legacy_interaction_compose[@]}" config --format json | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+services = data["services"]
+assert "dc-interaction" in services
+for owner in ("dc-identity", "dc-gateway", "dc-content-aggregate", "dc-admin"):
+    assert services[owner]["environment"]["DC_INTERACTION_URI"] == "http://dc-interaction:8105", owner
+    assert services[owner]["depends_on"]["dc-interaction"]["condition"] == "service_healthy", owner
+interaction = services["dc-interaction"]
+assert int(interaction["mem_limit"]) == 512 * 1024 * 1024
+assert interaction["healthcheck"]["test"][-1] == "http://localhost:8105/actuator/health/readiness"
+assert interaction["environment"]["SPRINGDOC_API_DOCS_ENABLED"] == "false"
+assert interaction["environment"]["SPRINGDOC_SWAGGER_UI_ENABLED"] == "false"
+assert services["dc-identity"]["environment"]["INTERACTION_FLYWAY_ENABLED"] == "false"
+assert services["dc-identity"]["environment"]["INTERACTION_RUNTIME_OUTBOX_ENABLED"] == "false"
+mounts = [v for v in services["prometheus"]["volumes"] if v["target"] == "/etc/prometheus/prometheus.yml"]
+assert len(mounts) == 1
+assert mounts[0]["source"].replace("\\", "/").endswith("/deploy/prometheus/prometheus.legacy-interaction-rollback.yml")
+'
+grep -Fq 'labels: io.github.devcircle.release-class=${{ matrix.release_class }}' \
+  "${ROOT_DIR}/.github/workflows/ci.yml"
+grep -Fq 'docker-compose.legacy-interaction-rollback.yml' "${ROOT_DIR}/.github/workflows/ci.yml"
 
 echo "Docker preflight tests passed"

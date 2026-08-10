@@ -4,6 +4,7 @@ import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.user.application.UserGraphService;
 import io.github.devcircle.user.infrastructure.UserGraphRepository;
+import io.github.devcircle.interaction.infrastructure.InteractionRepository;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -24,20 +25,20 @@ public class DashboardService {
 
     private final UserGraphService userGraphService;
     private final RestClient contentClient;
-    private final RestClient interactionClient;
+    private final InteractionRepository interactionRepository;
     private final RestClient notificationClient;
     private final Executor dashboardExecutor;
 
     public DashboardService(UserGraphService userGraphService,
                             RestClient.Builder restClientBuilder,
                             @Value("${devcircle.internal.content-uri:http://localhost:8103}") String contentUri,
-                            @Value("${devcircle.internal.interaction-uri:http://localhost:8105}") String interactionUri,
                             @Value("${devcircle.internal.notification-uri:http://localhost:8108}") String notificationUri,
+                            InteractionRepository interactionRepository,
                             @Qualifier("dashboardExecutor") Executor dashboardExecutor) {
         this.userGraphService = userGraphService;
         this.contentClient = restClientBuilder.clone().baseUrl(contentUri).build();
-        this.interactionClient = restClientBuilder.clone().baseUrl(interactionUri).build();
         this.notificationClient = restClientBuilder.clone().baseUrl(notificationUri).build();
+        this.interactionRepository = interactionRepository;
         this.dashboardExecutor = dashboardExecutor;
     }
 
@@ -46,7 +47,8 @@ public class DashboardService {
                 () -> localProfile(userId), dashboardExecutor);
         CompletableFuture<JsonNode> progress = asyncGet(contentClient, "/api/me/reading-progress", userId, traceId);
         CompletableFuture<JsonNode> submissions = asyncGet(contentClient, "/api/me/submissions", userId, traceId);
-        CompletableFuture<JsonNode> favoriteIds = asyncGet(interactionClient, "/api/me/favorites", userId, traceId);
+        CompletableFuture<JsonNode> favoriteIds = CompletableFuture.supplyAsync(
+                () -> localFavoriteIds(userId), dashboardExecutor);
         CompletableFuture<JsonNode> favorites = favoriteIds.thenApplyAsync(
                 ids -> favoriteSummaries(ids, userId, traceId), dashboardExecutor);
         CompletableFuture<JsonNode> unread = asyncGet(
@@ -79,6 +81,13 @@ public class DashboardService {
                 .put("followers", profile.followerCount())
                 .put("following", profile.followingCount())
                 .put("status", "ACTIVE");
+    }
+
+    private JsonNode localFavoriteIds(Long userId) {
+        var ids = interactionRepository.favoritePostIds(userId, 30);
+        var array = JsonNodeFactory.instance.arrayNode();
+        ids.forEach(array::add);
+        return array;
     }
 
     private JsonNode favoriteSummaries(JsonNode favoriteIds, Long userId, String traceId) {

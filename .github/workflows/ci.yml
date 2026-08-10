@@ -190,12 +190,19 @@ jobs:
           -f docker-compose.prod.yml
           -f deploy/compose/docker-compose.legacy-user-rollback.yml
           config --quiet
+      - name: Validate legacy Interaction rollback Compose topology
+        run: >-
+          docker compose --env-file .env.production.example
+          -f docker-compose.prod.yml
+          -f deploy/compose/docker-compose.legacy-interaction-rollback.yml
+          config --quiet
       - name: Validate Prometheus rules and configs
         run: |
           docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check rules /etc/prometheus/slo.yml /etc/prometheus/alerts.yml
           docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check config /etc/prometheus/prometheus.yml
           docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check config /etc/prometheus/prometheus.prod.yml
           docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check config /etc/prometheus/prometheus.legacy-user-rollback.yml
+          docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check config /etc/prometheus/prometheus.legacy-interaction-rollback.yml
       - name: Validate Alertmanager routes and Grafana dashboard
         run: |
           docker run --rm -v "$PWD/deploy/alertmanager:/etc/alertmanager:ro" --entrypoint /bin/amtool prom/alertmanager:v0.29.0 check-config /etc/alertmanager/alertmanager.dev.yml
@@ -261,7 +268,7 @@ jobs:
           - { module: dc-content-deployment, image: dc-content-aggregate, release_class: production }
           - { module: dc-discovery, image: dc-discovery, release_class: production }
           - { module: dc-comment, image: dc-comment, release_class: production }
-          - { module: dc-interaction, image: dc-interaction, release_class: production }
+          - { module: dc-interaction, image: dc-interaction, release_class: legacy-rollback }
           - { module: dc-recommend, image: dc-recommend, release_class: production }
           - { module: dc-notification, image: dc-notification, release_class: production }
           - { module: dc-admin, image: dc-admin, release_class: production }

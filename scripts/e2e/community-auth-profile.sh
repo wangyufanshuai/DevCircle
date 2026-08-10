@@ -33,7 +33,7 @@ community_outbox_runtime_sources() {
   printf '%s\n' \
     "${COMMUNITY_AUTH_SERVICE}:${COMMUNITY_AUTH_PORT}:dc-auth:${auth_path}" \
     "dc-identity:8201:dc-user:/internal/ops/identity/outbox/user/status" \
+    "dc-identity:8201:dc-interaction:/internal/ops/identity/outbox/interaction/status" \
     "dc-content-aggregate:8202:dc-content:/internal/ops/outbox/status" \
-    "dc-comment:8104:dc-comment:/internal/ops/outbox/status" \
-    "dc-interaction:8105:dc-interaction:/internal/ops/outbox/status"
+    "dc-comment:8104:dc-comment:/internal/ops/outbox/status"
 }
