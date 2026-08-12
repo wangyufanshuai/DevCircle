@@ -32,7 +32,7 @@ DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“
 ## 模块
 
 - `dc-gateway`: 统一入口、TraceId、JWT 鉴权、角色拦截、限流、用户上下文透传、请求日志。
-- `dc-identity`: 第一阶段的 Identity 部署单元；生产进程内嵌 `dc-auth` 认证运行时和个人仪表盘。`dc-user`、`dc-interaction`、`dc-notification` 仍以兼容服务保留，尚未完成完整四聚合。
+- `dc-identity`: 生产 Identity 部署单元；进程内承载认证、用户、互动、通知和个人仪表盘。旧独立服务仅作为显式 rollback 镜像保留。
 - `dc-content-deployment`: Content 生产部署单元；当前进程内承载 `dc-content` 与 `dc-file`，评论和治理继续使用兼容服务。
 - `dc-discovery`: Discovery 生产边界；第一阶段在该进程内承载 `dc-search` Search 代码模块，实验能力继续兼容聚合。推荐不是 Discovery 的内嵌能力，而是独立的 `dc-recommend` 进程，由 Gateway 直接路由。
 - `dc-auth`: 邮箱密码登录、Refresh Token 轮换、GitHub OAuth、审计日志；逻辑 producer、schema 和 Maven 模块保留，由 `dc-identity` 进程承载，独立可执行镜像仅用于 legacy auth rollback。
@@ -41,7 +41,9 @@ DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“
 - `dc-interaction`: 点赞、收藏、幂等写入、Redis 热度信号。
 - `dc-search`: 保留的 Search 领域模块；正常生产由 `dc-discovery` 进程承载，独立进程仅用于 [`legacy-search rollback Compose`](deploy/compose/docker-compose.legacy-search-rollback.yml)。
 - `dc-recommend`: 可解释固定权重规则、候选召回、曝光去重、推荐实验。
-- `dc-notification`: 站内通知、Kafka 消费、WebSocket 推送。
+- `dc-notification`: Notification 兼容模块与 one-version rollback 可执行镜像；默认生产仍独立部署。通过证据门禁后显式应用 [`Notification Identity cutover Compose`](deploy/compose/docker-compose.notification-identity-cutover.yml)，才会将 exactly-one ownership 切换到 Identity；legacy rollback 则恢复 standalone Notification。
+
+Notification 切流发布必须经 `scripts/ops/deploy-production.sh`，它会在启用 Identity owner 前停止并删除可能残留的 standalone 容器，并用 `--remove-orphans` 收敛拓扑。每个切流 SHA 同时产出 socket-enabled `web-notification-cutover:${CUTOVER_ASSET_TAG}` 与 socket-disabled `web-notification-standalone:${ROLLBACK_ASSET_TAG}`；one-version 回滚不能假设上一业务 SHA 已包含这组资产。
 - `dc-file`: MinIO 上传、媒体元数据、上传安全校验。
 - `dc-admin`: 内容治理、风险运营、推荐实验、审计日志、工程运维接口。
 - `web`: MysticVerse 路由化前台与独立运营入口。

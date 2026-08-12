@@ -3,9 +3,18 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENV_FILE="${ENV_FILE:-${ROOT_DIR}/.env.production}"
+# shellcheck source=scripts/ops/production-env.sh
+source "${ROOT_DIR}/scripts/ops/production-env.sh"
+load_production_env "${ENV_FILE}"
+ENV_NOTIFICATION_MODE="$(production_env_value NOTIFICATION_DEPLOY_MODE)"
+ENV_LEGACY_NOTIFICATION_ROLLBACK="$(production_env_value LEGACY_NOTIFICATION_ROLLBACK false)"
 BACKUP_DIR="${1:-}"
 MANAGE_APPLICATIONS="${RESTORE_MANAGE_APPLICATIONS:-true}"
-COMPOSE=(docker compose --env-file "${ENV_FILE}" -f "${ROOT_DIR}/docker-compose.prod.yml")
+if [[ "${ENV_NOTIFICATION_MODE}" == "rollback" && "${ENV_LEGACY_NOTIFICATION_ROLLBACK}" != "true" ]]; then
+  echo "NOTIFICATION_DEPLOY_MODE=rollback requires LEGACY_NOTIFICATION_ROLLBACK=true" >&2
+  exit 2
+fi
+COMPOSE=(production_compose "${ENV_FILE}" -f "${ROOT_DIR}/docker-compose.prod.yml")
 if [[ "${LEGACY_AUTH_ROLLBACK:-false}" == "true" ]]; then
   COMPOSE+=(-f "${ROOT_DIR}/deploy/compose/docker-compose.legacy-auth-rollback.yml")
 elif [[ "${LEGACY_AUTH_ROLLBACK:-false}" != "false" ]]; then
@@ -22,6 +31,12 @@ if [[ "${LEGACY_INTERACTION_ROLLBACK:-false}" == "true" ]]; then
   COMPOSE+=(-f "${ROOT_DIR}/deploy/compose/docker-compose.legacy-interaction-rollback.yml")
 elif [[ "${LEGACY_INTERACTION_ROLLBACK:-false}" != "false" ]]; then
   echo "LEGACY_INTERACTION_ROLLBACK must be true or false" >&2
+  exit 2
+fi
+if [[ "${ENV_LEGACY_NOTIFICATION_ROLLBACK}" == "true" ]]; then
+  COMPOSE+=(-f "${ROOT_DIR}/deploy/compose/docker-compose.legacy-notification-rollback.yml")
+elif [[ "${LEGACY_NOTIFICATION_ROLLBACK:-false}" != "false" ]]; then
+  echo "LEGACY_NOTIFICATION_ROLLBACK must be true or false" >&2
   exit 2
 fi
 if [[ "${LEGACY_CONTENT_ROLLBACK:-false}" == "true" ]]; then
@@ -64,7 +79,7 @@ else
   exit 2
 fi
 
-APP_SERVICES=(web web-static dc-gateway dc-identity dc-content-aggregate dc-discovery dc-comment dc-recommend dc-notification dc-admin)
+APP_SERVICES=(web web-static dc-gateway dc-identity dc-content-aggregate dc-discovery dc-comment dc-recommend dc-admin)
 if [[ "${LEGACY_AUTH_ROLLBACK:-false}" == "true" ]]; then
   APP_SERVICES+=(dc-auth)
 fi
@@ -73,6 +88,9 @@ if [[ "${LEGACY_USER_ROLLBACK:-false}" == "true" ]]; then
 fi
 if [[ "${LEGACY_INTERACTION_ROLLBACK:-false}" == "true" ]]; then
   APP_SERVICES+=(dc-interaction)
+fi
+if [[ "${ENV_LEGACY_NOTIFICATION_ROLLBACK}" == "true" ]]; then
+  APP_SERVICES+=(dc-notification)
 fi
 if [[ "${LEGACY_CONTENT_ROLLBACK:-false}" == "true" ]]; then
   APP_SERVICES+=(dc-content dc-file)
@@ -105,6 +123,18 @@ fi
 ' < "${BACKUP_DIR}/minio-data.tar.gz"
 
 if [[ "${MANAGE_APPLICATIONS}" == "true" ]]; then
-  "${COMPOSE[@]}" start "${APP_SERVICES[@]}"
+  if [[ "${ENV_NOTIFICATION_MODE}" == "rollback" ]]; then
+    # Recreate Identity first with all five Notification owners disabled. Only
+    # after that process is healthy may the standalone consumer/API start.
+    "${COMPOSE[@]}" up -d --no-deps --force-recreate --wait dc-identity
+    "${COMPOSE[@]}" up -d --no-deps --force-recreate --wait dc-notification
+    remaining_services=()
+    for service in "${APP_SERVICES[@]}"; do
+      [[ "${service}" == "dc-identity" || "${service}" == "dc-notification" ]] || remaining_services+=("${service}")
+    done
+    "${COMPOSE[@]}" up -d --no-deps --force-recreate "${remaining_services[@]}"
+  else
+    "${COMPOSE[@]}" up -d --no-deps --force-recreate "${APP_SERVICES[@]}"
+  fi
 fi
 echo "Restore completed from ${BACKUP_DIR}"

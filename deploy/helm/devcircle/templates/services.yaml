@@ -36,20 +36,11 @@
 {{- if ne (toString (index $identityEnv "INTERACTION_RUNTIME_OUTBOX_ENABLED")) "true" }}
 {{- fail "production identity must enable Interaction Outbox" }}
 {{- end }}
-{{- if ne (toString (index $identityEnv "NOTIFICATION_RUNTIME_API_ENABLED")) "false" }}
-{{- fail "production identity must disable Notification API before cutover" }}
+{{- $notificationOwnerValue := ternary "true" "false" .Values.notificationIdentityCutover.enabled }}
+{{- range $switch := list "NOTIFICATION_RUNTIME_API_ENABLED" "NOTIFICATION_FLYWAY_ENABLED" "NOTIFICATION_RUNTIME_CONSUMER_ENABLED" "NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED" "NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED" }}
+{{- if ne (toString (index $identityEnv $switch)) $notificationOwnerValue }}
+{{- fail (printf "production identity %s must be %s for the selected Notification owner" $switch $notificationOwnerValue) }}
 {{- end }}
-{{- if ne (toString (index $identityEnv "NOTIFICATION_FLYWAY_ENABLED")) "false" }}
-{{- fail "production identity must disable Notification Flyway before cutover" }}
-{{- end }}
-{{- if ne (toString (index $identityEnv "NOTIFICATION_RUNTIME_CONSUMER_ENABLED")) "false" }}
-{{- fail "production identity must disable Notification consumer before cutover" }}
-{{- end }}
-{{- if ne (toString (index $identityEnv "NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED")) "false" }}
-{{- fail "production identity must disable Notification topic admin before cutover" }}
-{{- end }}
-{{- if ne (toString (index $identityEnv "NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED")) "false" }}
-{{- fail "production identity must keep secure Notification WebSocket infrastructure default-off before its dedicated cutover" }}
 {{- end }}
 {{- if ne (toString (index $identityEnv "DC_NOTIFICATION_URI")) "http://dc-notification:8108" }}
 {{- fail "production identity must retain DC_NOTIFICATION_URI for one-version rollback compatibility" }}
@@ -71,10 +62,16 @@
 {{- if gt (mul (add (add (add $authPool $userPool) $interactionPool) $notificationPool) (.Values.replicaCount | int)) $identityConnectionBudget }}
 {{- fail "production identity aggregate DB pools must fit identityDatabaseConnectionBudget" }}
 {{- end }}
-{{- $notification := required "production notification service is required before Identity cutover" (index .Values.services "notification") }}
+{{- if .Values.notificationIdentityCutover.enabled }}
+{{- if hasKey .Values.services "notification" }}
+{{- fail "approved Notification Identity cutover must remove the standalone Notification service" }}
+{{- end }}
+{{- else }}
+{{- $notification := required "production notification service is required before approved Identity cutover" (index .Values.services "notification") }}
 {{- $notificationEnv := ($notification.env | default dict) }}
 {{- if ne (toString (index $notificationEnv "PUBLIC_ORIGIN")) $publicOrigin }}
 {{- fail "production notification PUBLIC_ORIGIN must match publicOrigin" }}
+{{- end }}
 {{- end }}
 {{- $globalSecretRefs := (.Values.secretEnvRefs | default dict) }}
 {{- if ne (toString (index $globalSecretRefs "DEVCIRCLE_INTERNAL_OPS_KEY")) "DEVCIRCLE_INTERNAL_OPS_KEY" }}

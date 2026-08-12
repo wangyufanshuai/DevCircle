@@ -6,7 +6,9 @@ DevCircle 使用按业务域拆分、兼容聚合的微服务结构。Gateway �
 
 ## 数据流
 
-用户发布帖子后，`dc-content-aggregate` 内的 Content runtime 写入帖子数据，并在同一个本地事务内写入逻辑来源仍为 `dc-content` 的 `outbox_event`。同一 JVM 内的 File runtime 使用独立 `flyway_schema_history_file` 管理媒体表迁移。后台发布任务将事件发送到 Kafka，`dc-discovery` 进程内承载的 `dc-search` runtime 消费后同步 Elasticsearch，`dc-notification` 消费审核和互动事件后写入站内信并通过 WebSocket 推送。推荐由独立的 `dc-recommend` 进程消费特征事件；`/api/recommend/**` 由 Gateway 直接路由到它，不经过 Discovery 内嵌。
+用户发布帖子后，`dc-content-aggregate` 内的 Content runtime 写入帖子数据，并在同一个本地事务内写入逻辑来源仍为 `dc-content` 的 `outbox_event`。同一 JVM 内的 File runtime 使用独立 `flyway_schema_history_file` 管理媒体表迁移。后台发布任务将事件发送到 Kafka，`dc-discovery` 内嵌 Search runtime 同步 Elasticsearch；`dc-identity` 内嵌 Notification runtime 消费审核和互动事件、写入站内信并提供安全 WebSocket 刷新信号。推荐仍由独立 `dc-recommend` 承载。
+
+默认生产由 standalone `dc-notification` 拥有 Notification API、Flyway、Kafka consumer、topic admin 与 WebSocket。通过证据门禁后显式应用 `deploy/compose/docker-compose.notification-identity-cutover.yml`，才会将这五项 exactly-one ownership 切换到 Identity。`deploy/compose/docker-compose.legacy-notification-rollback.yml` 是 one-version 回退面：它关闭 Identity 五项所有权，并恢复 standalone Notification、Gateway 上游、socket-disabled Web 镜像和独立 Prometheus 抓取，防止双迁移或双消费。
 
 ## Outbox 约定
 

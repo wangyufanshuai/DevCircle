@@ -174,12 +174,11 @@ services:
       IDENTITY_NOTIFICATION_DB_POOL_CONNECTION_TIMEOUT_MS: ${REAL_E2E_DB_CONNECTION_TIMEOUT_MS:-3000}
       INTERACTION_FLYWAY_ENABLED: "true"
       INTERACTION_RUNTIME_OUTBOX_ENABLED: ${REAL_E2E_ENABLE_OUTBOX:-false}
-      NOTIFICATION_RUNTIME_API_ENABLED: "false"
-      NOTIFICATION_FLYWAY_ENABLED: "false"
-      NOTIFICATION_RUNTIME_CONSUMER_ENABLED: "false"
-      NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED: "false"
-      # Mirror the secure production default; WebSocket cutover has a dedicated test/deploy gate.
-      NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: "false"
+      NOTIFICATION_RUNTIME_API_ENABLED: "true"
+      NOTIFICATION_FLYWAY_ENABLED: "true"
+      NOTIFICATION_RUNTIME_CONSUMER_ENABLED: "true"
+      NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED: "true"
+      NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: "true"
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
       MYSQL_USER: devcircle
@@ -258,7 +257,8 @@ services:
 
   dc-notification:
     <<: *app-defaults
-    profiles: ["community"]
+    # Explicit rollback-only runtime; normal community E2E owns Notification in Identity.
+    profiles: ["legacy-notification"]
     build:
       <<: *service-build
       args: { JAR_FILE: dc-notification/target/dc-notification-0.1.0-SNAPSHOT-exec.jar }
@@ -442,7 +442,7 @@ services:
       DC_INTERACTION_URI: http://dc-identity:8201
       DC_SEARCH_URI: ${REAL_E2E_SEARCH_URI:-http://dc-discovery:8203}
       DC_RECOMMEND_URI: http://dc-recommend:8107
-      DC_NOTIFICATION_URI: http://dc-notification:8108
+      DC_NOTIFICATION_URI: http://dc-identity:8201
       DC_ADMIN_URI: http://dc-admin:8110
       DC_COMMENT_URI: http://dc-comment:8104
     ports: ["28080:8080"]
@@ -455,7 +455,6 @@ services:
       dc-discovery: { condition: service_healthy, required: false }
       dc-search: { condition: service_healthy, required: false }
       dc-recommend: { condition: service_healthy, required: false }
-      dc-notification: { condition: service_healthy, required: false }
       redis: { condition: service_healthy }
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"]

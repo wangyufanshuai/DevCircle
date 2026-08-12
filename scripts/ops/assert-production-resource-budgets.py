@@ -19,7 +19,7 @@ IDENTITY_DB_CONNECTIONS_PER_REPLICA = 16
 APP_SERVICES = {
     "dc-admin", "dc-comment", "dc-content-aggregate",
     "dc-discovery", "dc-gateway", "dc-identity",
-    "dc-notification", "dc-recommend",
+    "dc-recommend",
 }
 OBSERVABILITY_SERVICES = {"prometheus", "alertmanager", "jaeger"}
 EXPECTED_SERVICES = APP_SERVICES | {
@@ -53,7 +53,6 @@ HELM_GATEWAY_ENVIRONMENT = {
     "DC_DISCOVERY_URI": "http://dc-discovery:8203",
     "DC_SEARCH_URI": "http://dc-discovery:8203",
     "DC_RECOMMEND_URI": "http://dc-recommend:8107",
-    "DC_NOTIFICATION_URI": "http://dc-notification:8108",
 }
 PRODUCTION_MODE_APPLICATIONS = (
     "dc-auth", "dc-identity", "dc-content-deployment", "dc-content",
@@ -68,10 +67,10 @@ def fail(message: str) -> None:
 def rendered_compose(compose_files: Path | list[Path], env_file: Path) -> dict:
     files = [compose_files] if isinstance(compose_files, Path) else compose_files
     command = [
-        "docker", "compose", "--env-file", str(env_file),
+        "bash", "scripts/ops/production-compose.sh", env_file.as_posix(),
     ]
     for compose_file in files:
-        command.extend(("-f", str(compose_file)))
+        command.extend(("-f", compose_file.as_posix()))
     command.extend(("config", "--format", "json"))
     completed = subprocess.run(command, check=False, capture_output=True, text=True)
     if completed.returncode != 0:
@@ -254,9 +253,24 @@ def _weak_internal_operations_key(value: object) -> bool:
             or lowered == "devcircle_internal_ops_key")
 
 
-def validate_helm_topology(base: dict[str, object], production: dict[str, object], template: str) -> None:
+def validate_helm_topology(
+        base: dict[str, object],
+        production: dict[str, object],
+        template: str,
+        cutover: dict[str, object] | None = None,
+) -> None:
     values = _merge_mappings(base, production)
-    services = _mapping(values.get("services"), "services")
+    if cutover is not None:
+        values = _merge_mappings(values, cutover)
+    services = {
+        name: service
+        for name, service in _mapping(values.get("services"), "services").items()
+        if service is not None and str(service).lower() != "null"
+    }
+    cutover_enabled = str(
+        _mapping(values.get("notificationIdentityCutover"), "notificationIdentityCutover")
+        .get("enabled", "false")
+    ).lower() == "true"
     global_environment = _mapping(values.get("env"), "env")
     global_secret_refs = _mapping(values.get("secretEnvRefs"), "secretEnvRefs")
     inline_secret_values = _mapping(values.get("secretEnv", {}), "secretEnv")
@@ -318,6 +332,19 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
             fail(f"Helm gateway must explicitly set {key}={expected}")
     if "interaction" in services:
         fail("Helm must not deploy standalone Interaction by default")
+    expected_notification_uri = (
+        "http://dc-identity:8201" if cutover_enabled else "http://dc-notification:8108"
+    )
+    if (gateway_service_environment.get("DC_NOTIFICATION_URI") != expected_notification_uri
+            or gateway.get("DC_NOTIFICATION_URI") != expected_notification_uri):
+        fail(
+            "Helm gateway must explicitly set "
+            f"DC_NOTIFICATION_URI={expected_notification_uri}"
+        )
+    if cutover_enabled and "notification" in services:
+        fail("Helm must not deploy standalone Notification after Identity cutover")
+    if not cutover_enabled and "notification" not in services:
+        fail("Helm must deploy standalone Notification before Identity cutover")
 
     discovery_environment = _mapping(
         _mapping(services.get("discovery"), "services.discovery").get("env", {}),
@@ -381,8 +408,12 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
         "NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED": "topic admin",
         "NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED": "WebSocket",
     }.items():
-        if str(identity_environment.get(key, "")).lower() != "false":
-            fail(f"Helm production identity must disable Notification {label} before cutover")
+        expected = "true" if cutover_enabled else "false"
+        if str(identity_environment.get(key, "")).lower() != expected:
+            fail(
+                f"Helm production identity Notification {label} owner switch "
+                f"must be {expected}"
+            )
     identity_pool_sizes = {}
     for domain, key in {
         "Auth": "IDENTITY_AUTH_DB_POOL_MAX_SIZE",
@@ -412,12 +443,6 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
     required_identity_connections = sum(identity_pool_sizes.values()) * replica_count
     if required_identity_connections > identity_connection_budget:
         fail("Helm identity aggregate DB pools must fit identityDatabaseConnectionBudget")
-    notification_environment = _mapping(
-        _mapping(services.get("notification"), "services.notification").get("env", {}),
-        "services.notification.env",
-    )
-    if notification_environment.get("PUBLIC_ORIGIN") != public_origin:
-        fail("Helm notification PUBLIC_ORIGIN must match publicOrigin")
     identity_secret_refs = projected_secret_refs.get("identity", {})
     for key in ("DEVCIRCLE_INTERNAL_OPS_KEY", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"):
         if identity_secret_refs.get(key) != key:
@@ -471,12 +496,10 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
         "production identity GITHUB_CALLBACK_URI must derive from publicOrigin",
         "production identity must project GitHub OAuth credentials from a Secret",
         "production identity Auth, User, Interaction and Notification pool budgets must all be positive",
-        "production identity must disable Notification API before cutover",
-        "production identity must disable Notification Flyway before cutover",
-        "production identity must disable Notification consumer before cutover",
-        "production identity must disable Notification topic admin before cutover",
-        "production identity must disable Notification WebSocket before cutover",
+        "production identity %s must be %s for the selected Notification owner",
         "production identity must retain DC_NOTIFICATION_URI for one-version rollback compatibility",
+        "approved Notification Identity cutover must remove the standalone Notification service",
+        "production notification service is required before approved Identity cutover",
         "production notification PUBLIC_ORIGIN must match publicOrigin",
         "production identity database connection budget is required",
         "production identity database connection budget must be positive",
@@ -490,16 +513,21 @@ def validate_helm_topology(base: dict[str, object], production: dict[str, object
             fail(f"Helm service template is missing guard: {required_guard}")
 
 
-def validate(data: dict) -> tuple[int, int]:
+def validate(data: dict, notification_owner: str = "standalone") -> tuple[int, int]:
+    if notification_owner not in {"identity", "standalone"}:
+        fail("notification_owner must be identity or standalone")
     services = data.get("services") or {}
     missing_apps = APP_SERVICES.difference(services)
     if missing_apps:
         fail(f"missing application services: {sorted(missing_apps)}")
-    missing_services = EXPECTED_SERVICES.difference(services)
-    unexpected_services = set(services).difference(EXPECTED_SERVICES)
+    expected_services = EXPECTED_SERVICES | (
+        {"dc-notification"} if notification_owner == "standalone" else set()
+    )
+    missing_services = expected_services.difference(services)
+    unexpected_services = set(services).difference(expected_services)
     if missing_services or unexpected_services:
         fail(
-            "production services do not match the 18-service contract: "
+            f"production services do not match the {len(expected_services)}-service contract: "
             f"missing={sorted(missing_services)} unexpected={sorted(unexpected_services)}"
         )
 
@@ -520,6 +548,18 @@ def validate(data: dict) -> tuple[int, int]:
 
     if total_memory > 15 * GIB:
         fail(f"aggregate container memory ceiling {total_memory / GIB:.2f} GiB exceeds 15 GiB")
+
+    expected_web_image = (
+        "/web-notification-cutover:"
+        if notification_owner == "identity"
+        else "/web-notification-standalone:"
+    )
+    web_image = str(services["web-static"].get("image", ""))
+    if expected_web_image not in web_image:
+        fail(
+            f"{notification_owner} Notification topology must select "
+            f"{expected_web_image.strip('/:')} Web image"
+        )
 
     for name in APP_SERVICES:
         config = services[name]
@@ -562,6 +602,7 @@ def validate(data: dict) -> tuple[int, int]:
         fail("dc-identity must enable Interaction Flyway in the default production topology")
     if identity_environment.get("INTERACTION_RUNTIME_OUTBOX_ENABLED") != "true":
         fail("dc-identity must enable Interaction Outbox in the default production topology")
+    expected_owner_switch = "true" if notification_owner == "identity" else "false"
     for key, label in {
         "NOTIFICATION_RUNTIME_API_ENABLED": "API",
         "NOTIFICATION_FLYWAY_ENABLED": "Flyway",
@@ -569,8 +610,11 @@ def validate(data: dict) -> tuple[int, int]:
         "NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED": "topic admin",
         "NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED": "WebSocket",
     }.items():
-        if identity_environment.get(key) != "false":
-            fail(f"dc-identity must disable Notification {label} before cutover")
+        if identity_environment.get(key) != expected_owner_switch:
+            fail(
+                f"dc-identity Notification {label} owner switch must be "
+                f"{expected_owner_switch} when {notification_owner} owns Notification"
+            )
     identity_pool_sizes = {}
     for domain, key in {
         "Auth": "IDENTITY_AUTH_DB_POOL_MAX_SIZE",
@@ -586,11 +630,15 @@ def validate(data: dict) -> tuple[int, int]:
             fail(f"dc-identity {domain} pool budget must be between 1 and 10")
     if sum(identity_pool_sizes.values()) > 16:
         fail("dc-identity aggregate Auth, User, Interaction and Notification pool ceiling must not exceed 16 connections")
-    notification_environment = services["dc-notification"].get("environment") or {}
-    if (not notification_environment.get("PUBLIC_ORIGIN")
-            or notification_environment.get("PUBLIC_ORIGIN")
-            != notification_environment.get("S3_PRESIGN_ENDPOINT")):
-        fail("dc-notification PUBLIC_ORIGIN must match the production public origin")
+    if notification_owner == "standalone":
+        notification_environment = services["dc-notification"].get("environment") or {}
+        for key, expected in PRODUCTION_ENVIRONMENT.items():
+            if str(notification_environment.get(key, "")).lower() != expected:
+                fail(f"dc-notification must set {key}={expected}")
+        if (not notification_environment.get("PUBLIC_ORIGIN")
+                or notification_environment.get("PUBLIC_ORIGIN")
+                != notification_environment.get("S3_PRESIGN_ENDPOINT")):
+            fail("dc-notification PUBLIC_ORIGIN must match the production public origin")
     admin_environment = services["dc-admin"].get("environment") or {}
     if admin_environment.get("DC_AUTH_URI") != "http://dc-identity:8201":
         fail("dc-admin must read the logical dc-auth Outbox source from dc-identity")
@@ -618,7 +666,11 @@ def validate(data: dict) -> tuple[int, int]:
         "DC_IDENTITY_URI": "http://dc-identity:8201",
         "DC_USER_URI": "http://dc-identity:8201",
         "DC_INTERACTION_URI": "http://dc-identity:8201",
-        "DC_NOTIFICATION_URI": "http://dc-notification:8108",
+        "DC_NOTIFICATION_URI": (
+            "http://dc-identity:8201"
+            if notification_owner == "identity"
+            else "http://dc-notification:8108"
+        ),
         "DC_DISCOVERY_URI": "http://dc-discovery:8203",
         "DC_SEARCH_URI": "http://dc-discovery:8203",
         "DC_RECOMMEND_URI": "http://dc-recommend:8107",
@@ -630,9 +682,12 @@ def validate(data: dict) -> tuple[int, int]:
     for dependency in ("dc-identity", "dc-content-aggregate", "dc-discovery", "dc-recommend"):
         if dependency not in gateway_dependencies:
             fail(f"dc-gateway must depend on {dependency} for aggregate routing")
-    notification_dependency = gateway_dependencies.get("dc-notification") or {}
-    if notification_dependency.get("condition") != "service_healthy":
-        fail("dc-gateway must wait for healthy dc-notification before Notification cutover")
+    if notification_owner == "identity" and "dc-notification" in gateway_dependencies:
+        fail("dc-gateway must not depend on standalone Notification after cutover")
+    if notification_owner == "standalone":
+        dependency = gateway_dependencies.get("dc-notification") or {}
+        if dependency.get("condition") != "service_healthy":
+            fail("dc-gateway must wait for healthy standalone Notification before cutover")
     discovery_environment = services["dc-discovery"].get("environment") or {}
     if "DC_SEARCH_URI" in discovery_environment:
         fail("dc-discovery must embed search instead of proxying DC_SEARCH_URI")
@@ -669,14 +724,17 @@ def validate_legacy_user_rollback(
         rollback: dict,
         production_prometheus: Path,
         rollback_prometheus: Path,
+        notification_owner: str = "standalone",
 ) -> tuple[int, int]:
     """Validate the bounded, observable standalone User rollback topology."""
-    validate(production)
+    validate(production, notification_owner)
     services = rollback.get("services") or {}
-    expected_services = EXPECTED_SERVICES | {"dc-user"}
+    expected_services = EXPECTED_SERVICES | {"dc-user"} | (
+        {"dc-notification"} if notification_owner == "standalone" else set()
+    )
     if set(services) != expected_services:
         fail(
-            "legacy User rollback services do not match the 20-service contract: "
+            f"legacy User rollback services do not match the {len(expected_services)}-service contract: "
             f"missing={sorted(expected_services.difference(services))} "
             f"unexpected={sorted(set(services).difference(expected_services))}"
         )
@@ -766,14 +824,17 @@ def validate_legacy_interaction_rollback(
         rollback: dict,
         production_prometheus: Path,
         rollback_prometheus: Path,
+        notification_owner: str = "standalone",
 ) -> tuple[int, int]:
     """Validate the bounded, single-owner standalone Interaction rollback topology."""
-    validate(production)
+    validate(production, notification_owner)
     services = rollback.get("services") or {}
-    expected_services = EXPECTED_SERVICES | {"dc-interaction"}
+    expected_services = EXPECTED_SERVICES | {"dc-interaction"} | (
+        {"dc-notification"} if notification_owner == "standalone" else set()
+    )
     if set(services) != expected_services:
         fail(
-            "legacy Interaction rollback services do not match the 19-service contract: "
+            f"legacy Interaction rollback services do not match the {len(expected_services)}-service contract: "
             f"missing={sorted(expected_services.difference(services))} "
             f"unexpected={sorted(set(services).difference(expected_services))}"
         )
@@ -850,6 +911,74 @@ def validate_legacy_interaction_rollback(
     return len(services), total_memory
 
 
+def validate_legacy_notification_rollback(
+        cutover: dict,
+        rollback: dict,
+        cutover_prometheus: Path,
+        rollback_prometheus: Path,
+) -> tuple[int, int]:
+    """Validate exactly-one Notification ownership in the rollback topology."""
+    validate(cutover, "identity")
+    services = rollback.get("services") or {}
+    expected_services = EXPECTED_SERVICES | {"dc-notification"}
+    if set(services) != expected_services:
+        fail(
+            "legacy Notification rollback services do not match the 18-service contract: "
+            f"missing={sorted(expected_services.difference(services))} "
+            f"unexpected={sorted(set(services).difference(expected_services))}"
+        )
+    notification = services["dc-notification"]
+    memory = int(positive_number("dc-notification", notification, "mem_limit"))
+    if not 384 * MIB <= memory <= 768 * MIB:
+        fail("legacy dc-notification memory limit must stay between 384 and 768 MiB")
+    port_contract("dc-notification", notification)
+    logging_contract("dc-notification", notification)
+    health_test = (notification.get("healthcheck") or {}).get("test") or []
+    if "http://localhost:8108/actuator/health/readiness" not in health_test:
+        fail("legacy dc-notification must use the readiness actuator health check")
+    for key, expected in PRODUCTION_ENVIRONMENT.items():
+        if str((notification.get("environment") or {}).get(key, "")).lower() != expected:
+            fail(f"legacy dc-notification must set {key}={expected}")
+
+    identity_environment = services["dc-identity"].get("environment") or {}
+    for switch in (
+        "NOTIFICATION_RUNTIME_API_ENABLED", "NOTIFICATION_FLYWAY_ENABLED",
+        "NOTIFICATION_RUNTIME_CONSUMER_ENABLED", "NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED",
+        "NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED",
+    ):
+        if str(identity_environment.get(switch, "")).lower() != "false":
+            fail(f"legacy Notification rollback must disable {switch} in dc-identity")
+    for owner in ("dc-identity", "dc-gateway"):
+        environment = services[owner].get("environment") or {}
+        if environment.get("DC_NOTIFICATION_URI") != "http://dc-notification:8108":
+            fail(f"legacy Notification rollback must route {owner} to dc-notification")
+        dependency = (services[owner].get("depends_on") or {}).get("dc-notification") or {}
+        if dependency.get("condition") != "service_healthy":
+            fail(f"legacy Notification rollback must make {owner} wait for healthy dc-notification")
+    web_image = str(services["web-static"].get("image", ""))
+    if "/web-notification-standalone:" not in web_image:
+        fail("legacy Notification rollback must select the socket-disabled Web image")
+
+    config_mounts = [
+        volume for volume in (services["prometheus"].get("volumes") or [])
+        if volume.get("target") == "/etc/prometheus/prometheus.yml"
+    ]
+    if len(config_mounts) != 1 or not str(config_mounts[0].get("source", "")).replace("\\", "/").endswith(
+            "/deploy/prometheus/prometheus.legacy-notification-rollback.yml"):
+        fail("legacy Notification rollback must mount its Prometheus configuration")
+    cutover_text = cutover_prometheus.read_text(encoding="utf-8")
+    rollback_text = rollback_prometheus.read_text(encoding="utf-8")
+    if "dc-notification:8108" in cutover_text or "service: dc-notification" in cutover_text:
+        fail("Notification Identity cutover Prometheus must not scrape absent standalone Notification")
+    if "targets: [\"dc-notification:8108\"]" not in rollback_text:
+        fail("legacy Notification rollback Prometheus must scrape dc-notification")
+    total_memory = sum(int(positive_number(name, config, "mem_limit"))
+                       for name, config in services.items())
+    if total_memory > 15 * GIB:
+        fail("legacy Notification rollback aggregate memory exceeds 15 GiB")
+    return len(services), total_memory
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--compose-file", default="docker-compose.prod.yml", type=Path)
@@ -863,10 +992,25 @@ def main() -> int:
         default="deploy/compose/docker-compose.legacy-interaction-rollback.yml",
         type=Path,
     )
+    parser.add_argument(
+        "--notification-identity-cutover-overlay",
+        default="deploy/compose/docker-compose.notification-identity-cutover.yml",
+        type=Path,
+    )
+    parser.add_argument(
+        "--legacy-notification-overlay",
+        default="deploy/compose/docker-compose.legacy-notification-rollback.yml",
+        type=Path,
+    )
     parser.add_argument("--env-file", default=".env.production.example", type=Path)
     parser.add_argument("--caddyfile", default="deploy/Caddyfile", type=Path)
     parser.add_argument("--helm-values", default="deploy/helm/devcircle/values.yaml", type=Path)
     parser.add_argument("--helm-prod-values", default="deploy/helm/devcircle/values-prod.yaml", type=Path)
+    parser.add_argument(
+        "--helm-notification-identity-cutover-values",
+        default="deploy/helm/devcircle/values-notification-identity-cutover.yaml",
+        type=Path,
+    )
     parser.add_argument(
         "--helm-service-template",
         default="deploy/helm/devcircle/templates/services.yaml",
@@ -875,7 +1019,11 @@ def main() -> int:
     args = parser.parse_args()
     try:
         production = rendered_compose(args.compose_file, args.env_file)
-        service_count, total_memory = validate(production)
+        service_count, total_memory = validate(production, "standalone")
+        cutover = rendered_compose(
+            [args.compose_file, args.notification_identity_cutover_overlay], args.env_file
+        )
+        cutover_count, cutover_memory = validate(cutover, "identity")
         rollback_count, rollback_memory = validate_legacy_user_rollback(
             production,
             rendered_compose([args.compose_file, args.legacy_user_overlay], args.env_file),
@@ -888,6 +1036,12 @@ def main() -> int:
             Path("deploy/prometheus/prometheus.prod.yml"),
             Path("deploy/prometheus/prometheus.legacy-interaction-rollback.yml"),
         )
+        notification_rollback_count, notification_rollback_memory = validate_legacy_notification_rollback(
+            cutover,
+            rendered_compose([args.compose_file, args.legacy_notification_overlay], args.env_file),
+            Path("deploy/prometheus/prometheus.notification-identity-cutover.yml"),
+            Path("deploy/prometheus/prometheus.legacy-notification-rollback.yml"),
+        )
         validate_caddyfile(args.caddyfile)
         validate_production_mode_bindings(Path("."))
         validate_helm_topology(
@@ -895,17 +1049,27 @@ def main() -> int:
             load_simple_yaml_mapping(args.helm_prod_values),
             args.helm_service_template.read_text(encoding="utf-8"),
         )
+        validate_helm_topology(
+            load_simple_yaml_mapping(args.helm_values),
+            load_simple_yaml_mapping(args.helm_prod_values),
+            args.helm_service_template.read_text(encoding="utf-8"),
+            load_simple_yaml_mapping(args.helm_notification_identity_cutover_values),
+        )
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(f"Production resource budget validation failed: {error}", file=sys.stderr)
         return 1
     print(
         f"Production resource budgets validated: services={service_count} "
         f"memory_ceiling={total_memory / GIB:.2f}GiB published_services={len(PUBLISHED_PORTS)} "
+        f"notification_cutover_services={cutover_count} "
+        f"notification_cutover_memory_ceiling={cutover_memory / GIB:.2f}GiB "
         f"legacy_user_services={rollback_count} "
         f"legacy_user_memory_ceiling={rollback_memory / GIB:.2f}GiB "
         f"legacy_interaction_services={interaction_rollback_count} "
         f"legacy_interaction_memory_ceiling={interaction_rollback_memory / GIB:.2f}GiB "
-        "helm_identity_runtime=dc-auth+dc-user@dc-identity:8201"
+        f"legacy_notification_services={notification_rollback_count} "
+        f"legacy_notification_memory_ceiling={notification_rollback_memory / GIB:.2f}GiB "
+        "helm_notification_default=standalone helm_notification_cutover=identity"
     )
     return 0
 

@@ -70,15 +70,29 @@ BACKUP_MANIFEST=/srv/backups/devcircle/<timestamp>/backup-manifest.json \
 发布时只修改 `.env.production` 的 `IMAGE_TAG` 为新提交 SHA，然后：
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.prod.yml pull
-scripts/ops/verify-release-identity.sh .env.production
-docker compose --env-file .env.production -f docker-compose.prod.yml up -d
+ENV_FILE=.env.production scripts/ops/deploy-production.sh
 ```
 
-保留上一 SHA 和迁移前备份。需要回滚时：
+保留上一 SHA、切流时构建的回滚资产 SHA 和迁移前备份。回滚脚本只读取一个 `ENV_FILE`，不得通过临时 shell `export` 或命令前缀传入回滚变量；这些变量不会覆盖该文件中的值。先基于生产环境文件创建独立回滚文件，并限制为仅所有者可读写：
 
 ```bash
-PREVIOUS_IMAGE_TAG=<previous-sha> scripts/ops/rollback.sh /srv/backups/devcircle/<pre-migration-timestamp>
+cp .env.production .env.rollback
+chmod 0600 .env.rollback
+```
+
+编辑 `.env.rollback`，保留其余生产密钥与配置，并明确设置以下四项：
+
+```dotenv
+NOTIFICATION_DEPLOY_MODE=rollback
+IMAGE_TAG=<business-image-rollback-sha>
+ROLLBACK_ASSET_TAG=<cutover-asset-sha>
+LEGACY_NOTIFICATION_ROLLBACK=true
+```
+
+`IMAGE_TAG` 是要恢复的业务镜像 40 位提交 SHA；`ROLLBACK_ASSET_TAG` 是切流发布时同时构建的、socket-disabled Web 与 standalone Notification 资产的 40 位提交 SHA。两者都必须是已验签的不可变 SHA，禁止使用 `latest` 或其他浮动标签。确认 `.env.rollback` 权限仍为 `0600` 后执行：
+
+```bash
+ENV_FILE=.env.rollback scripts/ops/rollback.sh /srv/backups/devcircle/<pre-migration-timestamp>
 ```
 
 若新迁移仍向前兼容，可只回滚镜像；只有发生不兼容数据写入时才恢复数据库和媒体备份。

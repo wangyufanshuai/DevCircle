@@ -12,18 +12,26 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AggregateRouteContractTest {
     @Test
-    void notificationWebSocketInfrastructureRemainsExplicitlyDefaultOffUntilDedicatedCutover()
+    void notificationWebSocketIsEnabledOnlyInCutoverDeployments()
             throws IOException {
         for (String path : new String[]{
                 "docker-compose.prod.yml",
-                "docker-compose.e2e.yml",
                 "deploy/helm/devcircle/values.yaml",
                 "deploy/helm/devcircle/values-prod.yaml"}) {
             assertThat(repositoryFile(path))
-                    .as("secure WebSocket default in %s", path)
-                    .contains("NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: \"false\"")
-                    .doesNotContain("NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: \"true\"");
+                    .as("default-off WebSocket owner in %s", path)
+                    .contains("NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: \"false\"");
         }
+        assertThat(repositoryFile(
+                "deploy/compose/docker-compose.notification-identity-cutover.yml"))
+                .contains("NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: \"true\"");
+        assertThat(repositoryFile("docker-compose.e2e.yml"))
+                .contains("NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: \"true\"");
+        assertThat(repositoryFile(
+                "deploy/helm/devcircle/values-notification-identity-cutover.yaml"))
+                .contains("NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: \"true\"");
+        assertThat(repositoryFile("dc-identity/src/main/resources/application.yml"))
+                .contains("websocket-enabled: ${NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED:false}");
     }
 
     @Test
@@ -109,13 +117,71 @@ class AggregateRouteContractTest {
                 .contains("targets: [\"dc-interaction:8105\"]")
                 .contains("labels: { service: dc-interaction }");
         assertThat(rollback)
-                .contains("LEGACY_INTERACTION_ROLLBACK:-false")
+                .contains("MODE=\"$(production_env_value NOTIFICATION_DEPLOY_MODE)\"")
                 .contains("docker-compose.legacy-interaction-rollback.yml")
                 .contains("ROLLBACK_SERVICES+=(dc-interaction)");
         assertThat(restore)
-                .contains("LEGACY_INTERACTION_ROLLBACK:-false")
+                .contains("ENV_NOTIFICATION_MODE=\"$(production_env_value NOTIFICATION_DEPLOY_MODE)\"")
                 .contains("docker-compose.legacy-interaction-rollback.yml")
                 .contains("APP_SERVICES+=(dc-interaction)");
+    }
+
+    @Test
+    void productionDefaultsToStandaloneNotificationAndCutoverSelectsIdentityExactlyOnce()
+            throws IOException {
+        String production = repositoryFile("docker-compose.prod.yml");
+        String e2e = repositoryFile("docker-compose.e2e.yml");
+        String cutover = repositoryFile(
+                "deploy/compose/docker-compose.notification-identity-cutover.yml");
+        String rollback = repositoryFile(
+                "deploy/compose/docker-compose.legacy-notification-rollback.yml");
+        String productionPrometheus = repositoryFile("deploy/prometheus/prometheus.prod.yml");
+        String cutoverPrometheus = repositoryFile(
+                "deploy/prometheus/prometheus.notification-identity-cutover.yml");
+        String rollbackPrometheus = repositoryFile(
+                "deploy/prometheus/prometheus.legacy-notification-rollback.yml");
+        String identityRollback = composeServiceBlock(rollback, "dc-identity");
+
+        assertThat(production)
+                .contains("\n  dc-notification:")
+                .contains("DC_NOTIFICATION_URI: http://dc-notification:8108")
+                .contains("NOTIFICATION_RUNTIME_API_ENABLED: \"false\"")
+                .contains("NOTIFICATION_FLYWAY_ENABLED: \"false\"")
+                .contains("NOTIFICATION_RUNTIME_CONSUMER_ENABLED: \"false\"")
+                .contains("NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED: \"false\"")
+                .contains("NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: \"false\"");
+        assertThat(e2e)
+                .contains("DC_NOTIFICATION_URI: http://dc-notification:8108")
+                .contains("DC_NOTIFICATION_URI: http://dc-identity:8201")
+                .contains("NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: \"true\"")
+                .contains("profiles: [\"legacy-notification\"]");
+        assertThat(cutover)
+                .contains("profiles: [\"standalone-notification-disabled\"]")
+                .contains("DC_NOTIFICATION_URI: http://dc-identity:8201")
+                .contains("NOTIFICATION_RUNTIME_API_ENABLED: \"true\"")
+                .contains("NOTIFICATION_FLYWAY_ENABLED: \"true\"")
+                .contains("NOTIFICATION_RUNTIME_CONSUMER_ENABLED: \"true\"")
+                .contains("NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED: \"true\"")
+                .contains("NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: \"true\"")
+                .contains("web-notification-cutover:");
+        assertThat(identityRollback)
+                .contains("DC_NOTIFICATION_URI: http://dc-notification:8108")
+                .contains("NOTIFICATION_RUNTIME_API_ENABLED: \"false\"")
+                .contains("NOTIFICATION_FLYWAY_ENABLED: \"false\"")
+                .contains("NOTIFICATION_RUNTIME_CONSUMER_ENABLED: \"false\"")
+                .contains("NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED: \"false\"")
+                .contains("NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: \"false\"");
+        assertThat(rollback).contains("web-notification-standalone:")
+                .contains("dc-notification: { condition: service_healthy }");
+        assertThat(productionPrometheus).contains("dc-notification:8108");
+        assertThat(cutoverPrometheus).doesNotContain("dc-notification:8108");
+        assertThat(rollbackPrometheus).contains("targets: [\"dc-notification:8108\"]");
+        assertThat(repositoryFile("scripts/ops/rollback.sh"))
+                .contains("MODE=\"$(production_env_value NOTIFICATION_DEPLOY_MODE)\"")
+                .contains("ROLLBACK_SERVICES=(dc-comment dc-recommend dc-notification");
+        assertThat(repositoryFile("scripts/ops/restore.sh"))
+                .contains("ENV_NOTIFICATION_MODE=\"$(production_env_value NOTIFICATION_DEPLOY_MODE)\"")
+                .contains("APP_SERVICES+=(dc-notification)");
     }
 
     @Test
@@ -162,11 +228,11 @@ class AggregateRouteContractTest {
                 .contains("targets: [\"dc-user:8102\"]")
                 .contains("labels: { service: dc-user }");
         assertThat(rollback)
-                .contains("LEGACY_USER_ROLLBACK:-false")
+                .contains("MODE=\"$(production_env_value NOTIFICATION_DEPLOY_MODE)\"")
                 .contains("docker-compose.legacy-user-rollback.yml")
                 .contains("ROLLBACK_SERVICES+=(dc-user)");
         assertThat(restore)
-                .contains("LEGACY_USER_ROLLBACK:-false")
+                .contains("ENV_NOTIFICATION_MODE=\"$(production_env_value NOTIFICATION_DEPLOY_MODE)\"")
                 .contains("docker-compose.legacy-user-rollback.yml")
                 .contains("APP_SERVICES+=(dc-user)");
     }
@@ -188,11 +254,11 @@ class AggregateRouteContractTest {
                 .contains("dc-auth: { condition: service_healthy }")
                 .doesNotContain("dc-identity:\n    environment:\n      DC_AUTH_URI");
         assertThat(rollback)
-                .contains("LEGACY_AUTH_ROLLBACK:-false")
+                .contains("MODE=\"$(production_env_value NOTIFICATION_DEPLOY_MODE)\"")
                 .contains("docker-compose.legacy-auth-rollback.yml")
                 .contains("ROLLBACK_SERVICES=(dc-auth");
         assertThat(restore)
-                .contains("LEGACY_AUTH_ROLLBACK:-false")
+                .contains("ENV_NOTIFICATION_MODE=\"$(production_env_value NOTIFICATION_DEPLOY_MODE)\"")
                 .contains("docker-compose.legacy-auth-rollback.yml")
                 .contains("APP_SERVICES+=(dc-auth)");
     }

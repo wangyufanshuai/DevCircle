@@ -23,7 +23,7 @@ export default defineConfig({
     url: baseURL,
     reuseExistingServer: false,
     timeout: 60_000,
-    env: { VITE_API_PROXY: apiProxy }
+    env: { VITE_API_PROXY: apiProxy, VITE_NOTIFICATION_SOCKET_ENABLED: 'true' }
   },
   projects: [
     { name: 'real-auth-chromium', use: { ...devices['Desktop Chrome'], channel: 'chromium', viewport: { width: 1440, height: 1000 } } }

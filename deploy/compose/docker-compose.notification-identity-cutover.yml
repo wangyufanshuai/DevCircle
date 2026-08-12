@@ -1,0 +1,43 @@
+# Opt-in Notification -> Identity owner cutover.
+# Never deploy this overlay without NOTIFICATION_CUTOVER_APPROVED=true and the
+# real MySQL/Kafka/Gateway-WebSocket/user-isolation evidence listed in the runbook.
+services:
+  dc-notification:
+    # Compose keeps the definition for rollback inspection, but this profile is
+    # deliberately inactive in cutover mode. `config --services` therefore
+    # proves that the runtime topology has 17 services and no standalone owner.
+    profiles: ["standalone-notification-disabled"]
+
+  dc-identity:
+    environment:
+      NOTIFICATION_RUNTIME_API_ENABLED: "true"
+      NOTIFICATION_FLYWAY_ENABLED: "true"
+      NOTIFICATION_RUNTIME_CONSUMER_ENABLED: "true"
+      NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED: "true"
+      NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: "true"
+      DC_NOTIFICATION_URI: http://dc-notification:8108
+    depends_on: !override
+      mysql: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+
+  dc-gateway:
+    environment:
+      DC_NOTIFICATION_URI: http://dc-identity:8201
+    depends_on: !override
+      dc-identity: { condition: service_healthy }
+      dc-content-aggregate: { condition: service_healthy }
+      dc-discovery: { condition: service_healthy }
+      dc-recommend: { condition: service_healthy }
+      dc-comment: { condition: service_healthy }
+      dc-admin: { condition: service_healthy }
+
+  web-static:
+    image: ghcr.io/wangyufanshuai/devcircle/web-notification-cutover:${CUTOVER_ASSET_TAG:?CUTOVER_ASSET_TAG must be the approved cutover commit SHA}
+
+  prometheus:
+    volumes: !override
+      - ./deploy/prometheus/prometheus.notification-identity-cutover.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./deploy/prometheus/slo.yml:/etc/prometheus/slo.yml:ro
+      - prometheus-data:/prometheus

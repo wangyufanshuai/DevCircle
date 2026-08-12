@@ -46,6 +46,14 @@ def service(memory: int = 512 * budgets.MIB) -> dict:
     }
 
 
+def notification_web_image(owner: str, tag_variable: str) -> str:
+    image = {
+        "identity": "web-notification-cutover",
+        "standalone": "web-notification-standalone",
+    }[owner]
+    return f"ghcr.io/wangyufanshuai/devcircle/{image}:${{{tag_variable}}}"
+
+
 def valid_compose() -> dict:
     services = {
         name: {**service(), "environment": app_environment()}
@@ -72,7 +80,10 @@ def valid_compose() -> dict:
             "environment": {"ES_JAVA_OPTS": "-Xms1g -Xmx1g"},
         },
         "minio": service(768 * budgets.MIB),
-        "web-static": service(128 * budgets.MIB),
+        "web-static": {
+            **service(128 * budgets.MIB),
+            "image": notification_web_image("standalone", "IMAGE_TAG"),
+        },
         "web": {
             **service(256 * budgets.MIB),
             "ports": [
@@ -144,7 +155,66 @@ def valid_compose() -> dict:
         name: {"condition": "service_healthy"}
         for name in ("mysql", "elasticsearch", "kafka", "dc-content-aggregate")
     }
+    services["dc-notification"] = {
+        **service(),
+        "image": "ghcr.io/wangyufanshuai/devcircle/dc-notification:${IMAGE_TAG}",
+        "environment": app_environment(),
+    }
     return {"services": services}
+
+
+def valid_notification_cutover() -> dict:
+    cutover = copy.deepcopy(valid_compose())
+    services = cutover["services"]
+    del services["dc-notification"]
+    services["dc-identity"]["environment"].update({
+        "NOTIFICATION_RUNTIME_API_ENABLED": "true",
+        "NOTIFICATION_FLYWAY_ENABLED": "true",
+        "NOTIFICATION_RUNTIME_CONSUMER_ENABLED": "true",
+        "NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED": "true",
+        "NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED": "true",
+    })
+    services["dc-gateway"]["environment"]["DC_NOTIFICATION_URI"] = (
+        "http://dc-identity:8201"
+    )
+    del services["dc-gateway"]["depends_on"]["dc-notification"]
+    services["web-static"]["image"] = notification_web_image(
+        "identity", "CUTOVER_ASSET_TAG"
+    )
+    return cutover
+
+
+def valid_legacy_notification_rollback() -> dict:
+    rollback = copy.deepcopy(valid_compose())
+    services = rollback["services"]
+    services["dc-notification"].update({
+        "image": (
+            "ghcr.io/wangyufanshuai/devcircle/dc-notification:"
+            "${ROLLBACK_ASSET_TAG}"
+        ),
+        "expose": ["8108"],
+        "healthcheck": {
+            "test": [
+                "CMD", "curl", "-fsS",
+                "http://localhost:8108/actuator/health/readiness",
+            ],
+        },
+    })
+    services["dc-identity"].setdefault("depends_on", {})["dc-notification"] = {
+        "condition": "service_healthy",
+    }
+    services["web-static"]["image"] = notification_web_image(
+        "standalone", "ROLLBACK_ASSET_TAG"
+    )
+    services["prometheus"]["volumes"] = [{
+        "type": "bind",
+        "source": str(
+            ROOT / "deploy/prometheus/prometheus.legacy-notification-rollback.yml"
+        ),
+        "target": "/etc/prometheus/prometheus.yml",
+        "read_only": True,
+    }]
+    return rollback
 
 
 def valid_legacy_user_rollback() -> dict:
@@ -223,10 +293,18 @@ class ProductionResourceBudgetTest(unittest.TestCase):
     def setUp(self) -> None:
         self.compose = valid_compose()
 
-    def test_accepts_the_18_service_production_contract(self) -> None:
+    def test_accepts_the_18_service_default_production_contract(self) -> None:
         service_count, total_memory = budgets.validate(self.compose)
 
         self.assertEqual(18, service_count)
+        self.assertLessEqual(total_memory, 15 * budgets.GIB)
+
+    def test_accepts_the_17_service_explicit_notification_cutover_contract(self) -> None:
+        service_count, total_memory = budgets.validate(
+            valid_notification_cutover(), "identity"
+        )
+
+        self.assertEqual(17, service_count)
         self.assertLessEqual(total_memory, 15 * budgets.GIB)
 
     def test_rejects_missing_internal_operations_key(self) -> None:
@@ -256,7 +334,7 @@ class ProductionResourceBudgetTest(unittest.TestCase):
         self.compose["services"]["dc-identity"]["environment"][
             "NOTIFICATION_RUNTIME_CONSUMER_ENABLED"
         ] = "true"
-        with self.assertRaisesRegex(ValueError, "disable Notification consumer"):
+        with self.assertRaisesRegex(ValueError, "owner switch must be false"):
             budgets.validate(self.compose)
 
         self.compose = valid_compose()
@@ -371,14 +449,7 @@ class ProductionResourceBudgetTest(unittest.TestCase):
 
         self.compose = valid_compose()
         del self.compose["services"]["dc-gateway"]["depends_on"]["dc-notification"]
-        with self.assertRaisesRegex(ValueError, "wait for healthy dc-notification"):
-            budgets.validate(self.compose)
-
-        self.compose = valid_compose()
-        self.compose["services"]["dc-gateway"]["depends_on"]["dc-notification"][
-            "condition"
-        ] = "service_started"
-        with self.assertRaisesRegex(ValueError, "wait for healthy dc-notification"):
+        with self.assertRaisesRegex(ValueError, "wait for healthy standalone Notification"):
             budgets.validate(self.compose)
 
         self.compose = valid_compose()
@@ -415,6 +486,19 @@ class ProductionResourceBudgetTest(unittest.TestCase):
                 budgets.validate_caddyfile(temporary)
         finally:
             temporary.unlink(missing_ok=True)
+
+
+class LegacyNotificationRollbackResourceBudgetTest(unittest.TestCase):
+    def test_accepts_the_18_service_explicit_notification_rollback_contract(self) -> None:
+        service_count, total_memory = budgets.validate_legacy_notification_rollback(
+            valid_notification_cutover(),
+            valid_legacy_notification_rollback(),
+            ROOT / "deploy/prometheus/prometheus.notification-identity-cutover.yml",
+            ROOT / "deploy/prometheus/prometheus.legacy-notification-rollback.yml",
+        )
+
+        self.assertEqual(18, service_count)
+        self.assertLessEqual(total_memory, 15 * budgets.GIB)
 
 
 class LegacyUserRollbackResourceBudgetTest(unittest.TestCase):
@@ -520,12 +604,18 @@ class HelmTopologyContractTest(unittest.TestCase):
         self.template = (
             ROOT / "deploy/helm/devcircle/templates/services.yaml"
         ).read_text(encoding="utf-8")
+        self.cutover = budgets.load_simple_yaml_mapping(
+            ROOT / "deploy/helm/devcircle/values-notification-identity-cutover.yaml"
+        )
 
     def test_all_reliable_messaging_runtimes_bind_the_production_guard(self) -> None:
         budgets.validate_production_mode_bindings(ROOT)
 
     def test_accepts_identity_as_the_explicit_helm_auth_runtime_without_helm(self) -> None:
         budgets.validate_helm_topology(self.values, self.production, self.template)
+        budgets.validate_helm_topology(
+            self.values, self.production, self.template, self.cutover
+        )
 
     def test_rejects_a_separate_or_proxied_search_helm_runtime(self) -> None:
         separate = copy.deepcopy(self.values)
@@ -604,8 +694,22 @@ class HelmTopologyContractTest(unittest.TestCase):
     def test_rejects_helm_notification_dual_ownership_or_broken_rollback_uri(self) -> None:
         dual_owner = copy.deepcopy(self.production)
         dual_owner["services"]["identity"]["env"]["NOTIFICATION_FLYWAY_ENABLED"] = "true"
-        with self.assertRaisesRegex(ValueError, "disable Notification Flyway"):
+        with self.assertRaisesRegex(ValueError, "owner switch must be false"):
             budgets.validate_helm_topology(self.values, dual_owner, self.template)
+
+        missing_owner = copy.deepcopy(self.cutover)
+        missing_owner["services"]["identity"]["env"]["NOTIFICATION_FLYWAY_ENABLED"] = "false"
+        with self.assertRaisesRegex(ValueError, "owner switch must be true"):
+            budgets.validate_helm_topology(
+                self.values, self.production, self.template, missing_owner
+            )
+
+        standalone = copy.deepcopy(self.cutover)
+        standalone["services"]["notification"] = {"port": "8108"}
+        with self.assertRaisesRegex(ValueError, "must not deploy standalone Notification"):
+            budgets.validate_helm_topology(
+                self.values, self.production, self.template, standalone
+            )
 
         self_http = copy.deepcopy(self.values)
         self_http["services"]["identity"]["env"]["DC_NOTIFICATION_URI"] = "http://wrong:8108"

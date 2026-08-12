@@ -37,7 +37,6 @@ services:
       NOTIFICATION_FLYWAY_ENABLED: "false"
       NOTIFICATION_RUNTIME_CONSUMER_ENABLED: "false"
       NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED: "false"
-      # Secure infrastructure default-off; enabling this requires a separate cutover release.
       NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: "false"
     secretEnvRefs:
       GITHUB_CLIENT_ID: GITHUB_CLIENT_ID
@@ -45,7 +44,6 @@ services:
   notification:
     env:
       PUBLIC_ORIGIN: https://mysticverse.example.com
-
 env:
   DEVCIRCLE_PRODUCTION_MODE: "true"
   DEVCIRCLE_READ_FALLBACK_ENABLED: "false"

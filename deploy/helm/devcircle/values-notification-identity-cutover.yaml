@@ -1,0 +1,17 @@
+# Opt-in only. Apply together with an approved change after the real cutover
+# evidence gate passes. This file deliberately removes standalone Notification.
+notificationIdentityCutover:
+  enabled: true
+
+services:
+  gateway:
+    env:
+      DC_NOTIFICATION_URI: http://dc-identity:8201
+  identity:
+    env:
+      NOTIFICATION_RUNTIME_API_ENABLED: "true"
+      NOTIFICATION_FLYWAY_ENABLED: "true"
+      NOTIFICATION_RUNTIME_CONSUMER_ENABLED: "true"
+      NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED: "true"
+      NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: "true"
+  notification: null

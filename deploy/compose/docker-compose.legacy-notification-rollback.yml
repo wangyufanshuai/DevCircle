@@ -1,0 +1,72 @@
+# Explicit one-version rollback overlay after an approved Identity cutover.
+# It restores the standalone API/migration/consumer/topic/WebSocket owner and
+# disables all five owners in Identity. The legacy Web image is built with the
+# socket client disabled, so browsers do not connect during the rollback.
+services:
+  dc-notification:
+    image: ghcr.io/wangyufanshuai/devcircle/dc-notification:${ROLLBACK_ASSET_TAG:?ROLLBACK_ASSET_TAG must be the cutover commit SHA}
+    restart: unless-stopped
+    stop_grace_period: 40s
+    mem_limit: 512m
+    cpus: 0.75
+    pids_limit: 256
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-devcircle}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SPRING_DATA_REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN is required}
+      DEVCIRCLE_JWT_SECRET: ${DEVCIRCLE_JWT_SECRET:?DEVCIRCLE_JWT_SECRET is required}
+      DEVCIRCLE_INTERNAL_OPS_KEY: ${DEVCIRCLE_INTERNAL_OPS_KEY:?DEVCIRCLE_INTERNAL_OPS_KEY is required}
+      DEVCIRCLE_PRODUCTION_MODE: "true"
+      DEVCIRCLE_READ_FALLBACK_ENABLED: "false"
+      DEVCIRCLE_THEME_CONTENT_SEED_ENABLED: "false"
+      SPRINGDOC_API_DOCS_ENABLED: "false"
+      SPRINGDOC_SWAGGER_UI_ENABLED: "false"
+      MANAGEMENT_TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLE_RATE:-0.1}
+      MANAGEMENT_METRICS_DISTRIBUTION_PERCENTILES_HISTOGRAM_HTTP_SERVER_REQUESTS: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=60.0 -XX:InitialRAMPercentage=20.0 -XX:+ExitOnOutOfMemoryError"
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: ${DB_POOL_MAX_SIZE:-8}
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: ${DB_POOL_MIN_IDLE:-1}
+      SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: ${DB_POOL_CONNECTION_TIMEOUT_MS:-3000}
+      SERVER_TOMCAT_THREADS_MAX: ${SERVER_TOMCAT_THREADS_MAX:-48}
+      SERVER_TOMCAT_ACCEPT_COUNT: ${SERVER_TOMCAT_ACCEPT_COUNT:-64}
+    expose: ["8108"]
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8108/actuator/health/readiness"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    networks: [devcircle]
+
+  dc-identity:
+    environment:
+      NOTIFICATION_RUNTIME_API_ENABLED: "false"
+      NOTIFICATION_FLYWAY_ENABLED: "false"
+      NOTIFICATION_RUNTIME_CONSUMER_ENABLED: "false"
+      NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED: "false"
+      NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: "false"
+      DC_NOTIFICATION_URI: http://dc-notification:8108
+    depends_on:
+      dc-notification: { condition: service_healthy }
+
+  dc-gateway:
+    environment:
+      DC_NOTIFICATION_URI: http://dc-notification:8108
+    depends_on:
+      dc-notification: { condition: service_healthy }
+
+  web-static:
+    image: ghcr.io/wangyufanshuai/devcircle/web-notification-standalone:${ROLLBACK_ASSET_TAG:?ROLLBACK_ASSET_TAG must be the cutover commit SHA}
+
+  prometheus:
+    volumes:
+      - ./deploy/prometheus/prometheus.legacy-notification-rollback.yml:/etc/prometheus/prometheus.yml:ro

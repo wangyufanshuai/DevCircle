@@ -177,24 +177,38 @@ jobs:
       - run: bash scripts/e2e/test-docker-preflight.sh
       - run: bash scripts/ops/test-assert-coverage.sh
       - run: bash scripts/ops/test-validate-production-env.sh
+      - run: bash scripts/ops/test-production-compose-env-precedence.sh
       - run: bash scripts/ops/test-backup-restore.sh
       - run: bash scripts/ops/test-verify-image-identity.sh
+      - run: python -m unittest scripts/ops/test_notification_cutover_contract.py
       - run: helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-dev.yaml
       - run: helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-prod.yaml --set image.tag=0123456789abcdef0123456789abcdef01234567
       - run: docker compose --profile infra config
       - run: docker compose --profile demo config
-      - run: docker compose --env-file .env.production.example -f docker-compose.prod.yml config --quiet
+      - run: bash scripts/ops/production-compose.sh .env.production.example -f docker-compose.prod.yml config --quiet
+      - name: Validate Notification Identity cutover Compose topology
+        run: >-
+          bash scripts/ops/production-compose.sh .env.production.example
+          -f docker-compose.prod.yml
+          -f deploy/compose/docker-compose.notification-identity-cutover.yml
+          config --quiet
       - name: Validate legacy User rollback Compose topology
         run: >-
-          docker compose --env-file .env.production.example
+          bash scripts/ops/production-compose.sh .env.production.example
           -f docker-compose.prod.yml
           -f deploy/compose/docker-compose.legacy-user-rollback.yml
           config --quiet
       - name: Validate legacy Interaction rollback Compose topology
         run: >-
-          docker compose --env-file .env.production.example
+          bash scripts/ops/production-compose.sh .env.production.example
           -f docker-compose.prod.yml
           -f deploy/compose/docker-compose.legacy-interaction-rollback.yml
+          config --quiet
+      - name: Validate legacy Notification rollback Compose topology
+        run: >-
+          bash scripts/ops/production-compose.sh .env.production.example
+          -f docker-compose.prod.yml
+          -f deploy/compose/docker-compose.legacy-notification-rollback.yml
           config --quiet
       - name: Validate Prometheus rules and configs
         run: |
@@ -203,6 +217,8 @@ jobs:
           docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check config /etc/prometheus/prometheus.prod.yml
           docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check config /etc/prometheus/prometheus.legacy-user-rollback.yml
           docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check config /etc/prometheus/prometheus.legacy-interaction-rollback.yml
+          docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check config /etc/prometheus/prometheus.notification-identity-cutover.yml
+          docker run --rm -v "$PWD/deploy/prometheus:/etc/prometheus:ro" --entrypoint /bin/promtool prom/prometheus:v3.7.3 check config /etc/prometheus/prometheus.legacy-notification-rollback.yml
       - name: Validate Alertmanager routes and Grafana dashboard
         run: |
           docker run --rm -v "$PWD/deploy/alertmanager:/etc/alertmanager:ro" --entrypoint /bin/amtool prom/alertmanager:v0.29.0 check-config /etc/alertmanager/alertmanager.dev.yml
@@ -270,7 +286,7 @@ jobs:
           - { module: dc-comment, image: dc-comment, release_class: production }
           - { module: dc-interaction, image: dc-interaction, release_class: legacy-rollback }
           - { module: dc-recommend, image: dc-recommend, release_class: production }
-          - { module: dc-notification, image: dc-notification, release_class: production }
+          - { module: dc-notification, image: dc-notification, release_class: legacy-rollback }
           - { module: dc-admin, image: dc-admin, release_class: production }
           - { module: dc-auth, image: dc-auth, release_class: legacy-rollback }
           - { module: dc-user, image: dc-user, release_class: legacy-rollback }
@@ -357,34 +373,70 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - id: build
+      - id: cutover-build
+        name: Build Notification cutover Web image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: web
           file: web/Dockerfile
           push: true
-          tags: ghcr.io/wangyufanshuai/devcircle/web:${{ github.sha }}
+          tags: ghcr.io/wangyufanshuai/devcircle/web-notification-cutover:${{ github.sha }}
+          build-args: VITE_NOTIFICATION_SOCKET_ENABLED=true
           sbom: true
           provenance: mode=max
-      - uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9 # v3
-      - name: Sign image with GitHub OIDC
-        env:
-          IMAGE_REF: ghcr.io/wangyufanshuai/devcircle/web
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "${IMAGE_REF}@${IMAGE_DIGEST}"
-      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+      - id: standalone-build
+        name: Build Notification standalone Web image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
-          subject-name: ghcr.io/wangyufanshuai/devcircle/web
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
-      - name: Verify signed image and provenance
-        env:
-          IMAGE_REF: ghcr.io/wangyufanshuai/devcircle/web
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-        run: bash scripts/ops/verify-image-identity.sh "${IMAGE_REF}@${IMAGE_DIGEST}"
-      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+          context: web
+          file: web/Dockerfile
+          push: true
+          tags: ghcr.io/wangyufanshuai/devcircle/web-notification-standalone:${{ github.sha }}
+          build-args: VITE_NOTIFICATION_SOCKET_ENABLED=false
+          sbom: true
+          provenance: mode=max
+      - name: Scan Notification cutover Web image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ghcr.io/wangyufanshuai/devcircle/web:${{ github.sha }}
+          image-ref: ghcr.io/wangyufanshuai/devcircle/web-notification-cutover:${{ github.sha }}
           format: table
           severity: CRITICAL,HIGH
           exit-code: "1"
+      - name: Scan Notification standalone Web image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/wangyufanshuai/devcircle/web-notification-standalone:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+      - uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9 # v3
+      - name: Sign Notification cutover Web image with GitHub OIDC
+        env:
+          IMAGE_REF: ghcr.io/wangyufanshuai/devcircle/web-notification-cutover
+          IMAGE_DIGEST: ${{ steps.cutover-build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE_REF}@${IMAGE_DIGEST}"
+      - name: Sign Notification standalone Web image with GitHub OIDC
+        env:
+          IMAGE_REF: ghcr.io/wangyufanshuai/devcircle/web-notification-standalone
+          IMAGE_DIGEST: ${{ steps.standalone-build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE_REF}@${IMAGE_DIGEST}"
+      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-name: ghcr.io/wangyufanshuai/devcircle/web-notification-cutover
+          subject-digest: ${{ steps.cutover-build.outputs.digest }}
+          push-to-registry: true
+      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-name: ghcr.io/wangyufanshuai/devcircle/web-notification-standalone
+          subject-digest: ${{ steps.standalone-build.outputs.digest }}
+          push-to-registry: true
+      - name: Verify Notification cutover Web signature and provenance
+        env:
+          IMAGE_REF: ghcr.io/wangyufanshuai/devcircle/web-notification-cutover
+          IMAGE_DIGEST: ${{ steps.cutover-build.outputs.digest }}
+        run: bash scripts/ops/verify-image-identity.sh "${IMAGE_REF}@${IMAGE_DIGEST}"
+      - name: Verify Notification standalone Web signature and provenance
+        env:
+          IMAGE_REF: ghcr.io/wangyufanshuai/devcircle/web-notification-standalone
+          IMAGE_DIGEST: ${{ steps.standalone-build.outputs.digest }}
+        run: bash scripts/ops/verify-image-identity.sh "${IMAGE_REF}@${IMAGE_DIGEST}"

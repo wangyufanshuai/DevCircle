@@ -13,6 +13,7 @@ fi
 
 cat > "${TEMP_ENV}" <<'EOF'
 IMAGE_TAG=4f1a9c2e8b7d6a5f0e3c2b1a9876543210abcdef
+NOTIFICATION_DEPLOY_MODE=standalone
 DOMAIN=mysticverse.test
 PUBLIC_ORIGIN=https://mysticverse.test
 TLS_EMAIL=ops@mysticverse.test
@@ -31,6 +32,28 @@ TRACING_SAMPLE_RATE=0.1
 EOF
 
 bash "${VALIDATOR}" "${TEMP_ENV}" >/dev/null
+
+expect_mode_failure() {
+  local mode="$1" additions="$2" expected="$3" mode_env output
+  mode_env="$(mktemp)"
+  sed '/^NOTIFICATION_DEPLOY_MODE=/d' "${TEMP_ENV}" > "${mode_env}"
+  printf 'NOTIFICATION_DEPLOY_MODE=%s\n%s\n' "${mode}" "${additions}" >> "${mode_env}"
+  if output="$(bash "${VALIDATOR}" "${mode_env}" 2>&1)"; then
+    rm -f "${mode_env}"
+    echo "Expected ${mode} environment to fail" >&2
+    exit 1
+  fi
+  grep -q "${expected}" <<<"${output}" || { echo "Missing expected failure: ${expected}" >&2; rm -f "${mode_env}"; exit 1; }
+  rm -f "${mode_env}"
+}
+
+expect_mode_failure cutover 'NOTIFICATION_CUTOVER_APPROVED=true
+NOTIFICATION_CUTOVER_EVIDENCE_VERIFIED=true' CUTOVER_ASSET_TAG
+expect_mode_failure cutover 'CUTOVER_ASSET_TAG=5a2b8d3f9c7e6a4b1f0d2c3e9876543210abcdef
+NOTIFICATION_CUTOVER_EVIDENCE_VERIFIED=true' NOTIFICATION_CUTOVER_APPROVED
+expect_mode_failure cutover 'CUTOVER_ASSET_TAG=5a2b8d3f9c7e6a4b1f0d2c3e9876543210abcdef
+NOTIFICATION_CUTOVER_APPROVED=true' NOTIFICATION_CUTOVER_EVIDENCE_VERIFIED
+expect_mode_failure rollback 'LEGACY_NOTIFICATION_ROLLBACK=true' ROLLBACK_ASSET_TAG
 
 expect_invalid_outbox_value() {
   local key="$1" value="$2" invalid_env

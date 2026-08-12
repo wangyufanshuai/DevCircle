@@ -3,24 +3,16 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENV_FILE="${1:-${ENV_FILE:-${ROOT_DIR}/.env.production}}"
-
-test -f "${ENV_FILE}" || { echo "Missing ${ENV_FILE}" >&2; exit 2; }
-
-declare -A values=()
-while IFS= read -r raw || [[ -n "${raw}" ]]; do
-  raw="${raw%$'\r'}"
-  [[ -z "${raw//[[:space:]]/}" || "${raw}" =~ ^[[:space:]]*# ]] && continue
-  [[ "${raw}" == *=* ]] || continue
-  key="${raw%%=*}"
-  key="${key//[[:space:]]/}"
-  values["${key}"]="${raw#*=}"
-done < "${ENV_FILE}"
+# shellcheck source=scripts/ops/production-env.sh
+source "${ROOT_DIR}/scripts/ops/production-env.sh"
+load_production_env "${ENV_FILE}"
+declare -n values=PRODUCTION_ENV
 
 errors=()
 fail() { errors+=("$1"); }
 
 required=(
-  IMAGE_TAG DOMAIN PUBLIC_ORIGIN TLS_EMAIL MYSQL_USER MYSQL_PASSWORD MYSQL_ROOT_PASSWORD
+  IMAGE_TAG NOTIFICATION_DEPLOY_MODE DOMAIN PUBLIC_ORIGIN TLS_EMAIL MYSQL_USER MYSQL_PASSWORD MYSQL_ROOT_PASSWORD
   REDIS_PASSWORD MINIO_ROOT_USER MINIO_ROOT_PASSWORD DEVCIRCLE_JWT_SECRET
   DEVCIRCLE_INTERNAL_OPS_KEY
   ALERTMANAGER_CONFIG_PATH
@@ -61,6 +53,25 @@ image_tag="${values[IMAGE_TAG]:-}"
 if [[ ! "${image_tag}" =~ ^[0-9a-f]{40}$ || "${image_tag}" == "0123456789abcdef0123456789abcdef01234567" ]]; then
   fail "IMAGE_TAG must be a real lowercase 40-character commit SHA"
 fi
+
+rollback_asset_tag="${values[ROLLBACK_ASSET_TAG]:-}"
+mode="${values[NOTIFICATION_DEPLOY_MODE]:-}"
+case "${mode}" in
+  standalone) ;;
+  cutover)
+    cutover_asset_tag="${values[CUTOVER_ASSET_TAG]:-}"
+    [[ "${cutover_asset_tag}" =~ ^[0-9a-f]{40}$ && "${cutover_asset_tag}" != "0123456789abcdef0123456789abcdef01234567" ]] || \
+      fail "CUTOVER_ASSET_TAG must be the real lowercase 40-character cutover SHA"
+    [[ "${values[NOTIFICATION_CUTOVER_APPROVED]:-}" == "true" ]] || fail "NOTIFICATION_CUTOVER_APPROVED must be true in cutover mode"
+    [[ "${values[NOTIFICATION_CUTOVER_EVIDENCE_VERIFIED]:-}" == "true" ]] || fail "NOTIFICATION_CUTOVER_EVIDENCE_VERIFIED must be true in cutover mode"
+    ;;
+  rollback)
+    [[ "${rollback_asset_tag}" =~ ^[0-9a-f]{40}$ && "${rollback_asset_tag}" != "0123456789abcdef0123456789abcdef01234567" ]] || \
+      fail "ROLLBACK_ASSET_TAG must be the real lowercase 40-character cutover SHA, never latest"
+    [[ "${values[LEGACY_NOTIFICATION_ROLLBACK]:-}" == "true" ]] || fail "LEGACY_NOTIFICATION_ROLLBACK must be true in rollback mode"
+    ;;
+  *) fail "NOTIFICATION_DEPLOY_MODE must be standalone, cutover, or rollback" ;;
+esac
 
 domain="${values[DOMAIN]:-}"
 [[ "${domain}" =~ ^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$ ]] || fail "DOMAIN must be a valid public hostname"

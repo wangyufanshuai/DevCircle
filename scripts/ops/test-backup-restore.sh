@@ -47,6 +47,7 @@ chmod +x "${FAKE_BIN}/docker"
 
 cat > "${ENV_FILE}" <<'EOF'
 IMAGE_TAG=4f1a9c2e8b7d6a5f0e3c2b1a9876543210abcdef
+NOTIFICATION_DEPLOY_MODE=standalone
 DOMAIN=mysticverse.test
 PUBLIC_ORIGIN=https://mysticverse.test
 TLS_EMAIL=ops@mysticverse.test
@@ -189,7 +190,11 @@ fi
 
 grep -q 'mysqldump' "${FAKE_DOCKER_LOG}"
 grep -q ' stop ' "${FAKE_DOCKER_LOG}"
-grep -q ' start ' "${FAKE_DOCKER_LOG}"
+grep -q ' up ' "${FAKE_DOCKER_LOG}"
+if grep -q ' start ' "${FAKE_DOCKER_LOG}"; then
+  echo "Restore must recreate services so rollback overlays are applied" >&2
+  exit 1
+fi
 if grep -Eq '\+[[:space:]]+--|sh[[:space:]]+-c[[:space:]]+\+' \
   "${ROOT_DIR}/scripts/ops/backup.sh" "${ROOT_DIR}/scripts/ops/verify-migration.sh"; then
   echo "Found a literal patch marker in an operations command" >&2
