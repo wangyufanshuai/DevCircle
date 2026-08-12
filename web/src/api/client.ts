@@ -20,6 +20,9 @@ export class ApiError extends Error {
 export const sessionState = readonly(mutableSession)
 export const authState = readonly(mutableAuthState)
 export function currentSession() { return mutableSession.value }
+/** Read-only access for authenticated transports such as STOMP; the token remains memory-only. */
+export function currentAccessToken() { return accessToken }
+export function apiBaseUrl() { return API_BASE }
 export function hasRole(role: string) { return mutableSession.value?.roles.includes(role) ?? false }
 export function clearSession() { accessToken = ''; mutableSession.value = null; mutableAuthState.value = 'anonymous' }
 export function idempotencyKey() { return crypto.randomUUID() }

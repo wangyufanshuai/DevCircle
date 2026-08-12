@@ -79,6 +79,11 @@ public class AccessTokenFilter implements GlobalFilter, Ordered {
             }
             return chain.filter(stripForwardedIdentity(exchange));
         }
+        if (isNotificationWebSocketHandshake(exchange, path)) {
+            // Browsers cannot attach Authorization to the HTTP Upgrade request. The exact
+            // STOMP endpoint authenticates the access token again in its CONNECT frame.
+            return chain.filter(stripForwardedIdentity(exchange));
+        }
 
         UserContext context = userContext(exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION));
         if (context == null && isPublicRead(exchange, path)) {
@@ -150,6 +155,11 @@ public class AccessTokenFilter implements GlobalFilter, Ordered {
                 || PUBLIC_FILE_READ_PATH.matcher(path).matches()
                 || path.equals("/api/recommend/feed")
                 || path.equals("/api/deduction/leaderboard");
+    }
+
+    private boolean isNotificationWebSocketHandshake(ServerWebExchange exchange, String path) {
+        return HttpMethod.GET.equals(exchange.getRequest().getMethod())
+                && "/ws/notifications".equals(path);
     }
 
     private boolean isWriteRequest(ServerWebExchange exchange) {

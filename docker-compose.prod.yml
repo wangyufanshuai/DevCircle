@@ -315,7 +315,8 @@ services:
       # Identity is the sole Interaction owner in the default production topology.
       INTERACTION_FLYWAY_ENABLED: "true"
       INTERACTION_RUNTIME_OUTBOX_ENABLED: "true"
-      # Standalone dc-notification is the only API/migration/consumer/topic/WebSocket owner.
+      # Secure WebSocket infrastructure remains explicitly off in this pre-cutover topology.
+      # Standalone dc-notification remains the API/migration/consumer/topic owner.
       NOTIFICATION_RUNTIME_API_ENABLED: "false"
       NOTIFICATION_FLYWAY_ENABLED: "false"
       NOTIFICATION_RUNTIME_CONSUMER_ENABLED: "false"

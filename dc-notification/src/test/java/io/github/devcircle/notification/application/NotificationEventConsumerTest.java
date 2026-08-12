@@ -7,9 +7,12 @@ import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.notification.infrastructure.NotificationRepository;
 import org.junit.jupiter.api.Test;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -20,6 +23,81 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 class NotificationEventConsumerTest {
+    @Test
+    void livePushFailureDoesNotFailConsumptionAfterDurablePersistence() throws Exception {
+        NotificationRepository repository = mock(NotificationRepository.class);
+        SimpMessagingTemplate messaging = mock(SimpMessagingTemplate.class);
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+        EventEnvelope event = EventEnvelope.now(EventTopics.FOLLOW_CHANGED, "dc-user", "7",
+                Map.of("actorId", 2L, "receiverId", 7L, "status", "FOLLOWED"));
+        when(repository.createOnce(argThat(candidate -> candidate != null), eq(7L), eq(2L),
+                eq("FOLLOW"), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                isNull(), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(true);
+        doThrow(new IllegalStateException("broker unavailable"))
+                .when(messaging)
+                .convertAndSendToUser("7", "/queue/notifications", Map.of("type", "REFRESH"));
+        NotificationEventConsumer consumer =
+                new NotificationEventConsumer(repository, objectMapper, null, messaging);
+
+        assertThatCode(() -> consumer.consume(objectMapper.writeValueAsString(event)))
+                .doesNotThrowAnyException();
+
+        verify(repository).createOnce(matching(event, objectMapper), eq(7L), eq(2L),
+                eq("FOLLOW"), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                isNull(), org.mockito.ArgumentMatchers.anyString());
+        verify(messaging).convertAndSendToUser("7", "/queue/notifications", Map.of("type", "REFRESH"));
+        verifyNoMoreInteractions(repository, messaging);
+    }
+
+    @Test
+    void persistedNotificationPushesOneRefreshSignalWhileDuplicateDeliveryStaysSilent() throws Exception {
+        NotificationRepository repository = mock(NotificationRepository.class);
+        SimpMessagingTemplate messaging = mock(SimpMessagingTemplate.class);
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+        EventEnvelope event = EventEnvelope.now(EventTopics.FOLLOW_CHANGED, "dc-user", "7",
+                Map.of("actorId", 2L, "receiverId", 7L, "status", "FOLLOWED"));
+        when(repository.createOnce(argThat(candidate -> candidate != null), eq(7L), eq(2L),
+                eq("FOLLOW"), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                isNull(), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(true, false);
+        NotificationEventConsumer consumer =
+                new NotificationEventConsumer(repository, objectMapper, null, messaging);
+
+        String payload = objectMapper.writeValueAsString(event);
+        consumer.consume(payload);
+        consumer.consume(payload);
+
+        verify(messaging).convertAndSendToUser("7", "/queue/notifications", Map.of("type", "REFRESH"));
+        verifyNoMoreInteractions(messaging);
+    }
+
+    @Test
+    void negativeAndSelfEventsNeverPushRefreshSignals() throws Exception {
+        NotificationRepository repository = mock(NotificationRepository.class);
+        NotificationTargetResolver resolver = mock(NotificationTargetResolver.class);
+        SimpMessagingTemplate messaging = mock(SimpMessagingTemplate.class);
+        when(resolver.postAuthorId(9001L)).thenReturn(7L);
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+        NotificationEventConsumer consumer =
+                new NotificationEventConsumer(repository, objectMapper, resolver, messaging);
+        EventEnvelope unlike = EventEnvelope.now(EventTopics.INTERACTION_CHANGED, "dc-interaction", "9001",
+                Map.of("actorId", 2L, "postId", 9001L, "interactionType", "UNLIKE"));
+        EventEnvelope selfLike = EventEnvelope.now(EventTopics.INTERACTION_CHANGED, "dc-interaction", "9001",
+                Map.of("actorId", 7L, "postId", 9001L, "interactionType", "LIKE"));
+        EventEnvelope unfollow = EventEnvelope.now(EventTopics.FOLLOW_CHANGED, "dc-user", "7",
+                Map.of("actorId", 2L, "receiverId", 7L, "status", "UNFOLLOWED"));
+
+        consumer.consume(objectMapper.writeValueAsString(unlike));
+        consumer.consume(objectMapper.writeValueAsString(selfLike));
+        consumer.consume(objectMapper.writeValueAsString(unfollow));
+
+        verifyNoInteractions(messaging);
+    }
+
     @Test
     void acceptedAppealCreatesAnAuditableTargetedNotification() throws Exception {
         NotificationRepository repository = mock(NotificationRepository.class);

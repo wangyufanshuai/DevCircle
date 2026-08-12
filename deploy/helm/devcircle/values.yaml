@@ -41,6 +41,7 @@ services:
       NOTIFICATION_FLYWAY_ENABLED: "false"
       NOTIFICATION_RUNTIME_CONSUMER_ENABLED: "false"
       NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED: "false"
+      # Secure infrastructure default-off until the Notification routing cutover is reviewed.
       NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: "false"
       # One-version rollback compatibility; current Dashboard does not consume it.
       DC_NOTIFICATION_URI: http://dc-notification:8108

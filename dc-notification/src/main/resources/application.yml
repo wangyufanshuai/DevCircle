@@ -35,7 +35,9 @@ devcircle:
     api-enabled: true
     consumer-enabled: true
     topic-admin-enabled: true
-    websocket-enabled: true
+    # Secure infrastructure default-off: enabling STOMP is an explicit deployment decision
+    # and fails startup unless that runtime provides a NotificationAccessTokenVerifier.
+    websocket-enabled: false
     allowed-origin: ${PUBLIC_ORIGIN:http://localhost:5501}
   content:
     base-url: ${DEVCIRCLE_CONTENT_BASE_URL:http://localhost:8103}
@@ -49,5 +51,12 @@ management:
       probes:
         enabled: true
 logging:
+  level:
+    # These framework loggers run before the inbound interceptor can scrub STOMP
+    # native headers. Never allow them to emit raw frames or detailed headers.
+    org.springframework.web.socket.handler.LoggingWebSocketHandlerDecorator: INFO
+    org.springframework.web.socket.messaging.StompSubProtocolHandler: "OFF"
+    org.springframework.messaging.simp.stomp.StompDecoder: INFO
+    org.springframework.web.SimpLogging: INFO
   pattern:
     level: "%5p traceId=%X{traceId:-} userId=%X{userId:-}"

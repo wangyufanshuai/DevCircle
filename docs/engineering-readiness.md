@@ -19,6 +19,7 @@ Copy-Item .env.example .env
 - `S3_*`: MinIO / S3 兼容存储配置。
 - `DEVCIRCLE_JWT_SECRET`: JWT 签名密钥。
 - `VITE_API_BASE_URL`: 前端请求 Gateway 的地址。
+- `VITE_NOTIFICATION_SOCKET_ENABLED`: 通知 STOMP 客户端的构建期开关，默认 `false`；只有服务端安全 WebSocket 路由完成独立切流后才允许显式设为 `true`。关闭时浏览器不会加载 STOMP 动态分块，也不会尝试 WebSocket 连接。
 - `DEVCIRCLE_READ_FALLBACK_ENABLED`: 仅开发环境可显式开启后端 seed 读取降级；生产必须为 `false`。
 - `DEVCIRCLE_OUTBOX_BATCH_SIZE` / `DEVCIRCLE_OUTBOX_MAX_ATTEMPTS` / `DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS`: Outbox 每批数量、进入 DEAD 前的最大尝试次数和 Kafka ACK 等待上限。
 

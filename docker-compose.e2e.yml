@@ -178,6 +178,7 @@ services:
       NOTIFICATION_FLYWAY_ENABLED: "false"
       NOTIFICATION_RUNTIME_CONSUMER_ENABLED: "false"
       NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED: "false"
+      # Mirror the secure production default; WebSocket cutover has a dedicated test/deploy gate.
       NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: "false"
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306

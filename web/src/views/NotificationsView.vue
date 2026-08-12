@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Bell, Check, CheckCheck, Filter, LoaderCircle } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import { fetchNotifications, fetchUnreadNotificationCount, markAllNotificationsRead, markNotificationRead } from '../api/client'
@@ -9,32 +9,107 @@ import StatusPanel from '../components/StatusPanel.vue'
 const route = useRoute(); const router = useRouter(); const items = ref<NotificationItem[]>([]); const error = ref(''); const notice = ref(''); const loading = ref(true); const loadingMore = ref(false)
 const type = ref(typeof route.query.type === 'string' ? route.query.type : ''); const cursor = ref(''); const hasMore = ref(false); const unreadCount = ref(0)
 const unread = computed(() => unreadCount.value)
+let disconnectSocket: () => void = () => undefined
+let requestRevision = 0
+let socketRefreshRunning = false
+let socketRefreshDirty = false
+let pendingMutations = 0
+let mutationTail: Promise<void> = Promise.resolve()
+let unmounted = false
+const notificationSocketEnabled = import.meta.env.VITE_NOTIFICATION_SOCKET_ENABLED === 'true'
 async function load(reset = true) {
+  if (!reset && loadingMore.value) return
+  const revision = ++requestRevision
+  const requestedType = type.value
+  const requestedCursor = reset ? '' : cursor.value
   error.value = ''
-  if (reset) { loading.value = true; items.value = []; cursor.value = ''; notice.value = '' } else loadingMore.value = true
+  if (reset) { loading.value = true; loadingMore.value = false; items.value = []; cursor.value = ''; notice.value = '' } else loadingMore.value = true
   try {
-    const [page, count] = await Promise.all([fetchNotifications(reset ? '' : cursor.value, type.value), reset ? fetchUnreadNotificationCount() : Promise.resolve(unreadCount.value)])
+    const [page, count] = await Promise.all([fetchNotifications(requestedCursor, requestedType), reset ? fetchUnreadNotificationCount() : Promise.resolve(unreadCount.value)])
+    if (revision !== requestRevision || unmounted) return
     items.value = reset ? page.records : [...items.value, ...page.records.filter(candidate => !items.value.some(item => item.id === candidate.id))]
     cursor.value = page.nextCursor; hasMore.value = page.hasMore; unreadCount.value = count
-  } catch (reason) { error.value = reason instanceof Error ? reason.message : '通知暂时不可用' }
-  finally { loading.value = false; loadingMore.value = false }
+  } catch (reason) {
+    if (revision === requestRevision && !unmounted) error.value = reason instanceof Error ? reason.message : '通知暂时不可用'
+  }
+  finally {
+    if (revision === requestRevision && !unmounted) { loading.value = false; loadingMore.value = false }
+  }
 }
 async function applyType() { await router.replace({ query: type.value ? { type: type.value } : {} }); await load(true) }
 async function open(item: NotificationItem) {
   notice.value = ''; error.value = ''
-  const wasUnread = !item.read
-  try { if (!item.read) { await markNotificationRead(item.id); item.read = true } }
+  try {
+    if (!item.read) {
+      await serializeMutation(async () => {
+        await markNotificationRead(item.id)
+        item.read = true
+        unreadCount.value = Math.max(0, unreadCount.value - 1)
+      })
+    }
+  }
   catch (reason) { error.value = reason instanceof Error ? reason.message : '标记失败'; return }
-  if (wasUnread) unreadCount.value = Math.max(0, unreadCount.value - 1)
   if (item.targetRoute?.startsWith('/') && !item.targetRoute.startsWith('//')) await router.push(item.targetRoute)
   else notice.value = '这条通知关联的内容已不可用。'
 }
 async function markAll() {
   error.value = ''
-  try { await markAllNotificationsRead(); items.value.forEach(item => { item.read = true }); unreadCount.value = 0 }
+  try {
+    await serializeMutation(async () => {
+      await markAllNotificationsRead()
+      items.value.forEach(item => { item.read = true })
+      unreadCount.value = 0
+    })
+  }
   catch (reason) { error.value = reason instanceof Error ? reason.message : '全部已读操作失败' }
 }
-onMounted(load)
+async function serializeMutation(operation: () => Promise<void>) {
+  pendingMutations += 1
+  requestRevision += 1
+  const queued = mutationTail.then(operation)
+  mutationTail = queued.then(() => undefined, () => undefined)
+  try {
+    await queued
+  } finally {
+    // REST remains authoritative after a mutation. Signals received while the write is queued or
+    // in flight collapse into this same refresh instead of racing the mutation.
+    socketRefreshDirty = true
+    pendingMutations -= 1
+    if (pendingMutations === 0 && !unmounted) void drainSocketRefreshes()
+  }
+}
+async function drainSocketRefreshes() {
+  if (socketRefreshRunning || pendingMutations > 0) return
+  socketRefreshRunning = true
+  try {
+    while (socketRefreshDirty && pendingMutations === 0 && !unmounted) {
+      socketRefreshDirty = false
+      await load(true)
+    }
+  } finally {
+    socketRefreshRunning = false
+    if (socketRefreshDirty && pendingMutations === 0 && !unmounted) void drainSocketRefreshes()
+  }
+}
+function refreshFromSocket() {
+  socketRefreshDirty = true
+  void drainSocketRefreshes()
+}
+async function startNotificationSocket() {
+  if (!notificationSocketEnabled) return
+  const { connectNotificationSocket } = await import('../api/notification-socket')
+  if (unmounted) return
+  disconnectSocket = connectNotificationSocket(refreshFromSocket)
+}
+onMounted(() => {
+  void load()
+  void startNotificationSocket()
+})
+onUnmounted(() => {
+  unmounted = true
+  requestRevision += 1
+  disconnectSocket()
+})
 </script>
 
 <template>

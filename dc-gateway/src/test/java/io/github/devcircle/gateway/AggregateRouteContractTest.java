@@ -12,6 +12,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AggregateRouteContractTest {
     @Test
+    void notificationWebSocketInfrastructureRemainsExplicitlyDefaultOffUntilDedicatedCutover()
+            throws IOException {
+        for (String path : new String[]{
+                "docker-compose.prod.yml",
+                "docker-compose.e2e.yml",
+                "deploy/helm/devcircle/values.yaml",
+                "deploy/helm/devcircle/values-prod.yaml"}) {
+            assertThat(repositoryFile(path))
+                    .as("secure WebSocket default in %s", path)
+                    .contains("NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: \"false\"")
+                    .doesNotContain("NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED: \"true\"");
+        }
+    }
+
+    @Test
     void contentAndMediaUseTheServletAggregateWhileCommentAndAdminStayIndependent() throws IOException {
         String configuration;
         try (InputStream resource = getClass().getClassLoader()
@@ -51,6 +66,8 @@ class AggregateRouteContractTest {
                 .contains("id: identity-interaction-compatibility")
                 .contains("uri: ${DC_INTERACTION_URI:${DC_IDENTITY_URI:http://localhost:8201}}")
                 .contains("id: identity-notification-compatibility")
+                .contains("Path=/api/notifications/**,/ws/notifications")
+                .doesNotContain("/ws/notifications/**")
                 .doesNotContain("Path=/api/auth/**,/api/me/**")
                 .doesNotContain("Path=/api/auth/**,/api/users/**");
     }

@@ -69,6 +69,8 @@ public class SecurityConfig {
             INTERACTION_STATE_READ.matches(request)
                     || INTERACTION_LIKE_WRITE.matches(request)
                     || INTERACTION_FAVORITE_WRITE.matches(request);
+    private static final RequestMatcher NOTIFICATION_WEBSOCKET_HANDSHAKE =
+            PathPatternRequestMatcher.pathPattern(HttpMethod.GET, "/ws/notifications");
 
     @Bean
     PasswordEncoder passwordEncoder() {
@@ -118,6 +120,7 @@ public class SecurityConfig {
                                 "/actuator/prometheus", "/internal/ops/outbox/status",
                                 "/internal/ops/identity/outbox/**",
                                 "/v3/api-docs/**", "/swagger-ui/**").permitAll()
+                        .requestMatchers(NOTIFICATION_WEBSOCKET_HANDSHAKE).permitAll()
                         .requestMatchers(PUBLIC_USER_READ).permitAll()
                         .requestMatchers(INTERACTION_API).authenticated()
                         .requestMatchers("/api/notifications/**").authenticated()

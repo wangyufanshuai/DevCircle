@@ -10,9 +10,31 @@ const feed = Array.from({ length: 8 }, (_, index) => ({ post: { ...post, id: pos
 const dashboard = { profile: { id: 2, username: '观测者', bio: '追踪星图中的异常', followers: 3, following: 5, status: 'ACTIVE' }, readingProgress: [], submissions: [], favorites: [{ id: 1001, title: '雾港钟楼失踪案', excerpt: '钟声停在 00:07。', theme: 'DEDUCTION', contentKind: 'CASE_FILE', difficulty: 'HARD', createdAt: '2026-07-30T00:00:00Z' }], unreadNotifications: 0, deductionStats: { attempts: 6, correctCount: 4, revealedCount: 1, totalPoints: 80 } }
 const unhandledApiRequests = new WeakMap<import('@playwright/test').Page, string[]>()
 
-async function authenticate(page: import('@playwright/test').Page, roles: string[] = ['USER']) {
+async function authenticate(
+  page: import('@playwright/test').Page,
+  roles: string[] = ['USER'],
+  onNotificationSubscribed?: (connectFrame: string, sendRefresh: () => void) => void,
+  onNotificationSocketOpened?: () => void
+) {
   await page.context().addCookies([{ name: 'dc_csrf', value: 'test-csrf', domain: '127.0.0.1', path: '/' }])
   await page.route('**/api/auth/refresh', route => route.fulfill({ json: { code: 'OK', message: 'success', data: { accessToken: 'access-token', expiresAt: '2099-01-01T00:00:00Z', user: { userId: 2, displayName: '观测者', roles } } } }))
+  let connectFrame = ''
+  await page.routeWebSocket('**/ws/notifications', socket => {
+    onNotificationSocketOpened?.()
+    socket.onMessage(message => {
+      const frame = typeof message === 'string' ? message : new TextDecoder().decode(message)
+      if (frame.startsWith('CONNECT')) {
+        connectFrame = frame
+        socket.send('CONNECTED\nversion:1.2\nheart-beat:0,0\n\n\0')
+      }
+      if (frame.startsWith('SUBSCRIBE')) {
+        const subscriptionId = frame.match(/(?:^|\n)id:([^\n\r]+)/)?.[1] ?? 'sub-0'
+        onNotificationSubscribed?.(connectFrame, () => socket.send(
+          `MESSAGE\nsubscription:${subscriptionId}\nmessage-id:refresh-1\ndestination:/user/queue/notifications\ncontent-type:application/json\n\n{"type":"REFRESH"}\0`
+        ))
+      }
+    })
+  })
 }
 
 test.beforeEach(async ({ page }) => {
@@ -404,6 +426,22 @@ test('notification inbox paginates, uses server unread count and handles missing
   await expect(page).toHaveURL(/\/notifications\?type=SYSTEM$/)
   await expect(page.locator('.notification-row')).toHaveCount(1)
   await expect(page.getByRole('button', { name: /轨道维护/ })).toBeVisible()
+})
+
+test('notification WebSocket is not attempted with the default-off feature flag', async ({ page }) => {
+  let socketAttempts = 0
+  await authenticate(page, ['USER'], undefined, () => { socketAttempts += 1 })
+  await page.route('**/api/notifications/unread-count', route => route.fulfill({
+    json: { code: 'OK', message: 'success', data: 0 }
+  }))
+  await page.route('**/api/notifications?*', route => route.fulfill({
+    json: { code: 'OK', message: 'success', data: [], meta: { nextCursor: '', hasMore: false } }
+  }))
+
+  await page.goto('/notifications')
+  await expect(page.getByRole('heading', { name: '收件箱很安静' })).toBeVisible()
+
+  expect(socketAttempts).toBe(0)
 })
 
 test('keyword discovery keeps every filter in the URL and paginates search results', async ({ page }) => {

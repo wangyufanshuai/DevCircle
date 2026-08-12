@@ -97,7 +97,8 @@ devcircle:
       connection-timeout: ${IDENTITY_INTERACTION_DB_POOL_CONNECTION_TIMEOUT_MS:3000}
   notification-runtime:
     # During the core-embed phase the standalone service remains the sole API,
-    # migration, consumer, topic-admin and WebSocket owner. Identity only reads.
+    # migration, consumer and topic-admin owner. Secure WebSocket infrastructure is
+    # deliberately default-off until a separately reviewed routing cutover.
     api-enabled: ${NOTIFICATION_RUNTIME_API_ENABLED:false}
     consumer-enabled: ${NOTIFICATION_RUNTIME_CONSUMER_ENABLED:false}
     flyway-enabled: ${NOTIFICATION_FLYWAY_ENABLED:false}
@@ -115,3 +116,11 @@ devcircle:
     base-url: ${DC_CONTENT_URI:http://localhost:8103}
   internal:
     content-uri: ${DC_CONTENT_URI:http://localhost:8103}
+logging:
+  level:
+    # The embedded notification endpoint shares the same pre-interceptor frame
+    # logging risk as the standalone runtime; keep raw STOMP headers out of logs.
+    org.springframework.web.socket.handler.LoggingWebSocketHandlerDecorator: INFO
+    org.springframework.web.socket.messaging.StompSubProtocolHandler: "OFF"
+    org.springframework.messaging.simp.stomp.StompDecoder: INFO
+    org.springframework.web.SimpLogging: INFO

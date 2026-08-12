@@ -117,6 +117,8 @@ class IdentityEmbeddedNotificationRuntimeTest {
                 .isOne();
         assertThat(context.containsBean("notificationEventConsumer")).isTrue();
         assertThat(context.containsBean("webSocketConfig")).isTrue();
+        assertThat(context.containsBean("clientInboundChannel")).isTrue();
+        assertThat(context.containsBean("brokerMessagingTemplate")).isTrue();
         assertThat(getClass().getClassLoader()
                 .getResource("db/notification-migration/V1__notification_schema.sql")).isNotNull();
         assertThat(getClass().getClassLoader()

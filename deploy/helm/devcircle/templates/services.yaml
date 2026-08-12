@@ -49,7 +49,7 @@
 {{- fail "production identity must disable Notification topic admin before cutover" }}
 {{- end }}
 {{- if ne (toString (index $identityEnv "NOTIFICATION_RUNTIME_WEBSOCKET_ENABLED")) "false" }}
-{{- fail "production identity must disable Notification WebSocket before cutover" }}
+{{- fail "production identity must keep secure Notification WebSocket infrastructure default-off before its dedicated cutover" }}
 {{- end }}
 {{- if ne (toString (index $identityEnv "DC_NOTIFICATION_URI")) "http://dc-notification:8108" }}
 {{- fail "production identity must retain DC_NOTIFICATION_URI for one-version rollback compatibility" }}

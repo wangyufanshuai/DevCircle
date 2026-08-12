@@ -3,12 +3,14 @@ package io.github.devcircle.identity;
 import io.github.devcircle.auth.application.AuthService;
 import io.github.devcircle.auth.application.JwtService;
 import io.github.devcircle.messaging.outbox.OutboxStatusService;
+import io.github.devcircle.notification.config.NotificationAccessTokenVerifier;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.ApplicationContext;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.servlet.resource.ResourceHttpRequestHandler;
 
 import java.time.Instant;
 import java.util.Arrays;
@@ -19,6 +21,7 @@ import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.handler;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -61,12 +64,28 @@ class IdentityApplicationContextTest {
         assertThat(context.containsBean("notificationController")).isFalse();
         assertThat(context.containsBean("notificationKafkaTopics")).isFalse();
         assertThat(context.containsBean("webSocketConfig")).isFalse();
+        assertThat(context.getBean(NotificationAccessTokenVerifier.class)).isNotNull();
         assertThat(context.containsBean("authApplication")).isFalse();
         assertThat(Arrays.stream(context.getBeanDefinitionNames()))
                 .noneMatch(name -> name.toLowerCase().contains("routedefinition"));
         assertThat(getClass().getClassLoader().getResource("db/migration/V1__auth_schema.sql")).isNotNull();
         assertThat(context.getEnvironment().getProperty("spring.application.name")).isEqualTo("dc-identity");
         assertThat(context.getEnvironment().getProperty("devcircle.outbox.service-name")).isEqualTo("dc-auth");
+    }
+
+    @Test
+    void embeddedNotificationRuntimeCannotLogRawPreInterceptorStompFrames() {
+        assertThat(context.getEnvironment().getProperty(
+                "logging.level.org.springframework.web.socket.handler.LoggingWebSocketHandlerDecorator"))
+                .isEqualTo("INFO");
+        assertThat(context.getEnvironment().getProperty(
+                "logging.level.org.springframework.web.socket.messaging.StompSubProtocolHandler"))
+                .isEqualTo("OFF");
+        assertThat(context.getEnvironment().getProperty(
+                "logging.level.org.springframework.messaging.simp.stomp.StompDecoder"))
+                .isEqualTo("INFO");
+        assertThat(context.getEnvironment().getProperty("logging.level.org.springframework.web.SimpLogging"))
+                .isEqualTo("INFO");
     }
 
     @Test
@@ -119,5 +138,16 @@ class IdentityApplicationContextTest {
         mockMvc.perform(get("/api/auth/oauth2/github/start"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("OAUTH_NOT_CONFIGURED"));
+    }
+
+    @Test
+    void onlyTheExactNotificationHandshakePathBypassesHttpBearerAuthentication() throws Exception {
+        mockMvc.perform(get("/ws/notifications"))
+                .andExpect(handler().handlerType(ResourceHttpRequestHandler.class))
+                .andExpect(result -> assertThat(result.getResponse().getStatus()).isNotEqualTo(401));
+        assertUnauthorized("identity-ws-child-private", get("/ws/notifications/other")
+                .header("X-Trace-Id", "identity-ws-child-private"));
+        assertUnauthorized("identity-ws-neighbor-private", get("/ws/notification")
+                .header("X-Trace-Id", "identity-ws-neighbor-private"));
     }
 }

@@ -100,6 +100,7 @@ Demo Token、前端本地 Token 和 Mock fallback 已删除。使用邮箱密码
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
+VITE_NOTIFICATION_SOCKET_ENABLED=false
 ```
 
 生产部署使用固定提交 SHA 与强随机密钥，详见 [生产运行手册](docs/production-runbook.md)。Helm 生产 values 对 Identity 强制 `AUTH_COOKIE_SECURE=true`、从 `publicOrigin` 推导前端与 GitHub 回调地址，并要求 GitHub 凭证和内部运维密钥来自非可选 Kubernetes Secret 引用。values 映射不完整或由 Chart 创建的 Secret 缺少必需键时 render 失败；引用外部 `existingSecret` 时，Helm render 无法验证 Secret 或键是否真实存在，缺失会因 `optional: false` 在 Pod 启动阶段失败。

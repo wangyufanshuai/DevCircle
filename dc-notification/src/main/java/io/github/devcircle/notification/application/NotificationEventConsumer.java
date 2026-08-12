@@ -6,9 +6,13 @@ import io.github.devcircle.common.event.EventEnvelopeValidator;
 import io.github.devcircle.common.event.EventTopics;
 import io.github.devcircle.common.event.ValidatedEvent;
 import io.github.devcircle.notification.infrastructure.NotificationRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -18,6 +22,7 @@ import java.util.Set;
 @ConditionalOnProperty(prefix = "devcircle.notification-runtime", name = "consumer-enabled",
         havingValue = "true", matchIfMissing = true)
 class NotificationEventConsumer {
+    private static final Logger log = LoggerFactory.getLogger(NotificationEventConsumer.class);
     private static final Map<String, Set<String>> EVENT_CONTRACTS = Map.of(
             EventTopics.AUDIT_COMPLETED, Set.of("dc-admin"),
             EventTopics.CONTENT_REJECTED, Set.of("dc-admin"),
@@ -28,13 +33,27 @@ class NotificationEventConsumer {
     private final NotificationRepository notificationRepository;
     private final EventEnvelopeValidator envelopeValidator;
     private final NotificationTargetResolver targetResolver;
+    private final SimpMessagingTemplate messagingTemplate;
 
     @Autowired
     NotificationEventConsumer(NotificationRepository notificationRepository, ObjectMapper objectMapper,
-                              NotificationTargetResolver targetResolver) {
+                              NotificationTargetResolver targetResolver,
+                              ObjectProvider<SimpMessagingTemplate> messagingTemplate) {
+        this(notificationRepository, objectMapper, targetResolver, messagingTemplate.getIfAvailable());
+    }
+
+    NotificationEventConsumer(NotificationRepository notificationRepository, ObjectMapper objectMapper,
+                              NotificationTargetResolver targetResolver,
+                              SimpMessagingTemplate messagingTemplate) {
         this.notificationRepository = notificationRepository;
         this.envelopeValidator = new EventEnvelopeValidator(objectMapper);
         this.targetResolver = targetResolver;
+        this.messagingTemplate = messagingTemplate;
+    }
+
+    NotificationEventConsumer(NotificationRepository notificationRepository, ObjectMapper objectMapper,
+                              NotificationTargetResolver targetResolver) {
+        this(notificationRepository, objectMapper, targetResolver, (SimpMessagingTemplate) null);
     }
 
     NotificationEventConsumer(NotificationRepository notificationRepository, ObjectMapper objectMapper) {
@@ -108,8 +127,19 @@ class NotificationEventConsumer {
         Long targetId = targetIdValue > 0 ? targetIdValue : null;
         String targetType = optionalText(payload, "targetType", targetId == null ? "" : follow ? "USER" : "POST");
         String targetRoute = optionalText(payload, "targetRoute", targetId == null ? "" : follow ? "/me" : "/posts/" + targetId);
-        notificationRepository.createOnce(event, receiverId, actorId > 0 ? actorId : null, type, title,
-                content, targetType, targetId, targetRoute);
+        boolean created = notificationRepository.createOnce(event, receiverId, actorId > 0 ? actorId : null,
+                type, title, content, targetType, targetId, targetRoute);
+        if (created && messagingTemplate != null) {
+            try {
+                messagingTemplate.convertAndSendToUser(Long.toString(receiverId), "/queue/notifications",
+                        Map.of("type", "REFRESH"));
+            } catch (RuntimeException error) {
+                // The durable inbox is authoritative. A transient live-refresh failure must not
+                // retry or dead-letter an event whose notification transaction already committed.
+                log.warn("Notification refresh signal failed eventId={} receiverId={}",
+                        event.eventId(), receiverId, error);
+            }
+        }
     }
 
     private long optionalPositiveLong(JsonNode payload, String field) {

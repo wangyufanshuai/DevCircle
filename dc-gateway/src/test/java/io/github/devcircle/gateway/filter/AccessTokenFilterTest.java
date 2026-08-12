@@ -103,6 +103,38 @@ class AccessTokenFilterTest {
     }
 
     @Test
+    void exactNotificationWebSocketHandshakeBypassesHttpJwtWithoutTrustingForwardedIdentity() {
+        var exchange = MockServerWebExchange.from(MockServerHttpRequest.get("/ws/notifications")
+                .header("X-User-Id", "999")
+                .header("X-Roles", "ADMIN")
+                .build());
+        AtomicReference<String> forwardedUser = new AtomicReference<>("not-called");
+
+        filter.filter(exchange, routed -> {
+            forwardedUser.set(routed.getRequest().getHeaders().getFirst("X-User-Id"));
+            assertThat(routed.getRequest().getHeaders().getFirst("X-Roles")).isNull();
+            return Mono.empty();
+        }).block();
+
+        assertThat(forwardedUser).hasValue(null);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "/ws/notifications/",
+            "/ws/notifications/other",
+            "/ws/notification",
+            "/ws/other"
+    })
+    void websocketBypassDoesNotOpenSiblingOrChildPaths(String path) {
+        var exchange = MockServerWebExchange.from(MockServerHttpRequest.get(path).build());
+
+        filter.filter(exchange, ignored -> Mono.empty()).block();
+
+        assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    @Test
     void validAccessTokenPropagatesTrustedIdentity() {
         String token = Jwts.builder().subject("7").claim("roles", "USER").claim("type", "access")
                 .expiration(Date.from(Instant.now().plusSeconds(60)))

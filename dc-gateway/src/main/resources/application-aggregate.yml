@@ -23,7 +23,7 @@ spring:
             - id: identity-notification-compatibility
               uri: ${DC_NOTIFICATION_URI:http://localhost:8108}
               predicates:
-                - Path=/api/notifications/**,/ws/notifications/**
+                - Path=/api/notifications/**,/ws/notifications
             - id: content-comments
               uri: ${DC_COMMENT_URI:http://localhost:8104}
               predicates:

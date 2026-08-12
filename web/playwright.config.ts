@@ -5,6 +5,7 @@ const baseURL = `http://127.0.0.1:${port}`
 
 export default defineConfig({
   testDir: './tests',
+  testIgnore: /notification-socket\.spec\.ts/,
   timeout: 30_000,
   use: {
     baseURL,
@@ -13,6 +14,7 @@ export default defineConfig({
   webServer: {
     command: `npx vite --host 127.0.0.1 --port ${port} --strictPort`,
     url: baseURL,
+    env: { VITE_NOTIFICATION_SOCKET_ENABLED: 'false' },
     reuseExistingServer: true,
     timeout: 60_000
   },

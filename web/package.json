@@ -7,10 +7,13 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "test:e2e": "playwright test",
+    "test:e2e": "npm run test:e2e:default && npm run test:e2e:socket",
+    "test:e2e:default": "playwright test",
+    "test:e2e:socket": "playwright test -c playwright.socket.config.ts",
     "test:e2e:real": "playwright test -c playwright.real.config.ts"
   },
   "dependencies": {
+    "@stomp/stompjs": "^7.3.0",
     "@types/dompurify": "^3.0.5",
     "dompurify": "^3.4.13",
     "katex": "^0.16.25",

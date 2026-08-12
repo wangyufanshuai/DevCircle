@@ -69,7 +69,7 @@ spring:
             - id: notification
               uri: ${DC_NOTIFICATION_URI:http://localhost:8108}
               predicates:
-                - Path=/api/notifications/**,/ws/notifications/**
+                - Path=/api/notifications/**,/ws/notifications
             - id: file
               uri: ${DC_FILE_URI:http://localhost:8109}
               predicates:
