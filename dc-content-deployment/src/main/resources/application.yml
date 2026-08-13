@@ -13,6 +13,9 @@ spring:
     username: ${MYSQL_USER:devcircle}
     password: ${MYSQL_PASSWORD:devcircle}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: ${CONTENT_DB_POOL_MAX_SIZE:${DB_POOL_MAX_SIZE:8}}
+      minimum-idle: ${CONTENT_DB_POOL_MIN_IDLE:${DB_POOL_MIN_IDLE:1}}
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
   servlet:
@@ -44,10 +47,20 @@ devcircle:
     theme-content:
       enabled: ${DEVCIRCLE_THEME_CONTENT_SEED_ENABLED:false}
   content:
+    aggregate-db-pool-ceiling: ${CONTENT_AGGREGATE_DB_POOL_CEILING:8}
     read-fallback-enabled: ${DEVCIRCLE_READ_FALLBACK_ENABLED:false}
   comment-runtime:
-    # Standalone dc-comment remains the sole runtime owner in this batch.
+    # Standalone dc-comment remains the sole production owner until cutover.
     enabled: ${COMMENT_RUNTIME_ENABLED:false}
+    flyway-enabled: ${COMMENT_FLYWAY_ENABLED:true}
+    outbox-enabled: ${COMMENT_OUTBOX_ENABLED:true}
+    datasource:
+      url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${COMMENT_MYSQL_DATABASE:dc_comment}?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC
+      username: ${MYSQL_USER:devcircle}
+      password: ${MYSQL_PASSWORD:devcircle}
+      maximum-pool-size: ${COMMENT_DB_POOL_MAX_SIZE:3}
+      minimum-idle: ${COMMENT_DB_POOL_MIN_IDLE:0}
+      connection-timeout: ${COMMENT_DB_CONNECTION_TIMEOUT_MS:3000}
   upload:
     max-bytes: ${UPLOAD_MAX_BYTES:10485760}
     intent-ttl-minutes: ${UPLOAD_INTENT_TTL_MINUTES:15}

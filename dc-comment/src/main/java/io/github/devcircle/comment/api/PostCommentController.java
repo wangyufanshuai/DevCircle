@@ -14,10 +14,10 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/posts/{postId}/comments")
-class PostCommentController {
+public class PostCommentController {
     private final CommentService commentService;
 
-    PostCommentController(CommentService commentService) {
+    public PostCommentController(CommentService commentService) {
         this.commentService = commentService;
     }
 

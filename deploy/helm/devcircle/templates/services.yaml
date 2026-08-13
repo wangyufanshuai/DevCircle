@@ -62,6 +62,24 @@
 {{- if gt (mul (add (add (add $authPool $userPool) $interactionPool) $notificationPool) (.Values.replicaCount | int)) $identityConnectionBudget }}
 {{- fail "production identity aggregate DB pools must fit identityDatabaseConnectionBudget" }}
 {{- end }}
+{{- $content := required "production content aggregate service is required" (index .Values.services "content-aggregate") }}
+{{- $contentEnv := ($content.env | default dict) }}
+{{- if ne (toString (index $contentEnv "COMMENT_RUNTIME_ENABLED")) "false" }}
+{{- fail "production Comment aggregate runtime must remain disabled until cutover approval" }}
+{{- end }}
+{{- $contentPool := int (required "production Content pool budget is required" (index $contentEnv "CONTENT_DB_POOL_MAX_SIZE")) }}
+{{- $commentPool := int (required "production Comment pool budget is required" (index $contentEnv "COMMENT_DB_POOL_MAX_SIZE")) }}
+{{- $contentCeiling := int (required "production Content aggregate per-pod ceiling is required" (index $contentEnv "CONTENT_AGGREGATE_DB_POOL_CEILING")) }}
+{{- if or (lt $contentPool 1) (lt $commentPool 1) (lt $contentCeiling 2) }}
+{{- fail "production Content and Comment pool budgets must be positive" }}
+{{- end }}
+{{- if gt (add $contentPool $commentPool) $contentCeiling }}
+{{- fail "production Content and Comment pools must fit their per-pod ceiling" }}
+{{- end }}
+{{- $contentConnectionBudget := int (required "production Content aggregate database connection budget is required" .Values.contentAggregateDatabaseConnectionBudget) }}
+{{- if gt (mul $contentCeiling (.Values.replicaCount | int)) $contentConnectionBudget }}
+{{- fail "production Content aggregate pools must fit contentAggregateDatabaseConnectionBudget" }}
+{{- end }}
 {{- if .Values.notificationIdentityCutover.enabled }}
 {{- if hasKey .Values.services "notification" }}
 {{- fail "approved Notification Identity cutover must remove the standalone Notification service" }}

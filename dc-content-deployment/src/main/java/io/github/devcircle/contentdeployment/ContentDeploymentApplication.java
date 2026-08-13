@@ -10,8 +10,8 @@ import org.springframework.kafka.annotation.EnableKafka;
 
 /**
  * Production content runtime. Content and media components run in this JVM;
- * comments remain a separate runtime owner until their isolated persistence
- * configuration and cutover evidence are available.
+ * Comment can run with isolated persistence in this JVM, but the standalone
+ * service remains the runtime owner until cutover evidence is available.
  */
 @SpringBootApplication(scanBasePackages = {
         "io.github.devcircle.content.api",
@@ -26,6 +26,7 @@ import org.springframework.kafka.annotation.EnableKafka;
         CommonWebConfig.class,
         ReliableMessagingConfig.class,
         KafkaConsumerReliabilityConfig.class,
+        ContentDataAccessConfig.class,
         ContentRuntimeFlywayConfig.class,
         ContentCommentRuntimeConfig.class,
         ContentCompositionConfig.class,

@@ -7,6 +7,8 @@ import unittest
 import xml.etree.ElementTree as element_tree
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
 MAVEN_NAMESPACE = {"m": "http://maven.apache.org/POM/4.0.0"}
@@ -45,6 +47,29 @@ class CommentArtifactContractTest(unittest.TestCase):
             'path="${{ matrix.module }}/target/${{ matrix.module }}-0.1.0-SNAPSHOT-exec.jar"',
             source,
         )
+
+    def test_content_comment_runtime_stays_off_with_bounded_pool_configuration(self) -> None:
+        production = yaml.safe_load((ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8"))
+        environment = production["services"]["dc-content-aggregate"]["environment"]
+        self.assertEqual("false", environment["COMMENT_RUNTIME_ENABLED"])
+        self.assertEqual("${CONTENT_DB_POOL_MAX_SIZE:-5}", environment["CONTENT_DB_POOL_MAX_SIZE"])
+        self.assertEqual("${COMMENT_DB_POOL_MAX_SIZE:-3}", environment["COMMENT_DB_POOL_MAX_SIZE"])
+        self.assertEqual(
+            "${CONTENT_AGGREGATE_DB_POOL_CEILING:-8}",
+            environment["CONTENT_AGGREGATE_DB_POOL_CEILING"],
+        )
+
+        values = yaml.safe_load((ROOT / "deploy/helm/devcircle/values.yaml").read_text(encoding="utf-8"))
+        content_environment = values["services"]["content-aggregate"]["env"]
+        self.assertEqual("false", content_environment["COMMENT_RUNTIME_ENABLED"])
+        self.assertEqual("5", content_environment["CONTENT_DB_POOL_MAX_SIZE"])
+        self.assertEqual("3", content_environment["COMMENT_DB_POOL_MAX_SIZE"])
+        self.assertEqual("8", content_environment["CONTENT_AGGREGATE_DB_POOL_CEILING"])
+
+        template = (ROOT / "deploy/helm/devcircle/templates/services.yaml").read_text(encoding="utf-8")
+        self.assertIn("production Comment aggregate runtime must remain disabled", template)
+        self.assertIn("production Content and Comment pools must fit their per-pod ceiling", template)
+        self.assertIn("contentAggregateDatabaseConnectionBudget", template)
 
 
 if __name__ == "__main__":

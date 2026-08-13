@@ -78,7 +78,7 @@ public class CommentRepository {
         return threads;
     }
 
-    @Transactional
+    @Transactional("commentTransactionManager")
     public CommentView create(Long userId, Long postId, Long parentId, String content, String idempotencyKey) {
         String normalizedContent = content.trim();
         CommentView replay = replayOrClaimCreate(userId, idempotencyKey,
@@ -124,7 +124,7 @@ public class CommentRepository {
         return find(commentId);
     }
 
-    @Transactional
+    @Transactional("commentTransactionManager")
     public void deleteOwn(Long commentId, Long userId, String idempotencyKey) {
         if (!claim(idempotencyKey, userId, "DELETE_COMMENT", commentId,
                 requestFingerprint("comment-delete-v1", commentId))) return;
@@ -144,7 +144,7 @@ public class CommentRepository {
                 snapshot);
     }
 
-    @Transactional
+    @Transactional("commentTransactionManager")
     public void hide(Long commentId, Long moderatorId, String idempotencyKey, String reason) {
         String normalizedReason = reason.trim();
         if (!claim(idempotencyKey, moderatorId, "HIDE_COMMENT", commentId,

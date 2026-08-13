@@ -11,9 +11,20 @@ replicaCount: 2
 # This is the complete Identity share of the single-host MySQL 120-connection ceiling.
 identityDatabaseConnectionBudget: 32
 
+# 2 replicas * (5 Content + 3 optional Comment) = 16 connections maximum.
+contentAggregateDatabaseConnectionBudget: 16
+
 publicOrigin: https://mysticverse.example.com
 
 services:
+  content-aggregate:
+    env:
+      CONTENT_DB_POOL_MAX_SIZE: "5"
+      CONTENT_DB_POOL_MIN_IDLE: "1"
+      COMMENT_DB_POOL_MAX_SIZE: "3"
+      COMMENT_DB_POOL_MIN_IDLE: "0"
+      CONTENT_AGGREGATE_DB_POOL_CEILING: "8"
+      COMMENT_RUNTIME_ENABLED: "false"
   identity:
     env:
       AUTH_COOKIE_SECURE: "true"

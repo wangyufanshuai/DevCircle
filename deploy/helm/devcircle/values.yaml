@@ -15,6 +15,9 @@ replicaCount: 1
 # The production override accounts for all replicas on the target MySQL host.
 identityDatabaseConnectionBudget: 12
 
+# Content's primary and optional Comment pools share this per-pod ceiling.
+contentAggregateDatabaseConnectionBudget: 8
+
 services:
   gateway:
     port: 8080
@@ -54,6 +57,11 @@ services:
     env:
       DC_USER_URI: http://dc-identity:8201
       DC_INTERACTION_URI: http://dc-identity:8201
+      CONTENT_DB_POOL_MAX_SIZE: "5"
+      CONTENT_DB_POOL_MIN_IDLE: "1"
+      COMMENT_DB_POOL_MAX_SIZE: "3"
+      COMMENT_DB_POOL_MIN_IDLE: "0"
+      CONTENT_AGGREGATE_DB_POOL_CEILING: "8"
       COMMENT_RUNTIME_ENABLED: "false"
   discovery: { port: 8203 }
   comment: { port: 8104 }

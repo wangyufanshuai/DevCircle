@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -33,6 +34,7 @@ class CommentStandaloneContextTest {
         assertThat(context.containsBean("postCommentController")).isTrue();
         assertThat(context.containsBean("commentProducerFactory")).isTrue();
         assertThat(context.containsBean("commentKafkaTemplate")).isTrue();
+        assertThat(context.getBean("commentTransactionManager", PlatformTransactionManager.class)).isNotNull();
         assertThat(context.getEnvironment().getProperty("spring.application.name")).isEqualTo("dc-comment");
     }
 }

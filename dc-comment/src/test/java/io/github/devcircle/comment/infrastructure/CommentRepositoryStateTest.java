@@ -366,8 +366,8 @@ class CommentRepositoryStateTest {
             return JdbcClient.create(dataSource);
         }
 
-        @Bean
-        PlatformTransactionManager transactionManager(DataSource dataSource) {
+        @Bean("commentTransactionManager")
+        PlatformTransactionManager commentTransactionManager(DataSource dataSource) {
             return new DataSourceTransactionManager(dataSource);
         }
 

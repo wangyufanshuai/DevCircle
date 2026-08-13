@@ -76,6 +76,17 @@ class ContentRuntimeFlywayContractTest {
                 "db/migration/V7__optimize_comment_threads.sql")).isNull();
     }
 
+    @Test
+    void embeddedCommentFlywayUsesOnlyThePreservedCommentHistory() {
+        DataSource dataSource = mock(DataSource.class);
+        Flyway comment = new ContentCommentRuntimeConfig().commentFlyway(dataSource);
+
+        assertThat(comment.getConfiguration().getLocations())
+                .extracting(Object::toString)
+                .containsExactly(ContentCommentRuntimeConfig.MIGRATION_LOCATION);
+        assertThat(comment.getConfiguration().getTable()).isEqualTo("flyway_schema_history");
+    }
+
     private List<String> filenames(Resource[] resources) {
         return Arrays.stream(resources)
                 .map(Resource::getFilename)

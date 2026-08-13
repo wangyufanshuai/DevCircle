@@ -18,10 +18,10 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/comments")
-class CommentController {
+public class CommentController {
     private final CommentService commentService;
 
-    CommentController(CommentService commentService) {
+    public CommentController(CommentService commentService) {
         this.commentService = commentService;
     }
 
