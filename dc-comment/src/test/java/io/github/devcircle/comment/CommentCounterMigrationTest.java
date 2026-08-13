@@ -44,7 +44,7 @@ class CommentCounterMigrationTest {
     private void executeMigration(JdbcDataSource dataSource) throws Exception {
         try (Connection connection = dataSource.getConnection()) {
             ScriptUtils.executeSqlScript(connection,
-                    new ClassPathResource("db/migration/V6__comment_counter_snapshot.sql"));
+                    new ClassPathResource("db/comment-migration/V6__comment_counter_snapshot.sql"));
         }
     }
 

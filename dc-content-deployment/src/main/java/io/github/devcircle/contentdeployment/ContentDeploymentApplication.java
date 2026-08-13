@@ -10,7 +10,8 @@ import org.springframework.kafka.annotation.EnableKafka;
 
 /**
  * Production content runtime. Content and media components run in this JVM;
- * comments and administration intentionally remain separate deployments.
+ * comments remain a separate runtime owner until their isolated persistence
+ * configuration and cutover evidence are available.
  */
 @SpringBootApplication(scanBasePackages = {
         "io.github.devcircle.content.api",
@@ -26,6 +27,7 @@ import org.springframework.kafka.annotation.EnableKafka;
         ReliableMessagingConfig.class,
         KafkaConsumerReliabilityConfig.class,
         ContentRuntimeFlywayConfig.class,
+        ContentCommentRuntimeConfig.class,
         ContentCompositionConfig.class,
         ContentPostDetailComposer.class
 })

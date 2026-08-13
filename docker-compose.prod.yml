@@ -338,6 +338,7 @@ services:
       <<: *app-env
       DC_USER_URI: http://dc-identity:8201
       DC_INTERACTION_URI: http://dc-identity:8201
+      COMMENT_RUNTIME_ENABLED: "false"
     expose: ["8202"]
     depends_on:
       mysql: { condition: service_healthy }

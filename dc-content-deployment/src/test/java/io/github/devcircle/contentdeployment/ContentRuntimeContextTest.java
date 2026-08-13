@@ -2,6 +2,8 @@ package io.github.devcircle.contentdeployment;
 
 import io.github.devcircle.content.application.PostService;
 import io.github.devcircle.content.api.PostDetailComposer;
+import io.github.devcircle.comment.application.CommentService;
+import io.github.devcircle.comment.infrastructure.CommentRepository;
 import io.github.devcircle.file.infrastructure.MediaRepository;
 import io.github.devcircle.messaging.outbox.ReliableOutboxWorker;
 import org.junit.jupiter.api.Test;
@@ -60,6 +62,13 @@ class ContentRuntimeContextTest {
         assertThat(context.containsBean("fileController")).isTrue();
         assertThat(context.containsBean("contentApplication")).isFalse();
         assertThat(context.containsBean("fileApplication")).isFalse();
+        assertThat(context.getBeansOfType(CommentService.class)).isEmpty();
+        assertThat(context.getBeansOfType(CommentRepository.class)).isEmpty();
+        assertThat(Arrays.stream(context.getBeanDefinitionNames()))
+                .noneMatch(name -> name.equals("commentController"))
+                .noneMatch(name -> name.equals("postCommentController"))
+                .noneMatch(name -> name.equals("commentProducerFactory"))
+                .noneMatch(name -> name.equals("commentKafkaTemplate"));
         assertThat(context.getBeansOfType(ReliableOutboxWorker.class)).hasSize(1);
         assertThat(Arrays.stream(context.getBeanDefinitionNames()))
                 .noneMatch(name -> name.toLowerCase().contains("routedefinition"))

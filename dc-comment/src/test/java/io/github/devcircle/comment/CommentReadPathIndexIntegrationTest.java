@@ -25,7 +25,7 @@ class CommentReadPathIndexIntegrationTest {
     static void migrate() {
         Flyway.configure()
                 .dataSource(mysql.getJdbcUrl(), mysql.getUsername(), mysql.getPassword())
-                .locations("classpath:db/migration")
+                .locations("classpath:db/comment-migration")
                 .load()
                 .migrate();
         jdbc = new JdbcTemplate(new DriverManagerDataSource(

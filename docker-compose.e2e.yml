@@ -219,6 +219,7 @@ services:
       SPRING_KAFKA_LISTENER_AUTO_STARTUP: "false"
       DC_USER_URI: http://dc-identity:8201
       DC_INTERACTION_URI: http://dc-identity:8201
+      COMMENT_RUNTIME_ENABLED: "false"
     mem_limit: 256m
     depends_on:
       mysql: { condition: service_healthy }
@@ -235,7 +236,7 @@ services:
     profiles: ["community"]
     build:
       <<: *service-build
-      args: { JAR_FILE: dc-comment/target/dc-comment-0.1.0-SNAPSHOT.jar }
+      args: { JAR_FILE: dc-comment/target/dc-comment-0.1.0-SNAPSHOT-exec.jar }
     environment:
       <<: *app-env
       MYSQL_HOST: mysql
