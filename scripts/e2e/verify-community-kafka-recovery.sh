@@ -9,6 +9,9 @@ WAIT_ATTEMPTS="${REAL_E2E_RECOVERY_WAIT_ATTEMPTS:-90}"
 # shellcheck source=node-runtime.sh
 source "${ROOT_DIR}/scripts/e2e/node-runtime.sh"
 require_e2e_node
+# shellcheck source=docker-runtime.sh
+source "${ROOT_DIR}/scripts/e2e/docker-runtime.sh"
+require_e2e_docker_runtime
 COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" --profile community)
 MYSQL=("${COMPOSE[@]}" exec -T mysql mysql -uroot -pe2e-root-password --skip-column-names --batch)
 kafka_stopped=false

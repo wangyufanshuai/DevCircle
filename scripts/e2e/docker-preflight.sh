@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+E2E_RUNTIME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=docker-runtime.sh
+source "${E2E_RUNTIME_DIR}/docker-runtime.sh"
+
 require_real_e2e_docker() {
   local suite_name="${1:-real E2E}"
   local minimum_memory_bytes="${REAL_E2E_MIN_DOCKER_MEMORY_BYTES:-2147483648}"
@@ -10,10 +14,7 @@ require_real_e2e_docker() {
   local running_containers
   local running_container_count
 
-  command -v docker >/dev/null 2>&1 || {
-    echo "docker is required" >&2
-    return 2
-  }
+  require_e2e_docker_runtime || return 2
   command -v timeout >/dev/null 2>&1 || {
     echo "timeout is required for Docker preflight" >&2
     return 2
