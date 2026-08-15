@@ -23,7 +23,7 @@ Copy-Item .env.example .env
 - `CUTOVER_ASSET_TAG`: Notification 切流提交构建的不可变 SHA，选择 socket-enabled `web-notification-cutover`。
 - `ROLLBACK_ASSET_TAG`: 同一切流提交构建的不可变 SHA，用于 one-version `dc-notification` 与 socket-disabled `web-notification-standalone`；它独立于回退业务镜像所用的 `PREVIOUS_IMAGE_TAG`，禁止使用 `latest`。
 
-默认生产 Compose 仍为 18 个服务、约 11.62 GiB 声明内存上限，并保留 standalone `dc-notification`。通过证据门禁后显式应用 `deploy/compose/docker-compose.notification-identity-cutover.yml`，才会将 exactly-one ownership 切换到 Identity，并收敛为 17 个服务、约 11.12 GiB；legacy rollback 会恢复 standalone Notification。当前环境 Docker Engine 不可用，因此本批次只提供 Compose/Helm/路由/资源静态契约；真实 MySQL V1–V5 迁移、Kafka 去重/DLT、Gateway WebSocket Upgrade 与用户隔离仍是切流前阻断项。
+默认生产 Compose 仍为 18 个服务、约 11.62 GiB 声明内存上限，并保留 standalone `dc-notification`。通过证据门禁后显式应用 `deploy/compose/docker-compose.notification-identity-cutover.yml`，才会将 exactly-one ownership 切换到 Identity，并收敛为 17 个服务、约 11.12 GiB；legacy rollback 会恢复 standalone Notification。2026-08-15 已在 Windows Docker Desktop 上复验聚合 Content/Community/Search 的真实 MySQL、Kafka、Elasticsearch、MinIO 与恢复切片；Gateway WebSocket Upgrade、Notification 正式切流、目标 Linux 性能和全量恢复仍是切流前阻断项，详见 [`2026-08-15 聚合部署 Docker 与恢复证据`](evidence/2026-08-15-aggregate-docker-recovery.md)。
 - `DEVCIRCLE_READ_FALLBACK_ENABLED`: 仅开发环境可显式开启后端 seed 读取降级；生产必须为 `false`。
 - `DEVCIRCLE_OUTBOX_BATCH_SIZE` / `DEVCIRCLE_OUTBOX_MAX_ATTEMPTS` / `DEVCIRCLE_OUTBOX_SEND_TIMEOUT_MS`: Outbox 每批数量、进入 DEAD 前的最大尝试次数和 Kafka ACK 等待上限。
 

@@ -58,7 +58,7 @@ Notification 切流发布必须经 `scripts/ops/deploy-production.sh`，它会�
 
 生产内容路由为 `Gateway → dc-content-aggregate:8202`。该 JVM 直接承载 Content 与 File 代码、各自独立的 Flyway 历史和逻辑 Outbox producer `dc-content`；独立 `dc-content` 与 `dc-file` 镜像仅用于 [legacy content rollback Compose](deploy/compose/docker-compose.legacy-content-rollback.yml)。公开内容响应不返回存储桶对象 URL，浏览器必须通过 `/api/files/access` 取得短期读取地址。
 
-生产静态资源预算当前为 20 个 Compose 服务、12.62 GiB 容器内存上限，仅 Web 和 Gateway 向宿主机发布端口。该数字是配置门禁结果，不是 Linux 实际运行、容量或可用性证明。当前聚合证据仅覆盖 Windows 非容器回归和 Compose 静态解析；Docker、Testcontainers、Helm 实际部署、目标 Linux 性能/恢复和 Cosign Registry 验签仍未验证。
+生产静态资源预算当前为 20 个 Compose 服务、12.62 GiB 容器内存上限，仅 Web 和 Gateway 向宿主机发布端口。该数字是配置门禁结果，不是 Linux 实际运行、容量或可用性证明。2026-08-15 已在 Windows Docker Desktop 上通过当前聚合拓扑的 Testcontainers、Content/Community/Search Compose E2E 及 Kafka/Elasticsearch 恢复切片；目标 Linux 性能/全量恢复、Helm 实际部署和 Cosign Registry 验签仍未验证，详见 [容器恢复证据](docs/evidence/2026-08-15-aggregate-docker-recovery.md)。
 
 ## 本地启动
 

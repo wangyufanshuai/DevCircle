@@ -4,6 +4,10 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 ## 当前证据边界
 
+截至 2026-08-15，Docker Desktop Linux Engine 已恢复，当前聚合容器证据绑定提交 `9178a62`。Content、File、Comment、Content Deployment 与 Recommend 的真实 Testcontainers 回归通过；Content、Community、Community Kafka retry、Community Outbox DEAD、Search retry 和 Search DLT 的真实 Compose 链路通过。完整命令、结果、发现的问题和限制见 [2026-08-15 聚合部署 Docker 与恢复证据](evidence/2026-08-15-aggregate-docker-recovery.md)。
+
+本轮没有重新执行完整全仓 `clean verify -Pcoverage`、Auth/Review Compose E2E、完整前端四档回归、50 并发性能、目标 Linux 全量备份恢复、Helm 集群部署或 Cosign Registry 验签。因此本页下方 2026-08-10 的全仓非容器覆盖率仍是独立历史证据，不能与本轮容器切片相加后宣称完成生产验收。
+
 截至 2026-08-10，当前非容器证据绑定提交为 `5bbbb268a14c37b28c24eef5587643252a15ef49`。生产运行时已完成 Auth-in-Identity、Search-in-Discovery 和 Content/File-in-Content-Aggregate 三个收口阶段。内容与媒体继续保留独立 Maven 模块和 Flyway history，但在同一 Servlet JVM 中执行；评论、互动、通知、推荐和治理仍是兼容服务，因此还不是最终四运行单元。
 
 当前 `5bbbb26` 已在 Windows 本机使用默认 Surefire 分叉配置完成一轮全新的 `clean verify -Pcoverage` 非容器回归：19/19 个 Reactor projects（根项目 + 18 个子模块）构建成功；`clean` 后本轮生成 110 份 Surefire XML，共 478 个测试，0 failures、0 errors、0 skipped。17 份 JaCoCo 报告的聚合行/分支覆盖率为 81.31%/74.18%，通过 CI 的 75%/70% 门禁；14 个关键状态类全部通过 85% 分支门禁。解谜答案关键词已从 `DeductionService` 抽为结构化 Jackson 策略，非法 JSON 明确失败，不再由手工字符串拆分静默误判。可复跑命令、范围与限制见 [Linux 验收门禁与解谜策略非容器证据](evidence/2026-08-10-linux-acceptance-and-deduction-noncontainer.md)。
@@ -12,9 +16,13 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 `dc-identity` 第一阶段只内嵌 `dc-auth` 与个人仪表盘：认证模块的逻辑 producer（`dc-auth`）、认证 schema、Flyway 迁移和 Maven 模块继续保留，但生产执行载体是 `dc-identity`。其 H2 回归实际启用 8 个认证 Flyway 迁移，并验证注册会写入账号、刷新令牌/幂等记录、审计与 `user.registered` Outbox。`dc-user`、`dc-interaction` 和 `dc-notification` 仍是兼容服务；因此这不是完整四聚合完成的证据。
 
-Docker Linux Engine 当前不可用：`docker info` 超时。因而当前提交未重新执行 Testcontainers、真实 Compose、真实认证/内容/审核/社区 E2E、目标 Linux 性能测试、恢复演练、Helm 实际 render 或 Cosign Registry 验签；本文下方带日期的容器、性能、恢复和 Registry 结果均为绑定旧提交的历史证据，除非重新在当前 SHA 执行，否则不得作为 `5bbbb26` 的生产验收结论。
+2026-08-10 证据采集时 Docker Linux Engine 不可用；该历史限制已由上方 2026-08-15 的当前容器切片部分解除。未在 2026-08-15 明确列为通过的性能、目标 Linux 恢复、Helm 和 Registry 项仍保持阻断。
 
 ## 验证证据时间线
+
+### 2026-08-15 当前聚合容器回归
+
+Docker Client/Server 29.6.2、约 5.79 GiB 可用内存下，真实 MySQL 8.4、Redis、Kafka 4.1.1、Elasticsearch 9.2.2 与 MinIO 均被启动。Content E2E、Community 正常链路、Kafka `FAILED → PUBLISHED` 自动恢复、Outbox `DEAD` 人工重放、Search 原记录重试和 DLT 精确重放全部通过；乱序旧事件未覆盖新索引，重复操作未产生重复通知、投影或 Kafka 消息。详见本节上方链接的独立证据文件。
 
 ### 2026-08-08 可执行基线（历史提交记录）
 

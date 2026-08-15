@@ -117,6 +117,6 @@ v1.2 是生产预备版，还不是大规模生产系统。后续应继续补：
 - Kafka lag、Outbox backlog、ES 健康等更细指标。
 - 推荐实验离线评估、自动报表和审批流。
 - OAuth2 设备风控、已认证账号的显式绑定流程和密钥轮换自动化。
-- 当前 SHA 的 Testcontainers、真实 Compose、真实认证 E2E、Linux 性能/恢复、Helm 实际 render 与 Cosign Registry 验签；以及云服务器或 Kubernetes 的真实压测数据和长期运行报告。
+- 当前 SHA 的完整全仓 Testcontainers、Auth/Review Compose E2E、Linux 性能/全量恢复、Helm 实际 render 与 Cosign Registry 验签；以及云服务器或 Kubernetes 的真实压测数据和长期运行报告。Content/Community/Search 容器恢复切片的当前证据见 [`2026-08-15 聚合部署 Docker 与恢复证据`](evidence/2026-08-15-aggregate-docker-recovery.md)。
 
-当前聚合证据仅覆盖 Windows 非容器回归与 Compose 静态配置；因此 Docker 实际启动、Testcontainers、真实 Compose、Helm 集群部署、目标 Linux 性能/恢复及 Cosign Registry 验签均仍未验证。当前静态资源合同为 20 个服务、12.62 GiB 容器内存和 2 个宿主机发布服务；这是配置结果，不是运行时容量结论。
+当前聚合证据已覆盖 Windows Docker Desktop 上的 Testcontainers、Content/Community/Search 真实 Compose 与 Kafka/Elasticsearch 恢复切片，但不等同于完整生产验收。完整全仓容器回归、Auth/Review E2E、Helm 集群部署、目标 Linux 性能/全量恢复及 Cosign Registry 验签仍未验证。当前静态资源合同为 20 个服务、12.62 GiB 容器内存和 2 个宿主机发布服务；这是配置结果，不是运行时容量结论。
