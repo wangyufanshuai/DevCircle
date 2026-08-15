@@ -13,6 +13,8 @@
 
 ### Testcontainers 与模块集成
 
+- 当前 `81644fe` 上执行 `./mvnw.cmd -B clean verify -Pcoverage`，19/19 个 Reactor projects 全部成功，145 份 Surefire XML 共 597 tests，0 failures、0 errors、0 skipped，总耗时 7 分 59 秒。该轮实际启动 MySQL 8.4、Redis、Kafka、Elasticsearch 9.2.2 与 MinIO Testcontainers，并在结束后自动清理。
+- 17 份 JaCoCo 报告的聚合行覆盖率为 85.37%、分支覆盖率为 74.39%，通过 CI 的 75%/70% 门禁；认证、Outbox、内容/解谜、通知、推荐、搜索与用户投影共 14 个关键状态类全部通过 85% 分支门禁。
 - `dc-content`：104 tests，0 failures/errors/skips；真实 MySQL 8.4、Kafka 和 MinIO 均启动。
 - `dc-file`：12 tests，0 failures/errors/skips。
 - `dc-comment`、`dc-content-deployment`：`./mvnw.cmd -pl dc-comment,dc-content-deployment -am clean verify` Reactor 全部成功；聚合部署 17 tests 通过。
@@ -46,6 +48,6 @@
 
 ## 证据边界
 
-本轮没有重新执行完整全仓 `clean verify -Pcoverage`、Auth/Review Compose E2E、四档前端 Playwright、50 并发 k6、真实 GitHub OAuth、Helm 集群部署、Cosign Registry 验签，也没有在当前 SHA 上重新执行生产 `backup.sh`/`restore.sh` 的真实数据恢复。已有备份恢复契约测试通过，但不能替代目标 Linux 主机的全量恢复与 RTO/RPO 记录。
+本轮已重新执行完整全仓 `clean verify -Pcoverage`。尚未重新执行 Auth/Review Compose E2E、四档前端 Playwright、50 并发 k6、真实 GitHub OAuth、Helm 集群部署、Cosign Registry 验签，也没有在当前 SHA 上重新执行生产 `backup.sh`/`restore.sh` 的真实数据恢复。已有备份恢复契约测试通过，但不能替代目标 Linux 主机的全量恢复与 RTO/RPO 记录。
 
 Flyway 仍提示其 MySQL 支持矩阵只验证到 8.1，部分已应用迁移还使用 MySQL 已弃用的 `VALUES(column)` 语法。不得修改已应用迁移以消除警告；应以后续向前迁移和依赖升级处理。

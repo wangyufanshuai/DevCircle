@@ -4,9 +4,9 @@ DevCircle v1.2 保留 Testcontainers 验证核心依赖闭环。默认 Maven 测
 
 ## 当前证据边界
 
-截至 2026-08-15，Docker Desktop Linux Engine 已恢复，当前聚合容器证据绑定提交 `9178a62`。Content、File、Comment、Content Deployment 与 Recommend 的真实 Testcontainers 回归通过；Content、Community、Community Kafka retry、Community Outbox DEAD、Search retry 和 Search DLT 的真实 Compose 链路通过。完整命令、结果、发现的问题和限制见 [2026-08-15 聚合部署 Docker 与恢复证据](evidence/2026-08-15-aggregate-docker-recovery.md)。
+截至 2026-08-15，Docker Desktop Linux Engine 已恢复，当前聚合容器证据绑定提交 `81644fe`。当前 SHA 的完整 `clean verify -Pcoverage` 已通过：19/19 个 Reactor projects、145 份 Surefire XML 共 597 个测试，0 failures、0 errors、0 skipped；17 份 JaCoCo 报告聚合行/分支覆盖率为 85.37%/74.39%，14 个关键状态类全部通过 85% 分支门禁。Content、File、Comment、Content Deployment 与 Recommend 的真实 Testcontainers 回归通过；Content、Community、Community Kafka retry、Community Outbox DEAD、Search retry 和 Search DLT 的真实 Compose 链路通过。完整命令、结果、发现的问题和限制见 [2026-08-15 聚合部署 Docker 与恢复证据](evidence/2026-08-15-aggregate-docker-recovery.md)。
 
-本轮没有重新执行完整全仓 `clean verify -Pcoverage`、Auth/Review Compose E2E、完整前端四档回归、50 并发性能、目标 Linux 全量备份恢复、Helm 集群部署或 Cosign Registry 验签。因此本页下方 2026-08-10 的全仓非容器覆盖率仍是独立历史证据，不能与本轮容器切片相加后宣称完成生产验收。
+本轮尚未重新执行 Auth/Review Compose E2E、完整前端四档回归、50 并发性能、目标 Linux 全量备份恢复、Helm 集群部署或 Cosign Registry 验签。这些项目仍是独立阻断项，不能用已通过的全仓 Maven/Testcontainers 与当前 Compose 切片替代。
 
 截至 2026-08-10，当前非容器证据绑定提交为 `5bbbb268a14c37b28c24eef5587643252a15ef49`。生产运行时已完成 Auth-in-Identity、Search-in-Discovery 和 Content/File-in-Content-Aggregate 三个收口阶段。内容与媒体继续保留独立 Maven 模块和 Flyway history，但在同一 Servlet JVM 中执行；评论、互动、通知、推荐和治理仍是兼容服务，因此还不是最终四运行单元。
 
