@@ -7,14 +7,15 @@
 - `b28e003`：Standalone Content 显式执行 Content/File 双 Flyway history；
 - `827b09c`：修复 Recommend 候选加载器的 Spring 构造器选择；
 - `01dace0`：恢复聚合 E2E 的安全配置、Kafka profile 和跨平台 Node runtime；
-- `9178a62`：支持显式选择 Windows Docker CLI，同时保持 Linux/CI 默认路径。
+- `9178a62`：支持显式选择 Windows Docker CLI，同时保持 Linux/CI 默认路径；
+- `3390021`：Review profile 恢复真实 Kafka/Outbox 作者投影，并在内容详情组合时把 Bearer 委托给 Identity 自行验签。
 
 ## 已执行验证
 
 ### Testcontainers 与模块集成
 
-- 当前 `81644fe` 上执行 `./mvnw.cmd -B clean verify -Pcoverage`，19/19 个 Reactor projects 全部成功，145 份 Surefire XML 共 597 tests，0 failures、0 errors、0 skipped，总耗时 7 分 59 秒。该轮实际启动 MySQL 8.4、Redis、Kafka、Elasticsearch 9.2.2 与 MinIO Testcontainers，并在结束后自动清理。
-- 17 份 JaCoCo 报告的聚合行覆盖率为 85.37%、分支覆盖率为 74.39%，通过 CI 的 75%/70% 门禁；认证、Outbox、内容/解谜、通知、推荐、搜索与用户投影共 14 个关键状态类全部通过 85% 分支门禁。
+- 当前 `3390021` 上执行 `./mvnw.cmd -B clean verify -Pcoverage`，19/19 个 Reactor projects 全部成功，145 份 Surefire XML 共 597 tests，0 failures、0 errors、0 skipped，总耗时 10 分 48 秒。该轮实际启动 MySQL 8.4、Redis、Kafka、Elasticsearch 9.2.2 与 MinIO Testcontainers，并在结束后自动清理。
+- 17 份 JaCoCo 报告的聚合行覆盖率为 85.38%、分支覆盖率为 74.38%，通过 CI 的 75%/70% 门禁；认证、Outbox、内容/解谜、通知、推荐、搜索与用户投影共 14 个关键状态类全部通过 85% 分支门禁。
 - `dc-content`：104 tests，0 failures/errors/skips；真实 MySQL 8.4、Kafka 和 MinIO 均启动。
 - `dc-file`：12 tests，0 failures/errors/skips。
 - `dc-comment`、`dc-content-deployment`：`./mvnw.cmd -pl dc-comment,dc-content-deployment -am clean verify` Reactor 全部成功；聚合部署 17 tests 通过。
@@ -23,12 +24,20 @@
 
 ### 真实 Compose E2E
 
+- Auth：1/1 Playwright 通过。验证邮箱注册、Refresh Token 轮换、退出撤销和再次登录；使用真实 Gateway、Identity 与 MySQL 链路。
+- Review：1/1 Playwright 通过。验证注册事件经 Outbox/Kafka 创建真实作者投影、草稿投稿、审核理由必填、管理员通过、审核幂等重放、公开正文、未解锁答案保护、认证读者互动状态、正确答题获得 20 分、重复答题不重复计分，以及解锁答案与解析。
 - Content：1/1 Playwright 通过。验证注册、Secure Refresh Cookie、草稿五秒自动保存、重载恢复、乐观锁冲突不覆盖服务端版本，以及显式加载服务端版本。
 - Community 正常链路：1/1 Playwright 通过。验证资料同步、关注幂等、通知恰好一次、取消关注与推荐投影收敛。
 - Community Kafka retry：Kafka 停机时 `follow.changed` Outbox 进入 `FAILED`，通知和推荐投影保持 0；原容器恢复后事件自动转为 `PUBLISHED`，通知=1、推荐投影=1，同键重放不重复。
 - Community Outbox DEAD：首事件达到 `DEAD:2` 后，同 `(topic, aggregateId)` 后续事件保持 `NEW:0`；管理员显式重放后恢复为 `PUBLISHED/PUBLISHED`，五域健康从 complete 变 partial 后再次 complete，重放审计与幂等断言通过。
 - Search retry：Elasticsearch 停机时公开搜索明确失败，Outbox 保持 `PUBLISHED`、消费记录为 `FAILED`；ES 恢复后第 13 次尝试转为 `COMPLETED`，旧事件未回退索引水位线。
 - Search DLT：最大重试 1 时事件进入 DLT offset 0；管理员按原 topic/partition/offset 精确重放后第 3 次尝试转为 `COMPLETED`，重复重放不追加消息，旧事件仍被忽略。
+
+### 前端构建与浏览器回归
+
+- `npm run build` 通过，主 JavaScript 产物 gzip 约 90 KB。
+- 使用独立端口 `15510/15511` 执行完整 Playwright：主流程 124/124、Notification WebSocket 12/12，总计 136/136；覆盖 1440、1024、768 与 390 px。
+- `npm audit --audit-level=high --registry=https://registry.npmjs.org` 返回 `found 0 vulnerabilities`。默认 npmmirror 不支持 npm audit API，因此审计证据明确使用 npm 官方 Registry。
 
 ### 配置与运维门禁
 
@@ -45,9 +54,11 @@
 3. 无 Kafka 的 Content profile 误启动 Identity Kafka 消费者。消费者、Topic Admin 与 Outbox/Kafka profile 现在同步启停。
 4. `RecommendationCandidateLoader` 有两个构造器但生产构造器未显式标记，真实容器启动失败。现已使用明确构造器注入，并由 Spring 全上下文测试覆盖。
 5. WSL 的 Linux Docker CLI 与 Docker Desktop Windows CLI 使用不同 daemon 视图，且 Windows CLI 需要路径和环境转换。E2E 现在允许显式 `REAL_E2E_DOCKER_COMMAND=docker.exe`，默认 Linux/CI 行为不变。
+6. Review profile 原先关闭 Outbox 且不启动 Kafka，注册事件无法建立真实作者投影，发布后公开详情返回依赖失败。Review 现启用 Kafka 与 Outbox，并在测试中等待 `user.registered` 投影完成；预检脚本会拒绝再次关闭该链路。
+7. 已认证详情原先只向 Identity 转发 `X-User-Id`，而 Identity 正确拒绝可伪造身份头，导致关注与互动状态内部查询返回 401。Content 现把原始 Bearer 委托给 Identity 自行验签并派生身份；没有引入万能内部密钥，也没有放宽权限。相关日志只记录依赖路径、traceId、异常类型与消息，不记录 Token。
 
 ## 证据边界
 
-本轮已重新执行完整全仓 `clean verify -Pcoverage`。尚未重新执行 Auth/Review Compose E2E、四档前端 Playwright、50 并发 k6、真实 GitHub OAuth、Helm 集群部署、Cosign Registry 验签，也没有在当前 SHA 上重新执行生产 `backup.sh`/`restore.sh` 的真实数据恢复。已有备份恢复契约测试通过，但不能替代目标 Linux 主机的全量恢复与 RTO/RPO 记录。
+本轮已重新执行完整全仓 `clean verify -Pcoverage`、Auth/Review Compose E2E、前端构建、四档 Playwright 与 npm 官方 Registry 审计。尚未执行目标 Linux 4 vCPU/16 GB 下的 50 并发 k6、真实 GitHub OAuth Provider E2E、Helm 集群部署、Cosign Registry 验签，也没有在当前 `3390021` 上执行生产 `backup.sh`/`restore.sh` 的全量真实数据恢复和 RTO/RPO 记录。已有备份恢复契约测试通过，但不能替代目标主机恢复演练。
 
 Flyway 仍提示其 MySQL 支持矩阵只验证到 8.1，部分已应用迁移还使用 MySQL 已弃用的 `VALUES(column)` 语法。不得修改已应用迁移以消除警告；应以后续向前迁移和依赖升级处理。
