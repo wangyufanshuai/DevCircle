@@ -12,6 +12,9 @@ WAIT_ATTEMPTS="${REAL_E2E_RECOVERY_WAIT_ATTEMPTS:-120}"
 # shellcheck source=community-auth-profile.sh
 source "${ROOT_DIR}/scripts/e2e/community-auth-profile.sh"
 configure_community_auth_profile
+# shellcheck source=node-runtime.sh
+source "${ROOT_DIR}/scripts/e2e/node-runtime.sh"
+require_e2e_node
 export REAL_E2E_ENABLE_OUTBOX=true
 export REAL_E2E_OUTBOX_SEND_TIMEOUT_MS="${REAL_E2E_OUTBOX_SEND_TIMEOUT_MS:-2000}"
 if [[ "${RECOVERY_MODE}" == "dead" ]]; then

@@ -9,6 +9,9 @@ WAIT_ATTEMPTS="${REAL_E2E_RECOVERY_WAIT_ATTEMPTS:-120}"
 # shellcheck source=community-auth-profile.sh
 source "${ROOT_DIR}/scripts/e2e/community-auth-profile.sh"
 configure_community_auth_profile
+# shellcheck source=node-runtime.sh
+source "${ROOT_DIR}/scripts/e2e/node-runtime.sh"
+require_e2e_node
 COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" "${COMMUNITY_AUTH_COMPOSE_PROFILES[@]}")
 MYSQL=("${COMPOSE[@]}" exec -T mysql mysql -uroot -pe2e-root-password --skip-column-names --batch)
 kafka_stopped=false

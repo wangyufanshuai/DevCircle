@@ -80,6 +80,27 @@ expected_default_auth_services="$(printf '%s\n' dc-gateway dc-identity mysql red
   exit 1
 }
 
+default_auth_config="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" config)"
+grep -q 'AUTH_COOKIE_SECURE: "true"' <<<"${default_auth_config}"
+grep -q 'PUBLIC_ORIGIN: https://e2e.mysticverse.example' <<<"${default_auth_config}"
+grep -q 'AUTH_FRONTEND_CALLBACK_URI: https://e2e.mysticverse.example/auth/callback' <<<"${default_auth_config}"
+grep -q 'GITHUB_CALLBACK_URI: https://e2e.mysticverse.example/api/auth/oauth2/github/callback' <<<"${default_auth_config}"
+docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" config --format json | python3 -c '
+import json, sys
+environment = json.load(sys.stdin)["services"]["dc-identity"]["environment"]
+for name in ("SPRING_KAFKA_LISTENER_AUTO_STARTUP", "USER_RUNTIME_CONSUMER_ENABLED",
+             "NOTIFICATION_RUNTIME_CONSUMER_ENABLED", "NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED"):
+    assert environment[name] == "false", (name, environment[name])
+'
+REAL_E2E_ENABLE_OUTBOX=true docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
+  --profile community config --format json | python3 -c '
+import json, sys
+environment = json.load(sys.stdin)["services"]["dc-identity"]["environment"]
+for name in ("SPRING_KAFKA_LISTENER_AUTO_STARTUP", "USER_RUNTIME_CONSUMER_ENABLED",
+             "NOTIFICATION_RUNTIME_CONSUMER_ENABLED", "NOTIFICATION_RUNTIME_TOPIC_ADMIN_ENABLED"):
+    assert environment[name] == "true", (name, environment[name])
+'
+
 legacy_auth_config="$(REAL_E2E_AUTH_URI=http://dc-auth:8101 docker compose \
   -f "${ROOT_DIR}/docker-compose.e2e.yml" --profile legacy-auth config)"
 grep -q '^  dc-auth:$' <<<"${legacy_auth_config}"
@@ -115,6 +136,9 @@ bash -n "${ROOT_DIR}/scripts/e2e/verify-community-kafka-recovery.sh"
 bash -n "${ROOT_DIR}/scripts/e2e/verify-community-outbox-dead-recovery.sh"
 bash -n "${ROOT_DIR}/scripts/e2e/run-real-community.sh"
 bash -n "${ROOT_DIR}/scripts/e2e/community-auth-profile.sh"
+bash -n "${ROOT_DIR}/scripts/e2e/node-runtime.sh"
+grep -q 'require_e2e_node' "${ROOT_DIR}/scripts/e2e/run-real-community.sh"
+grep -q 'require_e2e_node' "${ROOT_DIR}/scripts/e2e/run-real-search-recovery.sh"
 grep -q 'dc-content-deployment' "${ROOT_DIR}/scripts/e2e/run-real-content.sh"
 grep -q 'dc-content-deployment' "${ROOT_DIR}/scripts/e2e/run-real-review.sh"
 grep -q 'dc-content-deployment' "${ROOT_DIR}/scripts/e2e/run-real-community.sh"
@@ -176,7 +200,7 @@ legacy_community_auth_routes="$(grep -E '^      DC_AUTH_URI:' <<<"${legacy_commu
 community_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
   --profile community config --services | sort)"
 expected_community_services="$(printf '%s\n' dc-admin dc-comment dc-content-aggregate dc-gateway dc-identity \
-  dc-notification dc-recommend kafka minio mysql redis | sort)"
+  dc-recommend kafka minio mysql redis | sort)"
 [[ "${community_services}" == "${expected_community_services}" ]] || {
   echo "Unexpected community services: ${community_services}" >&2
   exit 1
@@ -197,7 +221,7 @@ expected_standalone_legacy_interaction_services="$(printf '%s\n' dc-gateway dc-i
 legacy_interaction_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
   --profile community --profile legacy-interaction config --services | sort)"
 expected_legacy_interaction_services="$(printf '%s\n' dc-admin dc-comment dc-content-aggregate dc-gateway dc-identity dc-interaction \
-  dc-notification dc-recommend kafka minio mysql redis | sort)"
+  dc-recommend kafka minio mysql redis | sort)"
 [[ "${legacy_interaction_services}" == "${expected_legacy_interaction_services}" ]] || {
   echo "Unexpected legacy-interaction services: ${legacy_interaction_services}" >&2
   exit 1

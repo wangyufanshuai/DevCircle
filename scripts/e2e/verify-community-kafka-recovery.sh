@@ -6,6 +6,9 @@ PROJECT_NAME="${REAL_E2E_PROJECT_NAME:-devcircle-real-community-e2e}"
 COMPOSE_FILE="${REAL_E2E_COMPOSE_FILE:-${ROOT_DIR}/docker-compose.e2e.yml}"
 BASE_URL="${REAL_E2E_BASE_URL:-http://127.0.0.1:28080}"
 WAIT_ATTEMPTS="${REAL_E2E_RECOVERY_WAIT_ATTEMPTS:-90}"
+# shellcheck source=node-runtime.sh
+source "${ROOT_DIR}/scripts/e2e/node-runtime.sh"
+require_e2e_node
 COMPOSE=(docker compose -p "${PROJECT_NAME}" -f "${COMPOSE_FILE}" --profile community)
 MYSQL=("${COMPOSE[@]}" exec -T mysql mysql -uroot -pe2e-root-password --skip-column-names --batch)
 kafka_stopped=false

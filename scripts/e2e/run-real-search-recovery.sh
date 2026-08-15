@@ -2,6 +2,9 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=node-runtime.sh
+source "${ROOT_DIR}/scripts/e2e/node-runtime.sh"
+require_e2e_node
 COMPOSE_FILE="${ROOT_DIR}/docker-compose.e2e.yml"
 RECOVERY_MODE="${REAL_E2E_SEARCH_RECOVERY_MODE:-retry}"
 SEARCH_DEPLOYMENT="${REAL_E2E_SEARCH_DEPLOYMENT:-discovery}"
@@ -133,7 +136,6 @@ topic_end_offset() {
 }
 
 command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 2; }
-command -v node >/dev/null 2>&1 || { echo "node is required" >&2; exit 2; }
 [[ "${KEEP_ON_FAILURE}" == "true" || "${KEEP_ON_FAILURE}" == "false" ]] || {
   echo "REAL_E2E_KEEP_ON_FAILURE must be true or false" >&2
   exit 2
