@@ -7,6 +7,7 @@ import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.http.BoundedRestClientFactory;
 import io.github.devcircle.content.contract.PostSummary;
 import io.github.devcircle.seed.ThemeContentLibrary;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
@@ -21,6 +22,7 @@ public class RecommendationCandidateLoader {
     private final RestClient contentClient;
     private final List<PostSummary> seedPosts;
 
+    @Autowired
     public RecommendationCandidateLoader(
             @Value("${devcircle.content.base-url:http://localhost:8103}") String contentBaseUrl) {
         this(BoundedRestClientFactory.create(contentBaseUrl), ThemeContentLibrary.summaries());
