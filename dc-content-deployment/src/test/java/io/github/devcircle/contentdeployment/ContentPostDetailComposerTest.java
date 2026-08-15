@@ -5,6 +5,7 @@ import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.content.api.PostDetailView;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
@@ -25,19 +26,22 @@ class ContentPostDetailComposerTest {
         fixture.server.expect(requestTo("https://user.test/api/users/7"))
                 .andExpect(header("X-User-Id", "2"))
                 .andExpect(header("X-Trace-Id", "trace-7"))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer delegated-access"))
                 .andRespond(withSuccess("""
                         {"code":"OK","data":{"id":7,"username":"林墨","avatarUrl":"/avatar/7.webp","bio":"记录异常信号","followers":18}}
                         """, MediaType.APPLICATION_JSON));
         fixture.server.expect(requestTo("https://interaction.test/api/posts/1001/interaction-state"))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer delegated-access"))
                 .andRespond(withSuccess("""
                         {"code":"OK","data":{"liked":true,"favorited":true,"likeCount":521}}
                         """, MediaType.APPLICATION_JSON));
         fixture.server.expect(requestTo("https://user.test/api/users/7/follow-state"))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer delegated-access"))
                 .andRespond(withSuccess("""
                         {"code":"OK","data":{"following":true}}
                         """, MediaType.APPLICATION_JSON));
 
-        PostDetailView result = fixture.composer.compose(detail(), 2L, "trace-7");
+        PostDetailView result = fixture.composer.compose(detail(), 2L, "trace-7", "Bearer delegated-access");
 
         assertThat(result.author().username()).isEqualTo("林墨");
         assertThat(result.author().followerCount()).isEqualTo(18);
@@ -54,7 +58,7 @@ class ContentPostDetailComposerTest {
         Fixture fixture = fixture();
         fixture.server.expect(requestTo("https://user.test/api/users/7")).andRespond(withServerError());
 
-        assertThatThrownBy(() -> fixture.composer.compose(detail(), null, null))
+        assertThatThrownBy(() -> fixture.composer.compose(detail(), null, null, null))
                 .isInstanceOfSatisfying(BusinessException.class,
                         error -> assertThat(error.code()).isEqualTo(ErrorCode.DEPENDENCY_UNAVAILABLE));
         fixture.server.verify();

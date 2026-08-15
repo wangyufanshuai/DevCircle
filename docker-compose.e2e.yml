@@ -90,7 +90,7 @@ services:
 
   kafka:
     image: apache/kafka:4.1.1
-    profiles: ["community", "performance", "search-recovery", "legacy-search"]
+    profiles: ["review", "community", "performance", "search-recovery", "legacy-search"]
     restart: "no"
     environment:
       KAFKA_NODE_ID: 1

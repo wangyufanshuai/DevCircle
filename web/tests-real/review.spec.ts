@@ -16,8 +16,14 @@ async function registerCreator(page: Page) {
   const response = await registrationResponse
   expect(response.ok()).toBe(true)
   const payload = await response.json()
+  const userId = Number(payload.data.user.userId)
+  expect(userId).toBeGreaterThan(0)
+  await expect.poll(async () => {
+    const profile = await page.request.get(`/api/users/${userId}`)
+    return profile.status()
+  }, { message: 'author profile should be projected from user.registered', timeout: 20_000 }).toBe(200)
   await expect(page).toHaveURL('/write')
-  return { accessToken: String(payload.data.accessToken) }
+  return { accessToken: String(payload.data.accessToken), userId }
 }
 
 async function loginAdministrator(context: BrowserContext) {
@@ -43,8 +49,9 @@ test('submits, moderates and publishes content without leaking its solution', as
   const solution = '林默利用慢七分钟的怀表制造了不在场证明。'
 
   let authorAccessToken = ''
+  let authorId = 0
   await test.step('the author submits a real draft for review', async () => {
-    ({ accessToken: authorAccessToken } = await registerCreator(page))
+    ({ accessToken: authorAccessToken, userId: authorId } = await registerCreator(page))
     await page.getByLabel('标题').fill(title)
     await page.getByLabel('正文 Markdown').fill(markdown)
     await page.getByLabel('问题').fill('谁制造了错误时间线？')
@@ -122,7 +129,9 @@ test('submits, moderates and publishes content without leaking its solution', as
 
   await test.step('published detail exposes markdown but not answer internals', async () => {
     const response = await page.request.get(`/api/posts/${postId}`)
-    expect(response.ok()).toBe(true)
+    if (!response.ok()) {
+      throw new Error(`Published detail failed with HTTP ${response.status()}: ${await response.text()}`)
+    }
     const payload = await response.json()
     expect(payload.data).toMatchObject({
       id: postId,
@@ -143,6 +152,21 @@ test('submits, moderates and publishes content without leaking its solution', as
   })
 
   await test.step('the published case awards points once and unlocks its solution after a correct answer', async () => {
+    const headers = { Authorization: `Bearer ${authorAccessToken}` }
+    const [followState, interactionState, composedDetail] = await Promise.all([
+      page.request.get(`/api/users/${authorId}/follow-state`, { headers }),
+      page.request.get(`/api/posts/${postId}/interaction-state`, { headers }),
+      page.request.get(`/api/posts/${postId}`, { headers })
+    ])
+    for (const [label, response] of [
+      ['follow state', followState],
+      ['interaction state', interactionState],
+      ['authenticated detail', composedDetail]
+    ] as const) {
+      if (!response.ok()) {
+        throw new Error(`${label} failed with HTTP ${response.status()}: ${await response.text()}`)
+      }
+    }
     await page.goto(`/posts/${postId}`)
     await expect(page.getByLabel('推理结论')).toBeVisible()
     const requestPromise = page.waitForRequest(request =>

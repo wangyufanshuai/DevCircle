@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.http.HttpHeaders;
 
 import java.util.List;
 import java.util.Map;
@@ -48,9 +49,11 @@ class PostController {
     @GetMapping("/{id}")
     ApiResponse<PostDetailView> detail(@PathVariable Long id,
                                        @RequestHeader(value = "X-User-Id", required = false) Long viewerId,
-                                       @RequestHeader(value = "X-Trace-Id", required = false) String traceId) {
+                                       @RequestHeader(value = "X-Trace-Id", required = false) String traceId,
+                                       @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false)
+                                       String authorization) {
         PostDetailView detail = postService.publicDetail(id, viewerId);
-        return ApiResponse.ok(postDetailComposer.compose(detail, viewerId, traceId));
+        return ApiResponse.ok(postDetailComposer.compose(detail, viewerId, traceId, authorization));
     }
 
     @GetMapping("/summaries")

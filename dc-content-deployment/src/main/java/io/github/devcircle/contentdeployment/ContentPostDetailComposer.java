@@ -7,6 +7,9 @@ import io.github.devcircle.content.api.PostDetailView;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.JsonNodeFactory;
@@ -17,6 +20,8 @@ import java.util.concurrent.Executor;
 
 /** Composes adjacent user and interaction state without moving domain ownership. */
 final class ContentPostDetailComposer implements PostDetailComposer {
+    private static final Logger log = LoggerFactory.getLogger(ContentPostDetailComposer.class);
+
     private final RestClient userClient;
     private final RestClient interactionClient;
     private final Executor executor;
@@ -38,16 +43,19 @@ final class ContentPostDetailComposer implements PostDetailComposer {
     }
 
     @Override
-    public PostDetailView compose(PostDetailView detail, Long viewerId, String traceId) {
+    public PostDetailView compose(PostDetailView detail, Long viewerId, String traceId, String authorization) {
         long safeViewerId = viewerId == null || viewerId < 1 ? 0 : viewerId;
         long authorId = detail.author().id();
-        CompletableFuture<JsonNode> profile = asyncGet(userClient, "/api/users/" + authorId, safeViewerId, traceId);
+        CompletableFuture<JsonNode> profile = asyncGet(userClient, "/api/users/" + authorId,
+                safeViewerId, traceId, authorization);
         CompletableFuture<JsonNode> interaction = safeViewerId == 0
                 ? CompletableFuture.completedFuture(JsonNodeFactory.instance.objectNode())
-                : asyncGet(interactionClient, "/api/posts/" + detail.id() + "/interaction-state", safeViewerId, traceId);
+                : asyncGet(interactionClient, "/api/posts/" + detail.id() + "/interaction-state",
+                safeViewerId, traceId, authorization);
         CompletableFuture<JsonNode> follow = safeViewerId == 0
                 ? CompletableFuture.completedFuture(JsonNodeFactory.instance.objectNode())
-                : asyncGet(userClient, "/api/users/" + authorId + "/follow-state", safeViewerId, traceId);
+                : asyncGet(userClient, "/api/users/" + authorId + "/follow-state",
+                safeViewerId, traceId, authorization);
 
         JsonNode profileData = join(profile);
         JsonNode interactionData = join(interaction);
@@ -77,15 +85,19 @@ final class ContentPostDetailComposer implements PostDetailComposer {
                 detail.deductionState(), detail.solution());
     }
 
-    private CompletableFuture<JsonNode> asyncGet(RestClient client, String path, long viewerId, String traceId) {
-        return CompletableFuture.supplyAsync(() -> get(client, path, viewerId, traceId), executor);
+    private CompletableFuture<JsonNode> asyncGet(RestClient client, String path, long viewerId,
+                                                  String traceId, String authorization) {
+        return CompletableFuture.supplyAsync(() -> get(client, path, viewerId, traceId, authorization), executor);
     }
 
-    private JsonNode get(RestClient client, String path, long viewerId, String traceId) {
+    private JsonNode get(RestClient client, String path, long viewerId, String traceId, String authorization) {
         try {
             RestClient.RequestHeadersSpec<?> request = client.get().uri(path)
                     .header("X-User-Id", Long.toString(viewerId));
             if (traceId != null && !traceId.isBlank()) request.header("X-Trace-Id", traceId);
+            if (authorization != null && !authorization.isBlank()) {
+                request.header(HttpHeaders.AUTHORIZATION, authorization);
+            }
             JsonNode body = request.retrieve().body(JsonNode.class);
             if (body != null && "OK".equals(body.path("code").stringValue())
                     && !body.path("data").isMissingNode() && !body.path("data").isNull()) {
@@ -95,6 +107,9 @@ final class ContentPostDetailComposer implements PostDetailComposer {
         } catch (BusinessException error) {
             throw error;
         } catch (RuntimeException error) {
+            log.warn("Post detail dependency failed path={} traceId={} failure={} message={}",
+                    path, traceId == null ? "" : traceId,
+                    error.getClass().getSimpleName(), error.getMessage());
             BusinessException failure = dependency();
             failure.initCause(error);
             throw failure;

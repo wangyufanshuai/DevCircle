@@ -69,9 +69,16 @@ assert_profile_outbox_mode() {
   }
 }
 
-assert_profile_outbox_mode review false
+assert_profile_outbox_mode review true
 assert_profile_outbox_mode community true
 assert_profile_outbox_mode search-recovery true
+
+review_services="$(REAL_E2E_ENABLE_OUTBOX=true docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" \
+  --profile review config --services | sort)"
+grep -qx 'kafka' <<<"${review_services}" || {
+  echo "Review E2E must include Kafka for the authoritative author projection" >&2
+  exit 1
+}
 
 default_auth_services="$(docker compose -f "${ROOT_DIR}/docker-compose.e2e.yml" config --services | sort)"
 expected_default_auth_services="$(printf '%s\n' dc-gateway dc-identity mysql redis | sort)"
