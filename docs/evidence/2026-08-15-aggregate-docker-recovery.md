@@ -47,6 +47,12 @@
 - `infra`、`demo`、默认 E2E、Community E2E 和生产 Compose 均通过 `config --quiet`。
 - 所有 E2E/生产运维 Shell 通过 `bash -n`，工作区通过 `git diff --check`。
 
+### 真实备份恢复演练
+
+- 在 `36afeb1` 上使用全新 MySQL 8.4.6 与 MinIO 卷写入 180 条公开内容和对象标记，真实执行 `backup.sh`，随后篡改标题、删除第 180 条内容并改写对象，再执行 `restore.sh`。
+- 备份耗时 4.35 秒，恢复耗时 4.39 秒；三项 `SHA256SUMS`、180/180 数量、内容哈希 `ee55895f0aeeba0e1de651defe2fa4514d0f271035b745575cdb0df145b32ee9`、首尾标题与 MinIO 对象均恢复一致。
+- 演练结束后容器、网络、卷、临时凭据与备份产物全部清理。详细步骤和证据边界见 [本地备份恢复演练记录](../recovery-rehearsal.md)。
+
 ## 实际发现并修复
 
 1. Standalone Content 查询 File 所有的 `upload_status`，但未执行 File history，真实 MySQL 报 `Unknown column 'm.upload_status'`。现由两个有序 Flyway initializer 分别维护 `flyway_schema_history` 与 `flyway_schema_history_file`。
@@ -59,6 +65,6 @@
 
 ## 证据边界
 
-本轮已重新执行完整全仓 `clean verify -Pcoverage`、Auth/Review Compose E2E、前端构建、四档 Playwright 与 npm 官方 Registry 审计。尚未执行目标 Linux 4 vCPU/16 GB 下的 50 并发 k6、真实 GitHub OAuth Provider E2E、Helm 集群部署、Cosign Registry 验签，也没有在当前 `3390021` 上执行生产 `backup.sh`/`restore.sh` 的全量真实数据恢复和 RTO/RPO 记录。已有备份恢复契约测试通过，但不能替代目标主机恢复演练。
+本轮已重新执行完整全仓 `clean verify -Pcoverage`、Auth/Review Compose E2E、前端构建、四档 Playwright、npm 官方 Registry 审计，以及当前 SHA 的 180 条内容 MySQL/MinIO 真实备份恢复。尚未执行目标 Linux 4 vCPU/16 GB 下的 50 并发 k6、真实 GitHub OAuth Provider E2E、Helm 集群部署、Cosign Registry 验签，也没有完成包含全部应用、Elasticsearch 重建、Kafka 追平、公网探测和正式 RTO/RPO 的目标主机恢复演练。
 
 Flyway 仍提示其 MySQL 支持矩阵只验证到 8.1，部分已应用迁移还使用 MySQL 已弃用的 `VALUES(column)` 语法。不得修改已应用迁移以消除警告；应以后续向前迁移和依赖升级处理。

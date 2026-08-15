@@ -1,5 +1,29 @@
 # 本地备份恢复演练记录
 
+## 2026-08-15 · 当前 SHA 的 180 条内容真实恢复演练
+
+本次在提交 `36afeb1c6dc096a2a0962adbc2ed710827506816` 上使用 Docker Desktop 29.6.2 Linux Engine（可用内存 6,218,960,896 bytes）执行。启动前确认没有正在运行的 Compose project；生产 Compose 的固定项目名为 `devcircle-prod`，本轮使用新建的 MySQL、MinIO 卷，只启动 MySQL 8.4.6、MinIO 和按需维护容器，不接触历史 `devcircle-*` 停止容器或其他项目数据。
+
+在 `dc_content` 写入 180 条互不重复且全部公开的内容、正文、线索和解析，并在 MinIO 卷写入对象标记后，真实执行 `scripts/ops/backup.sh`：
+
+- 备份命令耗时 4.35 秒；
+- Manifest 记录 `postCount=180`、`publishedPostCount=180`；
+- 内容哈希为 `ee55895f0aeeba0e1de651defe2fa4514d0f271035b745575cdb0df145b32ee9`；
+- MySQL 归档摘要为 `ce0828523bf0f62dcb09c2aba44d8fa2d66386cb556233a4e8311ef8fa0e081e`；
+- MinIO 归档摘要为 `cff43326fae619affb331ccc9d1cbe2e36571cb4d3bfdb3d9689684f59a4d8d1`。
+
+随后将第 1 条标题改为 `tampered-after-backup`、删除第 180 条内容，并把 MinIO 标记改为 `after-backup-tamper`。破坏后数据库明确为 179/179。使用 `CONFIRM_RESTORE=RESTORE`、`RESTORE_MANAGE_APPLICATIONS=false` 真实执行 `scripts/ops/restore.sh`：
+
+- `mysql.sql.gz`、`minio-data.tar.gz` 与 `backup-manifest.json` 的 `SHA256SUMS` 全部通过；
+- 恢复命令耗时 4.39 秒；
+- 恢复脚本返回前完成 Manifest 业务基线校验；
+- 独立复核得到 180/180，第 1 条与第 180 条标题分别为 `drill-post-1`、`drill-post-180`；
+- 独立重算内容哈希与 Manifest 完全一致；
+- MinIO 对象恢复为备份值 `before-backup-36afeb1`；
+- 演练容器、网络、卷、临时凭据、包装器和备份产物均已清理。
+
+该结果证明当前 SHA 的 MySQL/MinIO 备份、破坏、恢复和业务哈希闭环可执行，但不是目标 Linux 主机的正式 RTO/RPO。演练没有启动全部应用，也没有执行 Elasticsearch 全量重建、Kafka 追平、媒体抽查或公网健康探测。
+
 ## 2026-08-08 · 180 条内容真实恢复演练
 
 本次使用独立 Compose project `devcircle-recovery-drill`，只启动生产 Compose 中的 MySQL 8.4.6、MinIO 和按需维护容器；项目网络、`mysql-data` 与 `minio-data` 卷均为本次演练新建，结束后已销毁。演练使用提交 `92280f106b22153ce84244a4a33359807f911be4` 和一次性伪生产配置，不接触现有数据。
