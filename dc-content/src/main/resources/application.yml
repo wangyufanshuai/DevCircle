@@ -6,6 +6,10 @@ spring:
     name: dc-content
   lifecycle:
     timeout-per-shutdown-phase: 30s
+  flyway:
+    # The standalone deployment owns two ordered histories on the shared schema.
+    # ContentStandaloneFlywayConfig runs them explicitly.
+    enabled: false
   datasource:
     url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/dc_content?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
     username: ${MYSQL_USER:devcircle}

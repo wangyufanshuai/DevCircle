@@ -158,7 +158,7 @@ class DraftPersistenceIntegrationTest {
     }
 
     @Test
-    void mediaDraftFailsExplicitlyUntilTheUploadSchemaIsReady() {
+    void mediaDraftRejectsAnIncompleteUploadAfterTheUploadSchemaIsReady() {
         jdbcClient.sql("""
                         INSERT INTO media_asset(object_key, url, content_type, size_bytes, status)
                         VALUES ('pending/evidence.webp', '', 'image/webp', 128, 'PENDING_REVIEW')
@@ -174,7 +174,7 @@ class DraftPersistenceIntegrationTest {
 
         assertThatThrownBy(() -> postRepository.createDraft(44L, request, "media-schema-not-ready"))
                 .isInstanceOfSatisfying(BusinessException.class,
-                        exception -> assertThat(exception.code()).isEqualTo(ErrorCode.DEPENDENCY_UNAVAILABLE));
+                        exception -> assertThat(exception.code()).isEqualTo(ErrorCode.UPLOAD_REJECTED));
     }
 
     private SaveDraftRequest draft(String title, String content, Long version) {

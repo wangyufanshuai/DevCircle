@@ -9,7 +9,7 @@ import org.springframework.kafka.annotation.EnableKafka;
 
 @SpringBootApplication
 @EnableKafka
-@Import({ReliableMessagingConfig.class, KafkaConsumerReliabilityConfig.class})
+@Import({ReliableMessagingConfig.class, KafkaConsumerReliabilityConfig.class, ContentStandaloneFlywayConfig.class})
 public class ContentApplication {
     public static void main(String[] args) {
         SpringApplication.run(ContentApplication.class, args);
