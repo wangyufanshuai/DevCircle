@@ -1,140 +1,192 @@
-# DevCircle
+<h1 align="center">MYSTICVERSE</h1>
 
-[![CI](https://github.com/wangyufanshuai/DevCircle/actions/workflows/ci.yml/badge.svg)](https://github.com/wangyufanshuai/DevCircle/actions/workflows/ci.yml)
+<p align="center"><strong>面向推理、科幻与宇宙爱好者的主题内容社区，也是一个可运行、可观测、可回滚的 Spring 微服务工程样板。</strong></p>
 
-DevCircle 是工程代号，前台产品名为 **MysticVerse**：一个围绕“推理馆、科幻馆、宇宙档案”的读者与解谜玩家内容社区。
+<p align="center">
+  Repository codename: <strong>DevCircle</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/wangyufanshuai/DevCircle/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/wangyufanshuai/DevCircle/actions/workflows/ci.yml/badge.svg" /></a>
+  <img alt="Java 21" src="https://img.shields.io/badge/Java-21-ed8b00?style=flat-square&logo=openjdk&logoColor=white" />
+  <img alt="Spring Boot 4" src="https://img.shields.io/badge/Spring%20Boot-4.0-6db33f?style=flat-square&logo=springboot&logoColor=white" />
+  <img alt="Vue 3" src="https://img.shields.io/badge/Vue-3-42b883?style=flat-square&logo=vuedotjs&logoColor=white" />
+  <img alt="Docker Compose" src="https://img.shields.io/badge/runtime-Docker%20Compose-2496ed?style=flat-square&logo=docker&logoColor=white" />
+  <a href="./LICENSE"><img alt="Apache 2.0" src="https://img.shields.io/badge/license-Apache--2.0-e8e8e8?style=flat-square" /></a>
+</p>
+
+<p align="center">
+  <a href="#-本地运行">快速开始</a>
+  ·
+  <a href="./docs/architecture.md">架构</a>
+  ·
+  <a href="./docs/api-examples.http">API 示例</a>
+  ·
+  <a href="./docs/production-runbook.md">生产手册</a>
+</p>
+
+![MysticVerse 推理主题视觉](./web/src/assets/visuals/hero-deduction-1920.webp)
+
+## 这是什么
+
+MysticVerse 是一个围绕“推理馆、科幻馆、宇宙档案”组织内容、解谜和创作的社区产品。用户可以阅读主题内容、参与推理解谜、发布作品、关注作者、搜索与收藏；运营侧可以审核内容、处理风险、管理推荐实验和检查系统健康。
+
+DevCircle 是仓库和工程代号。这个仓库的价值不只是一组页面：它完整展示了内容从发布到审核、搜索、推荐、互动和通知的生产链路，以及这些链路在依赖故障、重复消息和版本切换时如何保持可恢复。
+
+## 产品体验
+
+- **三座主题馆**：推理、科幻、宇宙内容使用独立视觉、分类和推荐语境。
+- **推理解谜**：覆盖密室、时间线、证词矛盾、物证误导、密码、列车、航海、剧院和冷案等题型。
+- **创作与互动**：发帖、标签、媒体、评论、点赞、收藏、关注关系和个人中心。
+- **发现系统**：搜索、相关内容、多路召回、热度与兴趣排序、实验分桶和曝光去重。
+- **内容治理**：机审信号、风险等级、审核 SLA、人工复审、用户风险画像和审计日志。
+- **运营工作台**：推荐实验、Outbox backlog/replay、数据源状态、告警与服务健康。
+
+首批初始化内容包含 100 条推理、40 条科幻和 40 条宇宙主题数据，用于本地 Demo；生产读请求不会在数据库缺失时静默回退到 seed 数据。
+
+## 为什么这个工程值得看
+
+### 写入链路可追踪
+
+内容发布与 Outbox 事件在同一事务落库。Kafka 采用至少一次投递，消费端通过 `event_id` 去重；同一聚合的事件严格保序，失败前序不会被后续事件越过。
+
+```mermaid
+flowchart LR
+    U[Web / Mobile] --> G[Gateway]
+    G --> C[Content aggregate]
+    C --> DB[(MySQL + Outbox)]
+    DB --> K[Kafka]
+    K --> S[Discovery / Search]
+    K --> N[Notification]
+    K --> R[Recommendation signals]
+    S --> ES[(Elasticsearch)]
+    N --> WS[Inbox / WebSocket]
+```
+
+### 部署边界经过收敛
+
+Maven 领域模块与生产 JVM 不是一一对应：
+
+- `dc-identity` 承载认证、用户、互动、通知与个人仪表盘相关生产能力。
+- `dc-content-deployment` 聚合 Content 与 File，同时保留独立 schema、Flyway 历史与逻辑 producer。
+- `dc-discovery` 承载 Search 代码模块；`dc-recommend` 保持独立进程与独立实验边界。
+- 旧 `dc-auth`、`dc-search`、`dc-content`、`dc-file` 等独立镜像作为明确的一版本 rollback 面保留，不属于默认生产拓扑。
+
+这既保留领域隔离，也避免为了“微服务数量”承担不必要的进程、连接池和运维成本。
+
+### 故障不是一句“最终一致”
+
+- Outbox 有租约、退避、最大尝试、`DEAD` 状态和受控 replay。
+- 搜索投影使用 `(occurredAtMillis, eventId)` 单调版本，旧事件不能覆盖新状态。
+- 评论、点赞等计数带生产者版本，乱序消息不会让计数倒退。
+- 同步依赖使用有界连接/读取超时，失败交给错误响应、重试或 DLT，而不是无限占用线程。
+- Notification cutover 明确保证 Flyway、consumer、topic admin、API 与 WebSocket 的 exactly-one ownership。
 
 ## 技术栈
 
-- Java 21, Spring Boot 4, Spring Cloud Gateway
-- MySQL 8.4, Redis, Kafka 4.1, Elasticsearch 9, MinIO
-- Vue 3, Vite, TypeScript, Naive UI, Playwright
-- Docker Compose, Helm, GHCR, Prometheus, Grafana, Jaeger
-- JUnit 5, Testcontainers, k6
+| 层 | 选型 |
+|---|---|
+| 后端 | Java 21、Spring Boot 4、Spring Cloud Gateway、Maven |
+| 数据 | MySQL 8.4、Redis、Kafka 4.1、Elasticsearch 9、MinIO |
+| 前端 | Vue 3、Vite 7、TypeScript、Naive UI、Playwright |
+| 可观测 | Micrometer、Prometheus、Alertmanager、Grafana、Jaeger / OTLP |
+| 交付 | Docker Compose、Helm、GHCR、固定提交 SHA 镜像 |
+| 质量 | JUnit 5、Testcontainers、Playwright、k6、Helm lint |
 
-## v1.3 能力矩阵
+## ⚡ 本地运行
 
-| 能力 | 状态 |
-| --- | --- |
-| 主题内容库 | 100 条推理、40 条科幻、40 条宇宙内容作为首次初始化数据；生产读请求不使用 seed 降级 |
-| 推理馆 | 覆盖密室、时间线、证词矛盾、物证误导、密码谜题、航海、列车、剧院、档案室、冷案复盘 |
-| 内容闭环 | 发帖写 MySQL、标签、媒体、Outbox，审核前状态为 `PENDING` |
-| 内容治理 | 发帖生成审核任务，包含机审结果、风险等级、SLA、复审状态和人工决策 |
-| 风控运营 | 内容风险信号、用户风险画像、禁发/封禁占位拦截和管理端治理接口 |
-| 推荐实验 | 多路召回、实验 id、分桶、推荐事件日志、实验启停管理 |
-| 工程启动 | `.env.example`、Windows dev scripts、Compose `infra/app/demo` profiles |
-| 运行韧性 | Graceful shutdown、Actuator probes、Gateway 请求日志、显式降级来源 |
-| 运维接口 | 系统健康、Outbox backlog、Outbox replay、推荐降级概览 |
-| 前端工程化 | Vue Router、内存 Access Token、HttpOnly Refresh Cookie、统一响应和幂等写请求 |
-| 可观测 | Prometheus alerts、Grafana dashboard、Jaeger OTLP endpoint |
-| 产品指标 | WMRU 北极星、阅读/解谜/创作漏斗、留存与数据质量口径 |
-
-## 模块
-
-- `dc-gateway`: 统一入口、TraceId、JWT 鉴权、角色拦截、限流、用户上下文透传、请求日志。
-- `dc-identity`: 生产 Identity 部署单元；进程内承载认证、用户、互动、通知和个人仪表盘。旧独立服务仅作为显式 rollback 镜像保留。
-- `dc-content-deployment`: Content 生产部署单元；当前进程内承载 `dc-content` 与 `dc-file`，评论和治理继续使用兼容服务。
-- `dc-discovery`: Discovery 生产边界；第一阶段在该进程内承载 `dc-search` Search 代码模块，实验能力继续兼容聚合。推荐不是 Discovery 的内嵌能力，而是独立的 `dc-recommend` 进程，由 Gateway 直接路由。
-- `dc-auth`: 邮箱密码登录、Refresh Token 轮换、GitHub OAuth、审计日志；逻辑 producer、schema 和 Maven 模块保留，由 `dc-identity` 进程承载，独立可执行镜像仅用于 legacy auth rollback。
-- `dc-user`: 关注关系、共同关注、二跳推荐。
-- `dc-content`: 主题内容、详情、相关内容、推理解谜、审核状态、Outbox。
-- `dc-interaction`: 点赞、收藏、幂等写入、Redis 热度信号。
-- `dc-search`: 保留的 Search 领域模块；正常生产由 `dc-discovery` 进程承载，独立进程仅用于 [`legacy-search rollback Compose`](deploy/compose/docker-compose.legacy-search-rollback.yml)。
-- `dc-recommend`: 可解释固定权重规则、候选召回、曝光去重、推荐实验。
-- `dc-notification`: Notification 兼容模块与 one-version rollback 可执行镜像；默认生产仍独立部署。通过证据门禁后显式应用 [`Notification Identity cutover Compose`](deploy/compose/docker-compose.notification-identity-cutover.yml)，才会将 exactly-one ownership 切换到 Identity；legacy rollback 则恢复 standalone Notification。
-
-Notification 切流发布必须经 `scripts/ops/deploy-production.sh`，它会在启用 Identity owner 前停止并删除可能残留的 standalone 容器，并用 `--remove-orphans` 收敛拓扑。每个切流 SHA 同时产出 socket-enabled `web-notification-cutover:${CUTOVER_ASSET_TAG}` 与 socket-disabled `web-notification-standalone:${ROLLBACK_ASSET_TAG}`；one-version 回滚不能假设上一业务 SHA 已包含这组资产。
-- `dc-file`: MinIO 上传、媒体元数据、上传安全校验。
-- `dc-admin`: 内容治理、风险运营、推荐实验、审计日志、工程运维接口。
-- `web`: MysticVerse 路由化前台与独立运营入口。
-
-## 当前部署收口状态
-
-生产 Compose 的认证路由为 `Gateway /api/auth/** → dc-identity:8201`，`/api/me/**` 也由 `dc-identity` 处理；用户、互动和通知请求仍分别路由至其兼容服务。认证逻辑、事件 producer 名称 `dc-auth`、认证 schema 与 Flyway 迁移、以及 `dc-auth` Maven 模块继续保留，变化的是生产执行载体而不是认证领域契约。
-
-独立的 `dc-auth` 可执行镜像不属于正常生产拓扑；仅在 [legacy auth rollback Compose](deploy/compose/docker-compose.legacy-auth-rollback.yml) 中用于短期回滚。该覆盖文件会将 Gateway 与管理端的认证上游切回 `dc-auth:8101`，回滚结束后应恢复 `dc-identity` 路由。
-
-生产推荐路由为 `Gateway /api/recommend/** → dc-recommend:8107`；`dc-recommend` 是独立进程，推荐运行时未嵌入 `dc-discovery`。Search 路由为 `Gateway /api/search/** → dc-discovery:8203`，其中由 Discovery 进程承载 `dc-search` 代码模块。
-
-生产内容路由为 `Gateway → dc-content-aggregate:8202`。该 JVM 直接承载 Content 与 File 代码、各自独立的 Flyway 历史和逻辑 Outbox producer `dc-content`；独立 `dc-content` 与 `dc-file` 镜像仅用于 [legacy content rollback Compose](deploy/compose/docker-compose.legacy-content-rollback.yml)。公开内容响应不返回存储桶对象 URL，浏览器必须通过 `/api/files/access` 取得短期读取地址。
-
-生产静态资源预算当前为 20 个 Compose 服务、12.62 GiB 容器内存上限，仅 Web 和 Gateway 向宿主机发布端口。该数字是配置门禁结果，不是 Linux 实际运行、容量或可用性证明。2026-08-15 已在 Windows Docker Desktop 上通过当前聚合拓扑的 Testcontainers、Content/Community/Search Compose E2E 及 Kafka/Elasticsearch 恢复切片；目标 Linux 性能/全量恢复、Helm 实际部署和 Cosign Registry 验签仍未验证，详见 [容器恢复证据](docs/evidence/2026-08-15-aggregate-docker-recovery.md)。
-
-## 本地启动
-
-准备环境：
+完整 Demo 会启动数据库、消息、搜索、对象存储、可观测组件和应用服务。建议准备 Docker Desktop、JDK 21、Node.js 与至少 16 GB 可用内存。
 
 ```powershell
+git clone https://github.com/wangyufanshuai/DevCircle.git
+cd DevCircle
 Copy-Item .env.example .env
 .\scripts\dev\doctor.ps1
-```
-
-只启动基础设施：
-
-```powershell
 .\scripts\dev\up-infra.ps1
-```
-
-编译后启动完整 demo：
-
-```powershell
 .\scripts\dev\compile-build.ps1
 .\scripts\dev\up-demo.ps1 -Build
 ```
 
-停止：
+访问：
+
+- MysticVerse：<http://localhost:5501>
+- API Gateway：<http://localhost:8080>
+- Prometheus：<http://localhost:19090>
+- Grafana：<http://localhost:13000>
+- Jaeger：<http://localhost:16686>
+
+停止环境：
 
 ```powershell
 .\scripts\dev\down.ps1
 ```
 
-访问：
+如果只想研究后端，可以停在 `up-infra.ps1` 后，从 IDE 分别启动所需模块。完整环境、profile 与常见故障见 [云服务器 Docker 部署](./docs/deployment-cloud-docker.md)。
 
-- 前端：`http://localhost:5501`
-- Gateway：`http://localhost:8080`
-- Prometheus：`http://localhost:19090`
-- Grafana：`http://localhost:13000`
-- Jaeger：`http://localhost:16686`
+## 认证与媒体安全
 
-## 认证与前端配置
+- 邮箱密码与 GitHub OAuth；Demo Token 和 Mock 登录降级已经删除。
+- Access Token 只驻留前端内存；Refresh Token 使用 Secure、HttpOnly Cookie。
+- Gateway 负责真实 JWT 校验、角色拦截、TraceId、限流与用户上下文透传。
+- 公开内容响应只返回媒体元数据；浏览器通过 `/api/files/access` 获取短期读取地址。
+- `/internal/**` 不经外部 Gateway 暴露，运维汇总接口使用独立内部密钥。
+- 生产 Helm values 要求强随机密钥、Secure Cookie 与非可选 Secret 引用。
 
-Demo Token、前端本地 Token 和 Mock fallback 已删除。使用邮箱密码注册/登录或 GitHub OAuth；Access Token 只驻留内存，Refresh Token 使用 Secure、HttpOnly Cookie。前端只需要配置 API 地址：
+前端只需配置入口与通知通道：
 
-```bash
+```env
 VITE_API_BASE_URL=http://localhost:8080
 VITE_NOTIFICATION_SOCKET_ENABLED=false
 ```
 
-生产部署使用固定提交 SHA 与强随机密钥，详见 [生产运行手册](docs/production-runbook.md)。Helm 生产 values 对 Identity 强制 `AUTH_COOKIE_SECURE=true`、从 `publicOrigin` 推导前端与 GitHub 回调地址，并要求 GitHub 凭证和内部运维密钥来自非可选 Kubernetes Secret 引用。values 映射不完整或由 Chart 创建的 Secret 缺少必需键时 render 失败；引用外部 `existingSecret` 时，Helm render 无法验证 Secret 或键是否真实存在，缺失会因 `optional: false` 在 Pod 启动阶段失败。
+安全细节见 [OAuth2 与安全](./docs/oauth2-security.md)。
 
-## 本轮验证边界
-
-当前版本恢复本地全量验收：
+## 验证
 
 ```powershell
 .\mvnw.cmd -B test
 cd web
+npm ci
 npm run build
 npx playwright test
+cd ..
 helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-dev.yaml
 helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-prod.yaml
 docker compose --profile infra config
 docker compose --profile demo config
 ```
 
-验收结论记录在 [本地验收报告](docs/acceptance-report.md)。
+CI 还执行安全检查与依赖治理。Windows Docker Desktop 已验证聚合拓扑的 Testcontainers、内容/社区/搜索 E2E，以及 Kafka/Elasticsearch 恢复切片；这不等价于目标 Linux 的容量、全量恢复、Helm 实际部署或 Cosign Registry 验签。证据边界见 [工程就绪说明](./docs/engineering-readiness.md) 与 [验收报告](./docs/acceptance-report.md)。
 
-## 文档
+## 项目结构
 
-- [工程化就绪说明](docs/engineering-readiness.md)
-- [本地验收报告](docs/acceptance-report.md)
-- [技术说明](docs/technical-specification.md)
-- [主题平台](docs/theme-platform.md)
-- [内容治理平台](docs/governance-platform.md)
-- [推荐实验平台](docs/recommendation-experiment.md)
-- [云服务器 Docker 部署](docs/deployment-cloud-docker.md)
-- [压测报告](docs/performance-report.md)
-- [服务等级目标](docs/service-level-objectives.md)
-- [可观测告警运行手册](docs/observability-runbook.md)
-- [OAuth2 与安全](docs/oauth2-security.md)
-- [推荐系统](docs/ml-recommendation.md)
+```text
+dc-gateway/              统一入口、鉴权、路由、限流与日志
+dc-identity/             聚合身份与个人域的生产部署单元
+dc-content-deployment/   Content + File 生产部署单元
+dc-discovery/            Search / discovery 生产边界
+dc-recommend/            独立推荐与实验进程
+dc-*/                    领域模块与兼容/回滚镜像
+web/                     MysticVerse 前台与运营端
+deploy/                  Compose overlay、Helm 与回滚拓扑
+scripts/                 开发、验收、运维与发布脚本
+docs/                    架构、SLO、安全、实验和运行手册
+```
+
+## 文档地图
+
+- [架构说明](./docs/architecture.md) — 服务边界、Outbox、搜索、推荐与数据流。
+- [技术规格](./docs/technical-specification.md) — 组件与接口细节。
+- [生产运行手册](./docs/production-runbook.md) — 配置、密钥、发布和恢复。
+- [可观测运行手册](./docs/observability-runbook.md) — 指标、告警与排障。
+- [服务等级目标](./docs/service-level-objectives.md) — SLI/SLO 与错误预算。
+- [内容治理](./docs/governance-platform.md) — 审核、风险与运营边界。
+- [推荐实验](./docs/recommendation-experiment.md) — 分桶、指标和实验生命周期。
+- [性能报告](./docs/performance-report.md) — 压测方法与结果边界。
+- [恢复演练](./docs/recovery-rehearsal.md) — 依赖故障和数据恢复。
+
+## 当前方向
+
+这个项目已经不需要继续拆更多服务。下一阶段更有价值的是：统一 `MysticVerse` 的品牌与仓库元数据；提供只启动核心阅读/解谜链路的 Lite Demo；完成目标 Linux 的真实性能与恢复演练；用真实用户指标验证主题社区是否形成阅读—解谜—创作闭环。
+
+Apache License 2.0，详见 [LICENSE](./LICENSE)。
