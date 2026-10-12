@@ -6,7 +6,7 @@ from pathlib import Path
 
 REQUIRED = {
     "backend", "frontend", "real-auth-e2e", "real-content-e2e",
-    "real-review-e2e", "real-community-e2e", "delivery", "source-sbom", "test-storage",
+    "real-review-e2e", "real-community-e2e", "delivery", "source-sbom", "test-storage", "local-core",
 }
 
 

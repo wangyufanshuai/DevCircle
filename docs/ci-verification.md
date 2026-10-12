@@ -10,7 +10,7 @@ GitHub 的手动入口要求工作流在默认分支存在并包含相应事件�
 
 ## 通过条件
 
-必需汇总检查为 **Required verification**，要求下面九项全部成功；缺失、失败、跳过或取消均失败：
+必需汇总检查为 **Required verification**，要求下面十项全部成功；缺失、失败、跳过或取消均失败：
 
 1. backend：Java 21、完整 `verify -Pcoverage`、迁移版本、行覆盖率 75% / 分支覆盖率 70%、关键状态类 85% 分支、零跳过。
 2. frontend：依赖审计、构建、默认及 Notification WebSocket Playwright、Lighthouse。
@@ -21,6 +21,7 @@ GitHub 的手动入口要求工作流在默认分支存在并包含相应事件�
 7. delivery：脚本契约、Compose、Helm、监控及资源门禁。
 8. source-sbom：Java 与 Web 软件物料清单。
 9. test-storage：从固定的 MinIO 官方源码提交构建真实测试镜像，供 backend 和三条对象存储 E2E 复用。
+10. local-core：复用测试镜像执行两轮核心切片启动、保留数据检查、并发及权限反例，上传资源报告。Linux runner 结果与 Windows 本机结果分别记录。
 
 汇总检查写入提交 SHA、触发事件、ref 和各任务结果。它便于配置分支保护，但本次工作流修改不等于已经在 GitHub Settings 启用了必需状态检查。发布任务还需通过各自签名、证明、扫描等步骤。
 

@@ -243,6 +243,8 @@ jobs:
       - run: bash scripts/ops/test-backup-restore.sh
       - run: bash scripts/ops/test-verify-image-identity.sh
       - run: python -m unittest scripts/ops/test_ci_results.py
+      - run: python -m unittest scripts/ops/test_local_workflow.py
+      - run: docker compose -p devcircle-local-core -f docker-compose.e2e.yml -f deploy/compose/docker-compose.local.yml --profile review config --quiet
       - run: python -m unittest scripts/ops/test_notification_cutover_contract.py
       - run: helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-dev.yaml
       - run: helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-prod.yaml --set image.tag=0123456789abcdef0123456789abcdef01234567
@@ -328,6 +330,38 @@ jobs:
             web/bom.json
           if-no-files-found: error
 
+  local-core:
+    needs: test-storage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: minio-test-image-${{ github.sha }}
+          path: ${{ runner.temp }}/minio-test
+      - run: docker load -i "${{ runner.temp }}/minio-test/minio-test-image.tar.gz"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: python scripts/dev/local.py verify
+      - if: always()
+        run: python scripts/dev/local.py down
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: always()
+        with:
+          name: local-core-${{ github.sha }}
+          path: artifacts/local/
+          retention-days: 7
+          if-no-files-found: error
+
   verification:
     name: Required verification
     if: always()
@@ -337,6 +371,7 @@ jobs:
       - test-storage
       - backend
       - frontend
+      - local-core
       - real-auth-e2e
       - real-content-e2e
       - real-review-e2e

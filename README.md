@@ -77,7 +77,7 @@ Maven 领域模块与生产 JVM 不是一一对应：
 ### 故障不是一句“最终一致”
 
 - Outbox 有租约、退避、最大尝试、`DEAD` 状态和受控 replay。
-- 搜索投影使用 `(occurredAtMillis, eventId)` 单调版本，旧事件不能覆盖新状态。
+- 搜索投影按 `(occurredAtMillis, eventId)` 拒绝较旧排序键；同毫秒随机 UUID 的排序不等于业务因果顺序，仍需迁移到聚合版本。
 - 评论、点赞等计数带生产者版本，乱序消息不会让计数倒退。
 - 同步依赖使用有界连接/读取超时，失败交给错误响应、重试或 DLT，而不是无限占用线程。
 - Notification cutover 明确保证 Flyway、consumer、topic admin、API 与 WebSocket 的 exactly-one ownership。
@@ -94,6 +94,20 @@ Maven 领域模块与生产 JVM 不是一一对应：
 | 质量 | JUnit 5、Testcontainers、Playwright、k6、Helm lint |
 
 ## ⚡ 本地运行
+
+只有一台电脑时，优先使用核心业务切片（9 个容器，声明内存上限合计 2.0625 GiB）：
+
+```powershell
+.\scripts\dev\local.ps1 quick   # 不启动容器的快测
+.\scripts\dev\local.ps1 up      # 构建并启动核心链路
+.\scripts\dev\local.ps1 verify  # 两轮保留数据的重启、业务反例和资源采样
+.\scripts\dev\local.ps1 down    # 停止核心切片，保留数据卷
+.\scripts\dev\local.ps1 accept  # 串行完整软件验收；先停止核心切片
+```
+
+前置依赖：JDK 21、Node.js、Python 3.10+、Git 和 Docker Compose 2.24.4+。页面入口为 <http://127.0.0.1:5512>。容器上限不包含 Windows、Docker 虚拟机和构建开销；入口会检查主机剩余内存。启动过程中会创建标记为 `local-*` 的合成测试账号和内容。完整说明见 [本机工作流](./docs/local-workflows.md)，反例与验收边界见 [业务不变量](./docs/business-invariants.md)。
+
+### 完整 Demo（资源充足时）
 
 完整 Demo 会启动数据库、消息、搜索、对象存储、可观测组件和应用服务。建议准备 Docker Desktop、JDK 21、Node.js 与至少 16 GB 可用内存。
 

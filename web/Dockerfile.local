@@ -1,0 +1,6 @@
+# Build web/dist with npm run build before building this local-only image.
+FROM nginx:1.29-alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Preserve the loopback port in the signed S3 Host header.
+RUN sed -i 's/proxy_set_header Host $host;/proxy_set_header Host $http_host;/g' /etc/nginx/conf.d/default.conf
+COPY dist/ /usr/share/nginx/html/

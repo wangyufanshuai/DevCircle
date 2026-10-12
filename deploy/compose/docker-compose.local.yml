@@ -1,0 +1,33 @@
+# Dedicated loopback-only, persistent core slice; never apply to production.
+services:
+  minio:
+    image: devcircle-minio-test:07c3a429bfed433e49018cb0f78a52145d4bedeb
+    ports: !override ["127.0.0.1:29000:9000"]
+    volumes: [local-minio:/data]
+  dc-gateway:
+    ports: !override ["127.0.0.1:28080:8080"]
+  dc-identity:
+    environment:
+      SPRING_APPLICATION_JSON: '{"devcircle":{"notification-runtime":{"allowed-origin":"http://127.0.0.1:5512"}}}'
+  dc-content-aggregate:
+    environment:
+      S3_PRESIGN_ENDPOINT: http://127.0.0.1:5512
+      S3_PUBLIC_BASE_URL: http://127.0.0.1:5512/devcircle
+  web-local:
+    image: devcircle-web-local:core
+    build:
+      context: ./web
+      dockerfile: Dockerfile.local
+    ports: ["127.0.0.1:5512:80"]
+    mem_limit: 64m
+    networks: [e2e]
+    depends_on:
+      dc-gateway: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+volumes:
+  local-minio:

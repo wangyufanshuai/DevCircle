@@ -36,10 +36,13 @@ if (Test-Path ".env") {
 }
 
 docker info *> $null
+if ($LASTEXITCODE -ne 0) { throw "Docker engine is not reachable; start Docker Desktop before container workflows." }
 Write-Host "[ok] Docker engine is reachable"
 
 docker compose --profile infra config *> $null
+if ($LASTEXITCODE -ne 0) { throw "Docker Compose infra configuration is invalid." }
 Write-Host "[ok] docker compose infra config is valid"
 
 docker compose --profile demo config *> $null
+if ($LASTEXITCODE -ne 0) { throw "Docker Compose demo configuration is invalid." }
 Write-Host "[ok] docker compose demo config is valid"
