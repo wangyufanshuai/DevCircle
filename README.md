@@ -97,6 +97,8 @@ Maven 领域模块与生产 JVM 不是一一对应：
 
 完整 Demo 会启动数据库、消息、搜索、对象存储、可观测组件和应用服务。建议准备 Docker Desktop、JDK 21、Node.js 与至少 16 GB 可用内存。
 
+目前旧 MinIO 官方镜像已无法从公共仓库拉取；以下完整 Demo 命令仍依赖已有镜像缓存。清洁环境的真实集成测试使用 CI 从固定官方源码构建的测试镜像，具体步骤与适用边界见 [CI 验证说明](./docs/ci-verification.md#minio-测试依赖)。完整 Demo / 生产镜像分发的后续迁移尚未完成。
+
 ```powershell
 git clone --branch overhaul/mysticverse-production https://github.com/wangyufanshuai/DevCircle.git
 cd DevCircle

@@ -55,7 +55,8 @@ services:
     networks: [e2e]
     mem_limit: 384m
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      # The initialization server only accepts Unix sockets. Wait for final TCP service.
+      test: ["CMD-SHELL", "mysql --protocol=TCP -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD -e 'SELECT 1' >/dev/null"]
       interval: 5s
       timeout: 5s
       retries: 24
