@@ -4,9 +4,11 @@
 
 DevCircle 使用按业务域拆分、兼容聚合的微服务结构。Gateway 负责统一入口、路由、TraceId、真实 JWT 校验和幂等键约束；业务服务分别承载认证、用户、内容、评论、互动、搜索、推荐、通知、文件和管理端能力。部署边界与 Maven 领域模块是两个维度：`dc-search` 领域代码由 `dc-discovery` 进程承载，`dc-auth` 由 `dc-identity` 进程承载，`dc-content` 与 `dc-file` 由 `dc-content-aggregate` 进程承载；逻辑 producer、schema、迁移和 Maven 模块继续保留，旧的独立可执行进程只用于对应的 legacy rollback Compose。
 
+默认部署清单与资源口径见 [生产拓扑](production-topology.md)。
+
 ## 数据流
 
-用户发布帖子后，`dc-content-aggregate` 内的 Content runtime 写入帖子数据，并在同一个本地事务内写入逻辑来源仍为 `dc-content` 的 `outbox_event`。同一 JVM 内的 File runtime 使用独立 `flyway_schema_history_file` 管理媒体表迁移。后台发布任务将事件发送到 Kafka，`dc-discovery` 内嵌 Search runtime 同步 Elasticsearch；`dc-identity` 内嵌 Notification runtime 消费审核和互动事件、写入站内信并提供安全 WebSocket 刷新信号。推荐仍由独立 `dc-recommend` 承载。
+用户发布帖子后，`dc-content-aggregate` 内的 Content runtime 写入帖子数据，并在同一个本地事务内写入逻辑来源仍为 `dc-content` 的 `outbox_event`。同一 JVM 内的 File runtime 使用独立 `flyway_schema_history_file` 管理媒体表迁移。后台发布任务将事件发送到 Kafka，`dc-discovery` 内嵌 Search runtime 同步 Elasticsearch；默认独立 `dc-notification` 消费审核和互动事件、写入站内信并提供安全 WebSocket 刷新信号。推荐仍由独立 `dc-recommend` 承载。
 
 默认生产由 standalone `dc-notification` 拥有 Notification API、Flyway、Kafka consumer、topic admin 与 WebSocket。通过证据门禁后显式应用 `deploy/compose/docker-compose.notification-identity-cutover.yml`，才会将这五项 exactly-one ownership 切换到 Identity。`deploy/compose/docker-compose.legacy-notification-rollback.yml` 是 one-version 回退面：它关闭 Identity 五项所有权，并恢复 standalone Notification、Gateway 上游、socket-disabled Web 镜像和独立 Prometheus 抓取，防止双迁移或双消费。
 
@@ -28,7 +30,7 @@ Outbox 批量大小、最大尝试次数和发送等待分别受 `DEVCIRCLE_OUTB
 
 Admin 不再以自身连接的内容库代表全局 Outbox。Auth、User、Content、Comment、Interaction 通过 Docker 内网精确暴露 `GET /internal/ops/outbox/status`，使用共享内部运维密钥并做常量时间比较；Gateway 不路由 `/internal/**`。Admin 以虚拟线程并行、1 秒连接与 2 秒读取超时汇总五域，返回 `outboxScope=FLEET`。任何来源缺失都会显式产生 `outboxComplete=false` 和 `OUTBOX_SOURCE_UNAVAILABLE`；只有 Admin 自身数据库不可用时，数据库故障原因才优先于 fleet 原因。
 
-生产 `aggregate` Gateway 将内容、评论、媒体和审核请求统一路由到 `dc-content-aggregate`。内容与媒体在该进程内执行；评论和审核仍通过内网兼容服务协作，不允许被外部 Gateway 直接绕过。公开内容只携带媒体元数据，短期对象读取 URL 由 File runtime 在权限校验后单独签发。
+生产 `aggregate` Gateway 将内容与媒体请求路由到 `dc-content-aggregate`，评论请求直接路由到独立 `dc-comment`，审核及管理请求直接路由到独立 `dc-admin`。Comment 的内嵌 runtime 默认关闭；各服务仍由 Gateway 统一鉴权入口访问。公开内容只携带媒体元数据，短期对象读取 URL 由 File runtime 在权限校验后单独签发。
 
 ## 关键索引
 

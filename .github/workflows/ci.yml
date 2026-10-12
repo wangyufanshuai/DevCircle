@@ -2,19 +2,21 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, overhaul/mysticverse-production ]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
-  packages: write
-  security-events: write
-  id-token: write
-  attestations: write
 
 jobs:
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -30,18 +32,21 @@ jobs:
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         if: always()
         with:
-          name: surefire-reports
+          name: surefire-reports-${{ github.sha }}
+          retention-days: 7
           path: "**/target/surefire-reports/*"
           if-no-files-found: ignore
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         if: always()
         with:
-          name: jacoco-reports
+          name: jacoco-reports-${{ github.sha }}
+          retention-days: 7
           path: "**/target/site/jacoco/**"
           if-no-files-found: ignore
 
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -67,6 +72,7 @@ jobs:
 
   real-auth-e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -87,12 +93,14 @@ jobs:
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         if: failure()
         with:
-          name: real-auth-e2e-artifacts
+          name: real-auth-e2e-artifacts-${{ github.sha }}
+          retention-days: 7
           path: web/test-results/**
           if-no-files-found: ignore
 
   real-content-e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -113,12 +121,14 @@ jobs:
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         if: failure()
         with:
-          name: real-content-e2e-artifacts
+          name: real-content-e2e-artifacts-${{ github.sha }}
+          retention-days: 7
           path: web/test-results/**
           if-no-files-found: ignore
 
   real-review-e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -139,12 +149,14 @@ jobs:
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         if: failure()
         with:
-          name: real-review-e2e-artifacts
+          name: real-review-e2e-artifacts-${{ github.sha }}
+          retention-days: 7
           path: web/test-results/**
           if-no-files-found: ignore
 
   real-community-e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -165,12 +177,14 @@ jobs:
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         if: failure()
         with:
-          name: real-community-e2e-artifacts
+          name: real-community-e2e-artifacts-${{ github.sha }}
+          retention-days: 7
           path: web/test-results/**
           if-no-files-found: ignore
 
   delivery:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
@@ -180,6 +194,7 @@ jobs:
       - run: bash scripts/ops/test-production-compose-env-precedence.sh
       - run: bash scripts/ops/test-backup-restore.sh
       - run: bash scripts/ops/test-verify-image-identity.sh
+      - run: python -m unittest scripts/ops/test_ci_results.py
       - run: python -m unittest scripts/ops/test_notification_cutover_contract.py
       - run: helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-dev.yaml
       - run: helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-prod.yaml --set image.tag=0123456789abcdef0123456789abcdef01234567
@@ -236,6 +251,7 @@ jobs:
 
   source-sbom:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -257,16 +273,45 @@ jobs:
         working-directory: web
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: source-sbom
+          name: source-sbom-${{ github.sha }}
+          retention-days: 7
           path: |
             target/bom.json
             web/bom.json
           if-no-files-found: error
 
-  images:
-    if: github.event_name == 'push'
+  verification:
+    name: Required verification
+    if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs:
+      - backend
+      - frontend
+      - real-auth-e2e
+      - real-content-e2e
+      - real-review-e2e
+      - real-community-e2e
+      - delivery
+      - source-sbom
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Require every verification job to succeed
+        env:
+          CI_RESULTS: ${{ toJSON(needs) }}
+        run: python scripts/ops/assert-ci-results.py
+
+  images:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs:
+      - verification
       - backend
       - frontend
       - real-auth-e2e
@@ -356,9 +401,16 @@ jobs:
           exit-code: "1"
 
   web-image:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs:
+      - verification
       - frontend
       - real-auth-e2e
       - real-content-e2e

@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/wangyufanshuai/DevCircle/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/wangyufanshuai/DevCircle/actions/workflows/ci.yml/badge.svg" /></a>
+  <a href="https://github.com/wangyufanshuai/DevCircle/actions/workflows/ci.yml?query=branch%3Aoverhaul%2Fmysticverse-production"><img alt="CI" src="https://github.com/wangyufanshuai/DevCircle/actions/workflows/ci.yml/badge.svg?branch=overhaul%2Fmysticverse-production" /></a>
   <img alt="Java 21" src="https://img.shields.io/badge/Java-21-ed8b00?style=flat-square&logo=openjdk&logoColor=white" />
   <img alt="Spring Boot 4" src="https://img.shields.io/badge/Spring%20Boot-4.0-6db33f?style=flat-square&logo=springboot&logoColor=white" />
   <img alt="Vue 3" src="https://img.shields.io/badge/Vue-3-42b883?style=flat-square&logo=vuedotjs&logoColor=white" />
@@ -67,12 +67,12 @@ flowchart LR
 
 Maven 领域模块与生产 JVM 不是一一对应：
 
-- `dc-identity` 承载认证、用户、互动、通知与个人仪表盘相关生产能力。
+- `dc-identity` 默认承载认证、用户、互动与个人仪表盘；通知默认由独立 `dc-notification` 承载，迁入 Identity 必须通过门禁并显式应用 cutover overlay。
 - `dc-content-deployment` 聚合 Content 与 File，同时保留独立 schema、Flyway 历史与逻辑 producer。
 - `dc-discovery` 承载 Search 代码模块；`dc-recommend` 保持独立进程与独立实验边界。
 - 旧 `dc-auth`、`dc-search`、`dc-content`、`dc-file` 等独立镜像作为明确的一版本 rollback 面保留，不属于默认生产拓扑。
 
-这既保留领域隔离，也避免为了“微服务数量”承担不必要的进程、连接池和运维成本。
+默认服务、端口、资源与运行职责统一见 [生产拓扑](./docs/production-topology.md)。Maven 模块数不等于实际 JVM 数。
 
 ### 故障不是一句“最终一致”
 
@@ -98,7 +98,7 @@ Maven 领域模块与生产 JVM 不是一一对应：
 完整 Demo 会启动数据库、消息、搜索、对象存储、可观测组件和应用服务。建议准备 Docker Desktop、JDK 21、Node.js 与至少 16 GB 可用内存。
 
 ```powershell
-git clone https://github.com/wangyufanshuai/DevCircle.git
+git clone --branch overhaul/mysticverse-production https://github.com/wangyufanshuai/DevCircle.git
 cd DevCircle
 Copy-Item .env.example .env
 .\scripts\dev\doctor.ps1
@@ -148,15 +148,17 @@ VITE_NOTIFICATION_SOCKET_ENABLED=false
 cd web
 npm ci
 npm run build
-npx playwright test
+npm run test:e2e
 cd ..
 helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-dev.yaml
-helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-prod.yaml
+helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-prod.yaml --set image.tag=0123456789abcdef0123456789abcdef01234567
 docker compose --profile infra config
 docker compose --profile demo config
 ```
 
-CI 还执行安全检查与依赖治理。Windows Docker Desktop 已验证聚合拓扑的 Testcontainers、内容/社区/搜索 E2E，以及 Kafka/Elasticsearch 恢复切片；这不等价于目标 Linux 的容量、全量恢复、Helm 实际部署或 Cosign Registry 验签。证据边界见 [工程就绪说明](./docs/engineering-readiness.md) 与 [验收报告](./docs/acceptance-report.md)。
+CI 对 `main`、`overhaul/mysticverse-production` 推送和 PR 执行验证，也声明了手动入口；只有 `main` 推送允许发布镜像。手动入口的默认分支要求、必需检查与证据查阅见 [CI 验证说明](./docs/ci-verification.md)。本机 `test` 在 Docker 不可用时可能跳过集成测试；完整验收还要求 coverage 和零跳过门禁。
+
+2026-08-15 的历史记录中，Windows Docker Desktop 已验证聚合拓扑的 Testcontainers、内容/社区/搜索 E2E，以及 Kafka/Elasticsearch 恢复切片；这不等价于目标 Linux 的容量、全量恢复、Helm 实际部署或 Cosign Registry 验签。证据边界见 [工程就绪说明](./docs/engineering-readiness.md) 与 [验收报告](./docs/acceptance-report.md)。
 
 ## 项目结构
 

@@ -15,15 +15,17 @@
 ```bash
 chmod +x scripts/ops/*.sh
 scripts/ops/validate-production-env.sh .env.production
-docker compose --env-file .env.production -f docker-compose.prod.yml config --quiet
+bash scripts/ops/production-compose.sh .env.production -f docker-compose.prod.yml config --quiet
 python scripts/ops/assert-production-resource-budgets.py --env-file .env.production
-docker compose --env-file .env.production -f docker-compose.prod.yml pull
+bash scripts/ops/production-compose.sh .env.production -f docker-compose.prod.yml pull
 scripts/ops/verify-release-identity.sh .env.production
-docker compose --env-file .env.production -f docker-compose.prod.yml up -d mysql redis kafka elasticsearch minio
-docker compose --env-file .env.production -f docker-compose.prod.yml up -d
+bash scripts/ops/production-compose.sh .env.production -f docker-compose.prod.yml up -d mysql redis kafka elasticsearch minio
+bash scripts/ops/production-compose.sh .env.production -f docker-compose.prod.yml up -d
 ```
 
-生产 Compose 当前声明20个服务，容器内存上限合计约12.62 GiB；只有 `web` 与 `dc-gateway` 对宿主机发布端口，其中 `dc-gateway` 仅绑定回环地址。JVM 进程数以当前 Compose 实际启用的服务为准，不得按 Maven 模块数推算；Java 服务单实例限制为512 MiB、0.75 CPU和256个 PID，Java 最大堆按容器内存的60%计算；数据库连接池默认每服务最多8个连接。生产认证由 `dc-identity` 进程内的 Auth runtime 承载；内容与媒体由 `dc-content-aggregate` 进程内的 Content/File runtime 承载；Search 由 `dc-discovery` 进程承载。独立 Auth、Content、File 和 Search 镜像仅用于对应 legacy rollback，不属于常规生产拓扑。Gateway 将 `/api/recommend/**` 直接路由到独立 `dc-recommend`，推荐尚未嵌入 Discovery。全部生产容器统一使用 `json-file` 日志驱动，每个日志文件最多20 MiB并保留5份；资源门禁会拒绝任何服务缺少该轮转契约。内部 Prometheus 保留35天/最多1GB指标，Alertmanager使用宿主机私有路由配置，Jaeger使用持久化Badger存储。该预算是防止资源失控的上限，不代表性能验收已经通过；发布前仍必须执行50并发 k6 和目标主机观测。当前证据仅覆盖 Windows 非容器回归和 Compose 静态解析，未验证 Docker 实际启动、Testcontainers、真实 Compose、Helm 集群部署、目标 Linux 性能/恢复或 Cosign Registry 验签；这些检查必须在对应环境和当前镜像 SHA 上重新执行。
+默认生产的服务、资源、入口与运行职责以 [生产拓扑](production-topology.md) 为准：18 个默认服务、8 个 JVM，容器声明内存上限合计 11.625 GiB。只有 `web` 与回环绑定的 `dc-gateway` 发布宿主机端口；默认 Notification 仍由独立进程负责。应用默认 512 MiB、0.75 CPU、256 PID；Identity 和 Content 聚合的连接池有独立预算，不能按一个领域模块一个连接池上限推算。全部生产容器使用 `json-file` 日志轮转，每文件 20 MiB、保留 5 份；Prometheus 保留 35 天/最多 1 GB，Alertmanager 使用私有路由配置，Jaeger 使用持久化 Badger。
+
+历史上已完成 Windows Docker Desktop 的真实 Testcontainers、Compose E2E 和 MySQL/MinIO 恢复切片，见 [2026-08-15 证据](evidence/2026-08-15-aggregate-docker-recovery.md)。目标 Linux 的性能、全业务恢复、Helm 集群部署与 Cosign Registry 验签尚不能由该记录证明。当前提交的 CI 状态须按 [CI 验证说明](ci-verification.md) 核对；容器内存上限不是实测占用或容量验收结果。
 
 生产编排发布 Caddy Web 的 80/443，并仅把 Gateway 的 8080 绑定到宿主机 `127.0.0.1`，供本机诊断使用。公网 API 统一经过 Caddy 与 Web Nginx 转发；MySQL、Redis、Kafka、Elasticsearch、MinIO、Gateway Actuator 与领域服务均不能从公网直接访问。Caddy 管理 API 同样只监听容器内 localhost。
 
