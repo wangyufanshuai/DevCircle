@@ -10,7 +10,7 @@ GitHub 的手动入口要求工作流在默认分支存在并包含相应事件�
 
 ## 通过条件
 
-必需汇总检查为 **Required verification**，要求下面八项全部成功；缺失、失败、跳过或取消均失败：
+必需汇总检查为 **Required verification**，要求下面九项全部成功；缺失、失败、跳过或取消均失败：
 
 1. backend：Java 21、完整 `verify -Pcoverage`、迁移版本、行覆盖率 75% / 分支覆盖率 70%、关键状态类 85% 分支、零跳过。
 2. frontend：依赖审计、构建、默认及 Notification WebSocket Playwright、Lighthouse。
@@ -20,6 +20,7 @@ GitHub 的手动入口要求工作流在默认分支存在并包含相应事件�
 6. real-community-e2e：真实社区链路。
 7. delivery：脚本契约、Compose、Helm、监控及资源门禁。
 8. source-sbom：Java 与 Web 软件物料清单。
+9. test-storage：从固定的 MinIO 官方源码提交构建真实测试镜像，供 backend 和三条对象存储 E2E 复用。
 
 汇总检查写入提交 SHA、触发事件、ref 和各任务结果。它便于配置分支保护，但本次工作流修改不等于已经在 GitHub Settings 启用了必需状态检查。发布任务还需通过各自签名、证明、扫描等步骤。
 
@@ -50,3 +51,9 @@ python scripts/ops/assert_migration_versions.py
 本机没有 Docker Engine 时，普通 Maven `test` 可能输出 BUILD SUCCESS，同时跳过真实依赖测试；该结果只算有限验证。CI 保留零跳过门禁，不以 H2 或模拟依赖替代完整容器验收。
 
 历史完整容器记录见 [2026-08-15 证据](evidence/2026-08-15-aggregate-docker-recovery.md)。Linux CI 通过仍不等于目标主机容量、全业务恢复、OAuth Provider、Helm 集群运行或公网生产验收通过。
+
+## MinIO 测试依赖
+
+2026-10-12 的首次远端运行证实旧 `minio/minio` 镜像无法拉取。CI 通过 `deploy/ci/Dockerfile.minio` 从官方 `RELEASE.2025-09-07T16-13-09Z` 对应提交 `07c3a429bfed433e49018cb0f78a52145d4bedeb` 构建真实服务，镜像只在本次 run 的任务间传递，产物保留 1 天，不发布到 GHCR，不替换生产镜像。
+
+本机需要同样验证时，先构建该镜像并设置 `DEVCIRCLE_TEST_MINIO_IMAGE=devcircle-minio-test:07c3a429bfed433e49018cb0f78a52145d4bedeb`，再运行 Maven 或真实 E2E。未设置时保留旧镜像默认值，仅适用于已有本地缓存的环境。生产与完整 Demo 的旧 MinIO 镜像分发问题仍需独立处理；测试镜像可用不构成生产依赖维护承诺。

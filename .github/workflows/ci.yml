@@ -13,12 +13,39 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  DEVCIRCLE_TEST_MINIO_IMAGE: devcircle-minio-test:07c3a429bfed433e49018cb0f78a52145d4bedeb
+
 jobs:
+  test-storage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Build real object storage from pinned official source
+        run: |
+          docker build -f deploy/ci/Dockerfile.minio -t "$DEVCIRCLE_TEST_MINIO_IMAGE" deploy/ci
+          docker run --rm "$DEVCIRCLE_TEST_MINIO_IMAGE" --version
+          docker save "$DEVCIRCLE_TEST_MINIO_IMAGE" | gzip > minio-test-image.tar.gz
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: minio-test-image-${{ github.sha }}
+          path: minio-test-image.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
   backend:
+    needs: test-storage
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: minio-test-image-${{ github.sha }}
+          path: ${{ runner.temp }}/minio-test
+      - name: Load real object storage image
+        run: docker load -i "${{ runner.temp }}/minio-test/minio-test-image.tar.gz"
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
@@ -99,10 +126,17 @@ jobs:
           if-no-files-found: ignore
 
   real-content-e2e:
+    needs: test-storage
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: minio-test-image-${{ github.sha }}
+          path: ${{ runner.temp }}/minio-test
+      - name: Load real object storage image
+        run: docker load -i "${{ runner.temp }}/minio-test/minio-test-image.tar.gz"
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
@@ -127,10 +161,17 @@ jobs:
           if-no-files-found: ignore
 
   real-review-e2e:
+    needs: test-storage
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: minio-test-image-${{ github.sha }}
+          path: ${{ runner.temp }}/minio-test
+      - name: Load real object storage image
+        run: docker load -i "${{ runner.temp }}/minio-test/minio-test-image.tar.gz"
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
@@ -155,10 +196,17 @@ jobs:
           if-no-files-found: ignore
 
   real-community-e2e:
+    needs: test-storage
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: minio-test-image-${{ github.sha }}
+          path: ${{ runner.temp }}/minio-test
+      - name: Load real object storage image
+        run: docker load -i "${{ runner.temp }}/minio-test/minio-test-image.tar.gz"
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
@@ -286,6 +334,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs:
+      - test-storage
       - backend
       - frontend
       - real-auth-e2e

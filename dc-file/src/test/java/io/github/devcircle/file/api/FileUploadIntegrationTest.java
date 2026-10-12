@@ -28,7 +28,8 @@ class FileUploadIntegrationTest {
     static final MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.4")
             .withDatabaseName("dc_file").withUsername("devcircle").withPassword("devcircle");
     @Container
-    static final GenericContainer<?> minio = new GenericContainer<>("minio/minio:RELEASE.2024-01-16T16-07-38Z")
+    static final GenericContainer<?> minio = new GenericContainer<>(System.getenv().getOrDefault(
+            "DEVCIRCLE_TEST_MINIO_IMAGE", "minio/minio:RELEASE.2024-01-16T16-07-38Z"))
             .withEnv("MINIO_ROOT_USER", "minioadmin").withEnv("MINIO_ROOT_PASSWORD", "minioadmin")
             .withCommand("server", "/data").withExposedPorts(9000);
 
