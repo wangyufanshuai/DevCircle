@@ -11,6 +11,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -39,7 +40,9 @@ public class DeductionService {
         this.answerKeywordPolicy = answerKeywordPolicy;
     }
 
-    @Transactional
+    // A duplicate-key wait may observe a commit after the initial availability read.
+    // READ_COMMITTED lets the replay read that winning attempt instead of an older snapshot.
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public DeductionAnswerResult submitAnswer(Long userId, Long postId, String answer, String idempotencyKey) {
         requireRequest(userId, postId, idempotencyKey);
         requireAnswer(answer);
@@ -75,7 +78,7 @@ public class DeductionService {
         }
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public DeductionAnswerResult reveal(Long userId, Long postId, String idempotencyKey) {
         requireRequest(userId, postId, idempotencyKey);
         requirePublishedCase(postId);
