@@ -67,6 +67,31 @@ class SearchEventCoordinatorTest {
     }
 
     @Test
+    void unfinishedSameEventCannotBeAcknowledgedAsACompletedDuplicate() {
+        var event = event(UUID.randomUUID().toString(), "post.updated", 501L, Instant.now());
+        var owner = acquire(event, 501L);
+        for (int attempt = 0; attempt < 3; attempt++) {
+            assertThatThrownBy(() -> coordinator.claim(event, 501L))
+                    .isInstanceOf(io.github.devcircle.messaging.config.ConsumerLeaseBusyException.class);
+        }
+        assertThat(jdbcClient.sql("SELECT attempts FROM search_consumer_dedup WHERE post_id=501")
+                .query(Integer.class).single()).isEqualTo(1);
+        assertThat(jdbcClient.sql("SELECT lease_owner FROM search_event_watermark WHERE post_id=501")
+                .query(String.class).single()).isEqualTo(owner.leaseToken());
+        coordinator.complete(event.eventId().toString(), 501L, event.occurredAt(), "UPSERT", owner.leaseToken());
+        assertDuplicate(event, 501L);
+    }
+
+    @Test
+    void unknownPersistedStateCannotBeAcknowledged() {
+        var event = event(UUID.randomUUID().toString(), "post.updated", 502L, Instant.now());
+        acquire(event, 502L);
+        jdbcClient.sql("UPDATE search_consumer_dedup SET status='UNKNOWN' WHERE post_id=502").update();
+        assertThatThrownBy(() -> coordinator.claim(event, 502L))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("Unsupported search consumer state");
+    }
+
+    @Test
     void completedAndOlderEventsCannotMutateTheIndexAgain() {
         Instant publishedAt = Instant.parse("2026-07-30T10:00:00Z");
         ValidatedEvent published = event(

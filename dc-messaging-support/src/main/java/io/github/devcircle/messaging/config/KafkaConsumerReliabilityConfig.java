@@ -11,6 +11,8 @@ import org.springframework.kafka.listener.CommonErrorHandler;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.util.backoff.ExponentialBackOff;
+import org.springframework.util.backoff.BackOff;
+import org.springframework.util.backoff.FixedBackOff;
 
 import java.time.Duration;
 
@@ -44,8 +46,19 @@ public class KafkaConsumerReliabilityConfig {
             }
             deadLetterRecoverer(kafkaTemplate, dltPublishTimeout).accept(record, failure);
         }, backOff);
+        // Lease contention is not poison data. Retain the partition until completion or real lease expiry.
+        handler.setBackOffFunction((record, failure) -> leaseBackOff(failure, safeInitialInterval));
         handler.setCommitRecovered(true);
         return handler;
+    }
+
+    static BackOff leaseBackOff(Throwable failure, long interval) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof ConsumerLeaseBusyException) {
+                return new FixedBackOff(interval, FixedBackOff.UNLIMITED_ATTEMPTS);
+            }
+        }
+        return null; // All other failures keep the configured bounded retries and DLT policy.
     }
 
     DeadLetterPublishingRecoverer deadLetterRecoverer(KafkaTemplate<?, ?> kafkaTemplate, long publishTimeoutMs) {

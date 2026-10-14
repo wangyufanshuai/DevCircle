@@ -19,6 +19,17 @@ import static org.mockito.Mockito.when;
 
 class KafkaConsumerReliabilityConfigTest {
     @Test
+    void wrappedLeaseContentionNeverExhaustsIntoDltButOtherFailuresKeepDefaultPolicy() {
+        var backOff = KafkaConsumerReliabilityConfig.leaseBackOff(
+                new IllegalStateException("listener wrapper", new ConsumerLeaseBusyException("owned")), 17);
+        var execution = backOff.start();
+        for (int attempt = 0; attempt < 1000; attempt++) {
+            assertThat(execution.nextBackOff()).isEqualTo(17L);
+        }
+        assertThat(KafkaConsumerReliabilityConfig.leaseBackOff(new IllegalArgumentException("invalid event"), 17)).isNull();
+    }
+
+    @Test
     void invalidRetryIntervalsAreClampedToAValidBackoff() {
         @SuppressWarnings("unchecked")
         ObjectProvider<KafkaTemplate<?, ?>> provider = mock(ObjectProvider.class);

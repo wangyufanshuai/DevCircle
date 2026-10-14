@@ -11,6 +11,7 @@
 | 评论/互动计数不被旧消息回退 | 新版本先到、旧版本后到、重复事件 | `ContentCommentProjectionIntegrationTest`、`ContentInteractionProjectionIntegrationTest` |
 | 同一搜索事件只有一个租约拥有者 | 两线程同时 claim | `SearchLeaseIntegrationTest`：真实 MySQL 和迁移 |
 | 已过期的 worker 不能污染新租约 | 租约回收后旧 worker complete/fail | 同一 MySQL 租约测试，验证拒绝且新 token 不变 |
+| 搜索进程崩溃不能提前确认未完成消息 | 取得租约后阻断 ES、SIGKILL、重启等待真实五分钟租约到期 | 独立 Search 和生产 Discovery 的真实 Kafka/MySQL/ES 演练；见[执行中崩溃证据](evidence/2026-10-14-search-consumer-crash.md) |
 | Outbox 保序及失效租约隔离 | 前序失败、过期 worker 写回 | `ReliableOutboxWorkerTest`；该层使用 H2 与发送器替身，不等同真实 Kafka 故障演练 |
 | 用户只能读写自己的草稿 | 两个其他账号读写、伪造身份头 | 核心 API `verify`，必须拒绝 |
 | 私有媒体不能被他人完成或提前读取 | 真实 MinIO 上传后，他人确认完成、匿名取未发布媒体地址 | 核心 API `verify`；同时校验上传地址同源 |
@@ -31,4 +32,4 @@
 
 ## 未覆盖的生产保证
 
-本轮核心切片不覆盖所有媒体/通知资源权限，也不包含网络分区、进程 kill、真实 Kafka 重平衡或长期压测。完整测试入口和 CI 提供更广覆盖，但不能替代生产演练。不能据此声称整个系统已经达到企业生产验收。
+核心切片与搜索故障切片分别记录：通知归属和幂等已有真实网关反例；搜索已验证执行中 SIGKILL、重启重投及自然租约到期。仍不覆盖所有资源状态权限、其他消费者进程故障、完整网络分区和再平衡场景或长期压测。完整测试入口和 CI 提供更广覆盖，但不能替代生产演练。不能据此声称整个系统已经达到企业生产验收。

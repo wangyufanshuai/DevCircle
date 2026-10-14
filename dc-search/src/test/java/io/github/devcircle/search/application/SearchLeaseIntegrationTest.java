@@ -58,14 +58,21 @@ class SearchLeaseIntegrationTest {
     void concurrentClaimsForOneEventHaveExactlyOneOwner() throws Exception {
         var event = event(91001);
         var barrier = new CyclicBarrier(2);
+        java.util.concurrent.Callable<SearchEventCoordinator.ClaimResult> attempt = () -> {
+            barrier.await(10, TimeUnit.SECONDS);
+            try { return coordinator.claim(event, 91001); }
+            catch (SearchEventCoordinator.SearchAggregateBusyException expected) { return null; }
+        };
         try (var workers = Executors.newFixedThreadPool(2)) {
-            var first = workers.submit(() -> { barrier.await(10, TimeUnit.SECONDS); return coordinator.claim(event, 91001); });
-            var second = workers.submit(() -> { barrier.await(10, TimeUnit.SECONDS); return coordinator.claim(event, 91001); });
+            var first = workers.submit(attempt);
+            var second = workers.submit(attempt);
             var a = first.get(20, TimeUnit.SECONDS);
             var b = second.get(20, TimeUnit.SECONDS);
-            assertThat((a.claimed() ? 1 : 0) + (b.claimed() ? 1 : 0)).isEqualTo(1);
+            assertThat((a != null ? 1 : 0) + (b != null ? 1 : 0)).isEqualTo(1);
+            var winner = a != null ? a : b;
+            assertThat(winner.claimed()).isTrue();
             String owner = jdbc.sql("SELECT lease_owner FROM search_event_watermark WHERE post_id=91001").query(String.class).single();
-            assertThat(owner).isEqualTo(a.claimed() ? a.leaseToken() : b.leaseToken());
+            assertThat(owner).isEqualTo(winner.leaseToken());
         }
     }
 

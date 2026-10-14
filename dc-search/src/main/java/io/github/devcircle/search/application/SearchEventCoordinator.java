@@ -2,6 +2,7 @@ package io.github.devcircle.search.application;
 
 import io.github.devcircle.common.event.EventFingerprint;
 import io.github.devcircle.common.event.ValidatedEvent;
+import io.github.devcircle.messaging.config.ConsumerLeaseBusyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -57,8 +58,13 @@ class SearchEventCoordinator {
                     .param("leaseToken", leaseToken)
                     .update();
             if (reclaimed == 0) {
-                validateIdentity(loadIdentity(eventId), topic, postId, eventFingerprint);
-                return ClaimResult.duplicate();
+                EventIdentity current = loadIdentity(eventId);
+                validateIdentity(current, topic, postId, eventFingerprint);
+                if ("COMPLETED".equals(current.status())) return ClaimResult.duplicate();
+                if ("PROCESSING".equals(current.status())) {
+                    throw new SearchAggregateBusyException("Search event " + eventId + " still has an unfinished lease");
+                }
+                throw new IllegalStateException("Unsupported search consumer state: " + current.status());
             }
         }
 
@@ -97,7 +103,7 @@ class SearchEventCoordinator {
 
     private EventIdentity loadIdentity(String eventId) {
         return jdbcClient.sql("""
-                        SELECT topic, post_id, event_fingerprint
+                        SELECT topic, post_id, event_fingerprint, status
                         FROM search_consumer_dedup
                         WHERE event_id = :eventId
                         """)
@@ -105,7 +111,7 @@ class SearchEventCoordinator {
                 .query((rs, rowNum) -> new EventIdentity(
                         rs.getString("topic"),
                         rs.getLong("post_id"),
-                        rs.getString("event_fingerprint")))
+                        rs.getString("event_fingerprint"), rs.getString("status")))
                 .single();
     }
 
@@ -210,7 +216,7 @@ class SearchEventCoordinator {
         return value.longValue();
     }
 
-    private record EventIdentity(String topic, long postId, String eventFingerprint) {
+    private record EventIdentity(String topic, long postId, String eventFingerprint, String status) {
     }
 
     record ClaimResult(boolean claimed, String leaseToken) {
@@ -223,7 +229,7 @@ class SearchEventCoordinator {
         }
     }
 
-    static final class SearchAggregateBusyException extends IllegalStateException {
+    static final class SearchAggregateBusyException extends ConsumerLeaseBusyException {
         SearchAggregateBusyException(String message) {
             super(message);
         }
