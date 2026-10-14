@@ -74,6 +74,77 @@ def assert_persisted(checks, sql):
         if scores != "1\t20": raise AssertionError(f"Score invariant broken: {scores}")
     solved = sql(f"SELECT solved_count FROM dc_content.post WHERE id={post};")
     if solved != "2": raise AssertionError(f"Solved count invariant broken: {solved}")
+    for notice in checks.get("notifications", []):
+        count = sql("SELECT COUNT(*) FROM dc_notification.notification "
+                    f"WHERE id={int(notice['id'])} AND receiver_id={int(notice['receiver_id'])} "
+                    f"AND actor_id={int(notice['actor_id'])} AND read_flag={int(notice['read'])};")
+        if count != "1": raise AssertionError("Notification ownership/read state changed across restart")
+
+
+def check_notification_permissions(owner, reader, other, sql):
+    """Real Gateway -> Identity Notification API, with Kafka fixtures and database side-effect checks."""
+    def follow(actor, receiver):
+        result = ok(request("POST", f"/api/users/{receiver['id']}/follow", actor["token"]))
+        if not result["followed"]: raise AssertionError("Fixture follow was not persisted")
+
+    def notices(user, actors):
+        deadline = time.monotonic() + 30
+        while True:
+            rows = ok(request("GET", "/api/notifications?type=FOLLOW&size=50", user["token"]))
+            if len(rows) == len(actors) and {int(row["actorId"]) for row in rows} == actors:
+                return {int(row["actorId"]): row for row in rows}
+            if time.monotonic() >= deadline: raise AssertionError("Notification fixtures did not converge through Kafka")
+            time.sleep(1)
+
+    def unread(user):
+        return ok(request("GET", "/api/notifications/unread-count", user["token"]))
+
+    follow(reader, owner); follow(other, owner); follow(owner, reader)
+    owned = notices(owner, {reader["id"], other["id"]})
+    readers = notices(reader, {owner["id"]})
+    private_id = int(owned[reader["id"]]["id"])
+    reader_id = int(readers[owner["id"]]["id"])
+    spoof = {"X-User-Id": str(owner["id"]), "X-Roles": "ADMIN"}
+    for method, path in (("GET", "/api/notifications"), ("GET", "/api/notifications/unread-count"),
+                         ("POST", f"/api/notifications/{private_id}/read"), ("POST", "/api/notifications/read-all")):
+        assert_status(request(method, path, extra=spoof), {401})
+    rows = ok(request("GET", "/api/notifications?type=FOLLOW", reader["token"], extra=spoof))
+    if [int(row["id"]) for row in rows] != [reader_id] or unread(owner) != 2 or unread(reader) != 1:
+        raise AssertionError("Forged identity exposed another receiver's notifications")
+
+    rejected_key = str(uuid.uuid4())
+    assert_status(request("POST", f"/api/notifications/{private_id}/read", reader["token"],
+                          key=rejected_key, extra=spoof), {404})
+    # An admin has its own private inbox; the role alone must not grant access to another receiver's IDs.
+    assert_status(request("POST", f"/api/notifications/{reader_id}/read", owner["token"]), {404})
+    if sql(f"SELECT COUNT(*) FROM dc_notification.notification_idempotency_record WHERE idempotency_key='{rejected_key}';") != "0":
+        raise AssertionError("Rejected notification mutation consumed its idempotency key")
+    if unread(owner) != 2 or unread(reader) != 1:
+        raise AssertionError("Rejected notification mutation changed unread state")
+
+    all_key = str(uuid.uuid4())
+    if ok(request("POST", "/api/notifications/read-all", reader["token"], key=all_key, extra=spoof))["updated"] != 1:
+        raise AssertionError("Mark-all did not affect exactly the caller's inbox")
+    if unread(owner) != 2 or unread(reader) != 0:
+        raise AssertionError("Mark-all crossed receiver boundaries")
+    follow(other, reader)
+    readers = notices(reader, {owner["id"], other["id"]})
+    if ok(request("POST", "/api/notifications/read-all", reader["token"], key=all_key))["updated"] != 1 or unread(reader) != 1:
+        raise AssertionError("A duplicate mark-all consumed a notification arriving later")
+    assert_status(request("POST", "/api/notifications/read-all", owner["token"], key=all_key), {409})
+    assert_status(request("POST", f"/api/notifications/{reader_id}/read", reader["token"], key=all_key), {409})
+
+    first = ok(request("POST", f"/api/notifications/{private_id}/read", owner["token"], key=rejected_key))
+    again = ok(request("POST", f"/api/notifications/{private_id}/read", owner["token"], key=rejected_key))
+    if first["duplicateRequest"] or not again["duplicateRequest"]:
+        raise AssertionError("Owner retry did not preserve notification idempotency")
+    assert_status(request("POST", f"/api/notifications/{reader_id}/read", reader["token"], key=rejected_key), {409})
+    if unread(owner) != 1 or unread(reader) != 1:
+        raise AssertionError("Idempotency conflicts changed another notification")
+    return [{"id": int(row["id"]), "receiver_id": receiver["id"], "actor_id": actor,
+             "read": actor == read_actor}
+            for receiver, values, read_actor in ((owner, owned, reader["id"]), (reader, readers, owner["id"]))
+            for actor, row in values.items()]
 
 
 def check_core(sql):
@@ -104,9 +175,10 @@ def check_core(sql):
     sql(f"INSERT IGNORE INTO dc_auth.user_role(user_id,role_id) SELECT {author['id']},id FROM dc_auth.role WHERE code='ADMIN';")
     admin = ok(request("POST", "/api/auth/login", data={"email": author["email"], "password": PASSWORD}))["accessToken"]
     deadline = time.monotonic() + 30
-    while request("GET", f"/api/users/{author['id']}")[0] != 200:
+    while any(request("GET", f"/api/users/{user['id']}")[0] != 200 for user in (author, reader, other)):
         if time.monotonic() >= deadline: raise AssertionError("Author Outbox/Kafka projection did not converge")
         time.sleep(1)
+    notifications = check_notification_permissions({**author, "token": admin}, reader, other, sql)
     draft = {"title": "Local core clock " + uuid.uuid4().hex[:8],
              "content": "The clock stopped seven minutes before the witness arrived. Follow the timeline.",
              "type": "TEXT", "tags": ["local-core"], "theme": "DEDUCTION", "contentKind": "CASE_FILE",
@@ -142,12 +214,15 @@ def check_core(sql):
                           {"answer": "clock"}, shared_key), {409})
     private = ok(request("GET", f"/api/posts/{post}", reader["token"]))
     if private.get("solution") != draft["solution"]: raise AssertionError("Solved reader cannot access solution")
-    result = {"post_id": post, "reader_ids": [reader["id"], other["id"]],
+    result = {"post_id": post, "reader_ids": [reader["id"], other["id"]], "notifications": notifications,
               "concurrent_requests_per_case": 8,
               "passed": ["real_same_origin_object_upload", "cross_user_upload_completion_denied", "unpublished_media_access_denied",
                          "real_author_projection", "cross_user_draft_read_write_denied", "forged_identity_denied",
                          "reader_admin_access_denied", "pending_content_hidden", "stale_draft_conflict",
                          "unearned_solution_hidden", "same_key_concurrency", "different_key_concurrency",
-                         "idempotency_payload_and_user_binding", "single_score_award", "earned_solution_visible"]}
+                         "idempotency_payload_and_user_binding", "single_score_award", "earned_solution_visible",
+                         "notification_anonymous_and_cross_receiver_denied", "notification_forged_identity_denied",
+                         "notification_rejected_mutation_has_no_claim", "notification_mark_all_owner_only",
+                         "notification_retry_preserves_later_arrivals", "notification_key_user_and_operation_binding"]}
     assert_persisted(result, sql)
     return result
