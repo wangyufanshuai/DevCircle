@@ -37,3 +37,15 @@
 本次进程终止发生在已提交批次边界；批次中途的异常回滚由独立故障注入测试验证，未把它称为真实进程内随机崩溃测试。任务仍要求内容写入、审核及搜索消费者停止；操作员确认参数不是全局停写开关。完成门禁不自动切换索引或恢复业务写入。本次仍不是生产零损失回滚、整站灾备、长期容量或全部资源权限验收。
 
 操作入口见[可恢复任务](../search-reindex-jobs.md)，完整重演入口见[迁移与回滚演练](../search-migration-rehearsal.md)。
+
+## 命令行真实入口复验与 CI 诊断补强
+
+首轮演练直接使用测试 HTTP 客户端，未调用命令行驱动。后续审查发现驱动遗漏网关写请求必需的 `Idempotency-Key`，会被拒绝。已修正为按任务操作和 revision 生成稳定的键，并补充经过真实 HTTP 连接的驱动回归；没有把替身测试描述为真实网关验证。
+
+第二次完整演练实际以子进程调用 `run_search_reindex.py`：第一批退出码 3，保存 20/21 条检查点；SIGKILL 搜索进程后用同一 UUID 续跑，退出码 0，最终复制和验证各 21 条、指纹一致。报告路径：`E:\xuexi\devcircle\artifacts\local\goal-search-jobs\driver-rehearsal\20261014T131546-83c051eb\report.json`。12 项检查通过，0 OOM，容器已停止。此次脚本 SHA-256 为 `ead33378f2ceb3cc414ddfddca5732d93f907ee4cbda0ce6d551ee1192d3c60a`，驱动 SHA-256 为 `23d370f19b1e38ce71f3557e4ced43b2e069feafd0d814aab22ae23de775366b`。Java 代码未改变；镜像标识见该报告。
+
+修正后的运维回归为 107 项通过，包含 7 项驱动测试与失败诊断测试。日志：`artifacts/local/goal-search-jobs/ops-tests-driver-fix.log`。
+
+提交 `a4f415f` 的 [首次 CI](https://github.com/wangyufanshuai/DevCircle/actions/runs/38515439493) 后端及覆盖率、前端、真实浏览器/业务 E2E 通过，但 `local-core` 第二轮出现 HTTP 500，使整体 CI 失败。旧验收器缺少请求定位与服务日志，无法确认根因。现在 5xx 明确记录方法和路径并立即失败，不记录令牌、请求体及查询参数；退出前保存本项目的有界容器日志，采集失败也不能覆盖原错误。未增加重试来隐藏该故障。
+
+补强后 Windows 本机两轮 `local.py verify` 通过，验证期间源码不变，各轮保留数据与业务反例通过且无 OOM/异常重启；报告：`E:\xuexi\devcircle\artifacts\local\20261014T052350848364-verify\report.json`。该结果没有复现远端 500，不能宣称已经修复其运行时根因。后续提交仍需重新核对 CI，并在再次出现时依据新增诊断定位。

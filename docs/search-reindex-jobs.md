@@ -20,6 +20,8 @@ python -X utf8 scripts/ops/run_search_reindex.py --job-id <UUID>
 
 退出码：0 仅表示 `COMPLETED`；1 表示参数/请求失败或结果未知；2 表示任务 `FAILED/CANCELLED`；3 表示按批数退出且任务仍可继续。结果未知时先查询原任务，不能直接认定未执行。访问令牌到期需重新取得管理员令牌后继续同一任务。
 
+脚本自动为写请求提供网关要求的 `Idempotency-Key`，同一任务操作和 revision 重试时保持相同值，令牌不参与键生成。手动调用下面的写接口也必须携带该请求头。服务端批次是否已执行仍以持久 revision 为准，不能仅凭请求头认定完成。
+
 | 方法与路径（前缀 `/api/search/admin/reindex/jobs`） | 行为 |
 |---|---|
 | `PUT /{uuid}?maintenanceConfirmed=true` | 幂等创建；相同 UUID 返回已有状态 |

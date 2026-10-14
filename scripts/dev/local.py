@@ -35,6 +35,15 @@ def run(args, log, cwd=ROOT, env=None):
         subprocess.run(args, cwd=cwd, env=env or ENV, stdout=stream, stderr=subprocess.STDOUT, check=True)
 
 
+def collect_failure_logs(out, report):
+    try:
+        logs = capture(COMPOSE + ["logs", "--no-color", "--tail", "100"])
+        (out / "failure-containers.log").write_text(logs, encoding="utf-8")
+    except Exception as error:
+        # A diagnostic error must not replace the original failure or turn the run green.
+        report["failure_log_error"] = type(error).__name__
+
+
 def source_identity():
     files = capture(["git", "ls-files", "-co", "--exclude-standard"]).splitlines()
     digest = hashlib.sha256()
@@ -258,6 +267,8 @@ def main():
         if args.mode in ("up", "verify"): print("Core UI: http://127.0.0.1:5512 (local test accounts and data only)")
     except Exception as error:
         report["status"] = "failed"; report["error"] = str(error)
+        if args.mode in ("up", "verify"):
+            collect_failure_logs(out, report)
         print(str(error), file=sys.stderr)
     finally:
         report["source_at_finish"] = source_identity()

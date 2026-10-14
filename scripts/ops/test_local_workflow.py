@@ -1,15 +1,42 @@
 import importlib.util
 import json
+import io
 from pathlib import Path
+import tempfile
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("local_workflow", Path(__file__).parents[1] / "dev/local.py")
 local = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(local)
+core_spec = importlib.util.spec_from_file_location("core_checks", Path(__file__).parents[1] / "dev/core_checks.py")
+core = importlib.util.module_from_spec(core_spec)
+core_spec.loader.exec_module(core)
 
 
 class ResourceEvidenceTest(unittest.TestCase):
+    def test_api_server_error_identifies_operation_without_credentials_or_query(self):
+        error = urllib.error.HTTPError("http://fixture", 500, "failed", {}, io.BytesIO(b'{"secret":"do-not-print"}'))
+        with patch.object(core.HTTP, "open", side_effect=error), \
+                self.assertRaisesRegex(AssertionError, r"Core API POST /api/auth/register returned HTTP 500") as raised:
+            core.request("POST", "/api/auth/register?private=do-not-print", "secret-token", {"password": "secret-password"})
+        for secret in ("do-not-print", "secret-token", "secret-password"):
+            self.assertNotIn(secret, str(raised.exception))
+
+    def test_failure_logs_are_saved_and_collection_errors_preserve_original_failure(self):
+        report = {"status": "failed", "error": "original"}
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(local, "capture", return_value="fixture service error") as capture:
+                local.collect_failure_logs(Path(tmp), report)
+                self.assertEqual((Path(tmp) / "failure-containers.log").read_text(), "fixture service error")
+                self.assertIn("100", capture.call_args.args[0])
+            with patch.object(local, "capture", side_effect=TimeoutError("diagnostic failure")):
+                local.collect_failure_logs(Path(tmp), report)
+            self.assertEqual(report["error"], "original")
+            self.assertEqual(report["status"], "failed")
+            self.assertEqual(report["failure_log_error"], "TimeoutError")
+
     def sample(self):
         return {"stats": [{"MemUsage": "128MiB / 256MiB"}], "states": [
             {"status": "running", "health": "healthy", "oom_killed": False, "restart_count": 0, "exit_code": 0}]}

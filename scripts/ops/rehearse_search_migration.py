@@ -17,6 +17,7 @@ import os
 from pathlib import Path, PureWindowsPath
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 import urllib.error
@@ -133,6 +134,24 @@ class Rehearsal:
                                          headers=headers, method=method)
         with urllib.request.urlopen(request, timeout=60) as response:
             return json.load(response)["data"]
+
+    def drive_reindex(self, job_id, token, *, create=False, max_steps=6):
+        driver = ROOT / "scripts/ops/run_search_reindex.py"
+        self.receipt["reindexDriverSha256"] = hashlib.sha256(driver.read_bytes()).hexdigest()
+        args = [sys.executable, str(driver), "--base-url", "http://127.0.0.1:28080",
+                "--job-id", job_id, "--max-steps", str(max_steps), "--output-root", str(self.output / "reindex-driver")]
+        if create:
+            args.append("--create-confirm-maintenance")
+        # Pass credentials through the child environment only, never argv, receipts or command logs.
+        env = dict(self.env, DEVCIRCLE_ADMIN_TOKEN=token)
+        result = subprocess.run(args, cwd=ROOT, env=env, capture_output=True, timeout=600)
+        if result.returncode not in (0, 3):
+            raise AssertionError("Reindex CLI failed: " + result.stderr.decode("utf-8", errors="replace")[-1500:])
+        checkpoint = json.loads(result.stdout)
+        saved = json.loads((self.output / "reindex-driver" / job_id / "status.json").read_text(encoding="utf-8"))
+        if saved != checkpoint or (result.returncode == 0) != (checkpoint["phase"] == "COMPLETED"):
+            raise AssertionError("Reindex CLI exit status or saved checkpoint disagrees with its response")
+        return checkpoint
 
     def configuration(self, image, consume):
         self.override.write_text(json.dumps({"services": {
@@ -346,7 +365,7 @@ class Rehearsal:
         if self.sql("dc_search", "SELECT COUNT(*) FROM search_reindex_job WHERE revision=0 AND phase='COPYING'") != "1":
             raise AssertionError("Rejected reindex requests changed job state")
         self.check("reindex_job_gateway_permissions_no_side_effects")
-        checkpoint = self.api("POST", endpoint + "/step?revision=0", token=token)
+        checkpoint = self.drive_reindex(job_id, token, create=True, max_steps=1)
         if checkpoint["phase"] != "COPYING" or checkpoint["copied"] != 20 or not checkpoint["cursor"]:
             raise AssertionError("Reindex did not persist the copy checkpoint")
         # Kill only this isolated project's search process; DB/index volumes remain intact.
@@ -356,11 +375,7 @@ class Rehearsal:
             raise AssertionError("Reindex checkpoint was lost across process termination")
         if self.api("POST", endpoint + "/step?revision=0", token=token) != checkpoint:
             raise AssertionError("Retry of an acknowledged batch advanced twice")
-        completed = checkpoint
-        for _ in range(6):
-            if completed["phase"] in {"COMPLETED", "FAILED", "CANCELLED"}:
-                break
-            completed = self.api("POST", endpoint + "/step?revision=" + str(completed["revision"]), token=token)
+        completed = self.drive_reindex(job_id, token)
         if completed["phase"] != "COMPLETED" or completed["copied"] != 21 or completed["verified"] != 21 or completed["copyHash"] != completed["verifyHash"]:
             raise AssertionError("Reindex exact verification did not complete after restart")
         self.receipt["reindexJob"] = completed

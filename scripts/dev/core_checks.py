@@ -27,6 +27,9 @@ def request(method, path, token=None, data=None, key=None, extra=None):
         with HTTP.open(req, timeout=20) as response:
             return response.status, json.load(response)
     except urllib.error.HTTPError as error:
+        if error.code >= 500:
+            # Keep the failing operation, but never include bearer headers, request bodies or signed queries.
+            raise AssertionError(f"Core API {method} {path.split('?', 1)[0]} returned HTTP {error.code}") from None
         return error.code, json.loads(error.read())
 
 

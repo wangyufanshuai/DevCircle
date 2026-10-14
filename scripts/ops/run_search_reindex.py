@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path, PureWindowsPath
@@ -36,8 +37,12 @@ class Api:
         self.opener = build_opener(NoRedirect())
 
     def request(self, method: str, path: str) -> dict:
+        headers = {"Authorization": "Bearer " + self.token, "Accept": "application/json"}
+        if method in {"POST", "PUT", "PATCH", "DELETE"}:
+            # Bind retries to the same job operation/revision without including the bearer token.
+            headers["Idempotency-Key"] = "search-reindex-" + hashlib.sha256((method + " " + path).encode()).hexdigest()
         request = Request(self.base + path, method=method,
-                          headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"})
+                          headers=headers)
         try:
             with self.opener.open(request, timeout=75) as response:
                 payload = json.load(response)
