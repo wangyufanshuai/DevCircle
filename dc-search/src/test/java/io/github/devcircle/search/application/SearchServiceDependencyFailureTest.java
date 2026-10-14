@@ -15,6 +15,7 @@ import org.springframework.data.elasticsearch.core.query.Query;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -70,7 +71,7 @@ class SearchServiceDependencyFailureTest {
     @Test
     void reindexReturnsASafeFailureWhenElasticsearchCannotPersistTheSnapshot() throws IOException {
         startContentServer("""
-                {"code":"OK","data":{"records":[],"total":0,"page":1,"size":20,"totalPages":0}}
+                {"code":"OK","data":[],"meta":{"hasMore":false,"nextCursor":""}}
                 """);
         ElasticsearchOperations operations = mock(ElasticsearchOperations.class);
         IllegalStateException outage = new IllegalStateException("cluster 10.0.0.9 rejected the bulk request");
@@ -90,12 +91,13 @@ class SearchServiceDependencyFailureTest {
 
     @Test
     void reindexReadsAllContentPagesAndRefreshesTheCompleteSnapshot() throws IOException {
-        String firstPageRecords = IntStream.rangeClosed(1, 20)
+        String firstPageRecords = IntStream.iterate(21, id -> id - 1).limit(20)
                 .mapToObj(this::postJson)
                 .collect(Collectors.joining(","));
-        startContentServer(query -> query != null && query.contains("page=1")
-                ? page(firstPageRecords, 21, 1)
-                : page(postJson(21), 21, 2));
+        startContentServer(query -> query != null && query.contains("cursor=&")
+                ? page(firstPageRecords, true, Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString("2026-08-02T08:00:00Z|2".getBytes(StandardCharsets.UTF_8)))
+                : page(postJson(1), false, ""));
         ElasticsearchOperations operations = mock(ElasticsearchOperations.class);
         IndexOperations indexOperations = mock(IndexOperations.class);
         when(operations.indexOps(PostSearchDocument.class)).thenReturn(indexOperations);
@@ -111,7 +113,7 @@ class SearchServiceDependencyFailureTest {
     @Test
     void explicitDevelopmentFallbackAppliesToFullReindexAsWellAsQueries() throws IOException {
         startContentServer("""
-                {"code":"OK","data":{"records":[],"total":0,"page":1,"size":20,"totalPages":0}}
+                {"code":"OK","data":[],"meta":{"hasMore":false,"nextCursor":""}}
                 """);
         ElasticsearchOperations operations = mock(ElasticsearchOperations.class);
         IndexOperations indexOperations = mock(IndexOperations.class);
@@ -142,10 +144,10 @@ class SearchServiceDependencyFailureTest {
         contentServer.start();
     }
 
-    private String page(String records, int total, int page) {
+    private String page(String records, boolean hasMore, String nextCursor) {
         return """
-                {"code":"OK","data":{"records":[%s],"total":%d,"page":%d,"size":20}}
-                """.formatted(records, total, page);
+                {"code":"OK","data":[%s],"meta":{"hasMore":%s,"nextCursor":"%s"}}
+                """.formatted(records, hasMore, nextCursor);
     }
 
     private String postJson(int id) {

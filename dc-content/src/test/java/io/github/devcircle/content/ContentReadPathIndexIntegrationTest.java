@@ -8,6 +8,10 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.devcircle.content.infrastructure.PostQueryRepository;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -28,6 +32,10 @@ class ContentReadPathIndexIntegrationTest {
                 .locations("classpath:db/migration")
                 .load()
                 .migrate();
+        // Content's public cursor also reads File-owned media columns, as in the aggregate runtime.
+        Flyway.configure().dataSource(mysql.getJdbcUrl(), mysql.getUsername(), mysql.getPassword())
+                .locations("classpath:db/file-migration").table("flyway_schema_history_file")
+                .baselineOnMigrate(true).baselineVersion("1").load().migrate();
         jdbc = new JdbcTemplate(new DriverManagerDataSource(
                 mysql.getJdbcUrl(), mysql.getUsername(), mysql.getPassword()));
         jdbc.update("""
@@ -46,6 +54,9 @@ class ContentReadPathIndexIntegrationTest {
                 FROM seq
                 """);
         jdbc.execute("ANALYZE TABLE post");
+        jdbc.update("INSERT INTO post_content(post_id, markdown) SELECT id, CONCAT('body-', id) FROM post");
+        // Equal timestamps straddle a 20-row page boundary and must be ordered by id.
+        jdbc.update("UPDATE post SET created_at='2026-01-02 00:00:00' WHERE id >= 9980");
     }
 
     @Test
@@ -70,6 +81,29 @@ class ContentReadPathIndexIntegrationTest {
                 WHERE author_id = 42
                 ORDER BY updated_at DESC LIMIT 50
                 """, "idx_post_author_updated");
+    }
+
+    @Test
+    void realContentCursorTraversesTenThousandRowsWithoutMissingOrRepeatingIds() {
+        PostQueryRepository repository = new PostQueryRepository(jdbc, new ObjectMapper().findAndRegisterModules());
+        List<Long> expected = jdbc.queryForList(
+                "SELECT id FROM post WHERE status='PUBLISHED' ORDER BY created_at DESC, id DESC", Long.class);
+        List<Long> actual = new ArrayList<>();
+        String cursor = "";
+        do {
+            var batch = repository.listCursor(cursor, 20, null, null, null, null);
+            assertThat(batch.records()).hasSizeLessThanOrEqualTo(20);
+            assertThat(batch.records()).allSatisfy(post -> {
+                assertThat(post.aggregateVersion()).isNotNull().isNotNegative();
+                assertThat(post.excerpt()).isEqualTo("body-" + post.id());
+            });
+            actual.addAll(batch.records().stream().map(post -> post.id()).toList());
+            if (!batch.hasMore()) break;
+            assertThat(batch.nextCursor()).isNotBlank().isNotEqualTo(cursor);
+            cursor = batch.nextCursor();
+            assertThat(actual.size()).isLessThanOrEqualTo(expected.size());
+        } while (true);
+        assertThat(actual).hasSize(10000).containsExactlyElementsOf(expected);
     }
 
     private String indexColumns(String table, String index) {

@@ -3,7 +3,6 @@ package io.github.devcircle.search.application;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.devcircle.common.api.ApiResponse;
-import io.github.devcircle.common.api.PageResponse;
 import io.github.devcircle.common.error.BusinessException;
 import io.github.devcircle.common.error.ErrorCode;
 import io.github.devcircle.common.event.EventEnvelopeValidator;
@@ -21,7 +20,8 @@ import org.springframework.web.client.RestClient;
 import org.springframework.core.ParameterizedTypeReference;
 
 import java.time.Instant;
-import java.util.ArrayList;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -66,21 +66,37 @@ final class SearchIndexService {
     }
 
     int reindexSeedPosts() {
-        List<PostSummary> posts;
-        try {
-            posts = loadPostsFromContent();
-        } catch (RuntimeException ex) {
-            if (ex instanceof BusinessException) throw ex;
-            throw dependency("内容服务暂时不可用，无法重建搜索索引", ex);
+        String cursor = "";
+        PostSummary previous = null;
+        int indexed = 0;
+        while (true) {
+            ContentBatch batch;
+            try {
+                batch = loadContentBatch(cursor, previous);
+            } catch (RuntimeException ex) {
+                if (ex instanceof BusinessException) throw ex;
+                throw dependency("内容服务暂时不可用，无法重建搜索索引", ex);
+            }
+            List<PostSummary> posts = batch.records();
+            if (indexed == 0 && posts.isEmpty() && readFallbackEnabled) {
+                posts = ThemeContentLibrary.summaries().stream().map(p -> p.withAggregateVersion(0L)).toList();
+            }
+            try {
+                for (PostSummary post : posts) {
+                    projectionStore.upsert(document(post, post.createdAt()));
+                    indexed = Math.incrementExact(indexed);
+                }
+            } catch (RuntimeException ex) {
+                if (ex instanceof BusinessException) throw ex;
+                throw dependency("搜索索引暂时不可用，重建未完成", ex);
+            }
+            if (!batch.hasMore()) break;
+            previous = posts.getLast();
+            cursor = batch.nextCursor();
         }
-        if (posts.isEmpty() && readFallbackEnabled) {
-            posts = ThemeContentLibrary.summaries().stream().map(p -> p.withAggregateVersion(0L)).toList();
-        }
         try {
-            projectionStore.save(posts.stream()
-                    .map(post -> document(post, post.createdAt()))
-                    .toList());
-            return posts.size();
+            projectionStore.refresh();
+            return indexed;
         } catch (RuntimeException ex) {
             if (ex instanceof BusinessException) throw ex;
             throw dependency("搜索索引暂时不可用，重建未完成", ex);
@@ -169,29 +185,49 @@ final class SearchIndexService {
         readFallbackEnabled = true;
     }
 
-    private List<PostSummary> loadPostsFromContent() {
-        List<PostSummary> posts = new ArrayList<>();
-        for (int page = 1; page <= 100; page++) {
-            int currentPage = page;
-            ApiResponse<PageResponse<PostSummary>> response = contentClient.get()
-                    .uri(uriBuilder -> uriBuilder.path("/api/posts")
-                            .queryParam("page", currentPage)
-                            .queryParam("size", 20)
-                            .build())
-                    .retrieve()
-                    .body(new ParameterizedTypeReference<>() {
-                    });
-            if (response == null || response.data() == null || response.data().records() == null) {
-                throw new IllegalStateException("Content service returned an invalid post page");
+    private ContentBatch loadContentBatch(String cursor, PostSummary previous) {
+        ApiResponse<List<PostSummary>> response = contentClient.get()
+                .uri(uriBuilder -> uriBuilder.path("/api/posts")
+                        .queryParam("cursor", cursor).queryParam("size", 20).build())
+                .retrieve().body(new ParameterizedTypeReference<>() { });
+        if (response == null || !"OK".equals(response.code()) || response.data() == null
+                || response.data().size() > 20 || response.meta() == null
+                || !(response.meta().get("hasMore") instanceof Boolean)
+                || !(response.meta().get("nextCursor") instanceof String)) {
+            throw new IllegalStateException("Content service returned an invalid cursor page");
+        }
+        List<PostSummary> posts = response.data();
+        boolean hasMore = (Boolean) response.meta().get("hasMore");
+        String next = (String) response.meta().get("nextCursor");
+        if (hasMore ? posts.size() != 20 || next.isBlank() || next.equals(cursor) : !next.isEmpty()) {
+            throw new IllegalStateException("Content service returned inconsistent cursor metadata");
+        }
+        // Validate the entire bounded page before making any writes from that page.
+        for (PostSummary post : posts) {
+            if (post == null || post.id() == null || post.id() <= 0 || post.createdAt() == null
+                    || post.aggregateVersion() == null || post.aggregateVersion() < 0
+                    || !"PUBLISHED".equals(post.status()) || post.title() == null || post.excerpt() == null) {
+                throw new IllegalStateException("Content service returned an invalid versioned post");
             }
-            List<PostSummary> records = response.data().records();
-            posts.addAll(records);
-            if (records.size() < 20) {
-                break;
+            if (previous != null && (post.createdAt().isAfter(previous.createdAt())
+                    || post.createdAt().equals(previous.createdAt()) && post.id() >= previous.id())) {
+                throw new IllegalStateException("Content cursor did not advance in createdAt/id order");
+            }
+            previous = post;
+        }
+        if (hasMore) {
+            String decoded = new String(Base64.getUrlDecoder().decode(next), StandardCharsets.UTF_8);
+            String[] parts = decoded.split("\\|", -1);
+            PostSummary last = posts.getLast();
+            if (parts.length != 2 || !Instant.parse(parts[0]).equals(last.createdAt())
+                    || Long.parseLong(parts[1]) != last.id()) {
+                throw new IllegalStateException("Content cursor does not identify the last post");
             }
         }
-        return posts;
+        return new ContentBatch(posts, next, hasMore);
     }
+
+    private record ContentBatch(List<PostSummary> records, String nextCursor, boolean hasMore) { }
 
     private long requiredPositiveLong(JsonNode payload, String field) {
         JsonNode value = payload.get(field);

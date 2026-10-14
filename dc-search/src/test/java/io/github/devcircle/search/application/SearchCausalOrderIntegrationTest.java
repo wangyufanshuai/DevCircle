@@ -22,6 +22,17 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Base64;
+import java.util.ArrayList;
+import java.net.InetSocketAddress;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import com.sun.net.httpserver.HttpServer;
+import io.github.devcircle.common.api.ApiResponse;
+import io.github.devcircle.content.contract.PostSummary;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.elasticsearch.core.query.Criteria;
+import org.springframework.data.elasticsearch.core.query.CriteriaQuery;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -115,6 +126,59 @@ class SearchCausalOrderIntegrationTest {
         }
         assertThat(jdbc.sql("SELECT COUNT(*) FROM search_consumer_dedup WHERE post_id=92006").query(Long.class).single()).isZero();
         assertThat(document(92006)).isNull();
+    }
+
+    @Test void cursorReindexPersistsMoreThanTwoThousandDocumentsAndKeepsNewerTombstone() throws Exception {
+        // The HTTP source is a fixture; projection writes, scripts and reads use real Elasticsearch.
+        HttpServer source = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        source.createContext("/api/posts", exchange -> {
+            String cursor = java.util.Arrays.stream(exchange.getRequestURI().getRawQuery().split("&"))
+                    .filter(p -> p.startsWith("cursor=")).findFirst().orElseThrow().substring(7);
+            cursor = URLDecoder.decode(cursor, StandardCharsets.UTF_8);
+            int highest = cursor.isEmpty() ? 102001 : Integer.parseInt(new String(
+                    Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8).split("\\|")[1]) - 1;
+            int lowest = Math.max(100001, highest - 19);
+            List<PostSummary> records = new ArrayList<>();
+            for (int id = highest; id >= lowest; id--) {
+                records.add(new PostSummary((long) id, "TEXT", "post-" + id, "body-" + id,
+                        "test", List.of(), List.of(), 0, 0, 0, "PUBLISHED", TIME).withAggregateVersion(2L));
+            }
+            boolean more = lowest > 100001;
+            String next = more ? Base64.getUrlEncoder().withoutPadding().encodeToString(
+                    (TIME + "|" + lowest).getBytes(StandardCharsets.UTF_8)) : "";
+            byte[] bytes = mapper.writeValueAsBytes(ApiResponse.ok(records, Map.of("hasMore", more, "nextCursor", next)));
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.getResponseHeaders().add("Connection", "close");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        source.start();
+        try {
+            store.remove(100001, TIME, UUID.randomUUID().toString(), 3);
+            SearchIndexService reindex = new SearchIndexService(operations, mapper,
+                    "http://127.0.0.1:" + source.getAddress().getPort(), coordinator);
+            assertThat(reindex.reindexSeedPosts()).isEqualTo(2001);
+            CriteriaQuery query = new CriteriaQuery(new Criteria("id").greaterThanEqual(100001).lessThanEqual(102001));
+            query.setPageable(PageRequest.of(0, 2100));
+            var results = operations.search(query, PostSearchDocument.class).getSearchHits().stream()
+                    .map(hit -> hit.getContent()).toList();
+            assertThat(results).hasSize(2001);
+            assertThat(results.stream().map(PostSearchDocument::getId).toList()).doesNotHaveDuplicates();
+            assertThat(results).allSatisfy(post -> {
+                if (post.getId() == 100001) {
+                    assertThat(post.getStatus()).isEqualTo("DELETED");
+                    assertThat(post.getAggregateVersion()).isEqualTo(3L);
+                } else {
+                    assertThat(post.getStatus()).isEqualTo("PUBLISHED");
+                    assertThat(post.getTitle()).isEqualTo("post-" + post.getId());
+                    assertThat(post.getExcerpt()).isEqualTo("body-" + post.getId());
+                    assertThat(post.getAggregateVersion()).isEqualTo(2L);
+                }
+            });
+        } finally {
+            source.stop(0);
+        }
     }
 
     private String event(long id, long version, String eventId, Instant at, boolean delete, String title) throws Exception {
