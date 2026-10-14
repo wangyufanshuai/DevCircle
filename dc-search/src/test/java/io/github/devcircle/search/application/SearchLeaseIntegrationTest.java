@@ -24,6 +24,14 @@ import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CountDownLatch;
+import java.util.List;
+import io.github.devcircle.common.error.BusinessException;
+import io.github.devcircle.common.error.ErrorCode;
+import io.github.devcircle.content.contract.PostSummary;
+import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
+import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.any;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -36,11 +44,14 @@ class SearchLeaseIntegrationTest {
             .withDatabaseName("dc_search").withUsername("devcircle").withPassword("devcircle");
     @Autowired JdbcClient jdbc;
     @Autowired SearchEventCoordinator coordinator;
+    @Autowired PlatformTransactionManager manager;
 
     @BeforeEach
     void clear() {
         jdbc.sql("DELETE FROM search_consumer_dedup").update();
         jdbc.sql("DELETE FROM search_event_watermark").update();
+        jdbc.sql("UPDATE search_reindex_guard SET active_job_id=NULL").update();
+        jdbc.sql("DELETE FROM search_reindex_job").update();
     }
 
     @Test
@@ -100,6 +111,53 @@ class SearchLeaseIntegrationTest {
         assertThatThrownBy(() -> coordinator.claim(forged, 91004)).isInstanceOf(IllegalArgumentException.class);
         assertThat(jdbc.sql("SELECT lease_owner FROM search_event_watermark WHERE post_id=91004")
                 .query(String.class).single()).isEqualTo(owner.leaseToken());
+    }
+
+    @Test
+    void realMysqlLocksExcludeConcurrentBatchAndCancellation() throws Exception {
+        var source = mock(SearchIndexService.class);
+        var projection = mock(SearchProjectionStore.class);
+        var jobs = new SearchReindexJobs(jdbc, manager, source, projection, new ObjectMapper());
+        UUID id = UUID.randomUUID();
+        jobs.start(id, true);
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(source.loadContentBatch("")).thenAnswer(call -> {
+            entered.countDown();
+            if (!release.await(15, TimeUnit.SECONDS)) throw new IllegalStateException("test timed out");
+            return new SearchIndexService.ContentBatch(List.of(), "", false);
+        });
+        try (var worker = Executors.newSingleThreadExecutor()) {
+            var running = worker.submit(() -> jobs.step(id, 0));
+            try {
+                assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(() -> jobs.step(id, 0)).isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.code()).as("translated cause: %s", ex.getCause()).isEqualTo(ErrorCode.VERSION_CONFLICT));
+                assertThatThrownBy(() -> jobs.cancel(id)).isInstanceOf(BusinessException.class);
+            } finally { release.countDown(); }
+            var checkpoint = running.get(10, TimeUnit.SECONDS);
+            assertThat(checkpoint.revision()).isEqualTo(1);
+            assertThat(jobs.step(id, 0)).isEqualTo(checkpoint);
+        }
+    }
+
+    @Test
+    void mysqlCheckpointRollsBackAfterExternalWriteFailureAndCanResume() {
+        var mapper = new ObjectMapper().findAndRegisterModules();
+        var source = spy(new SearchIndexService(mock(ElasticsearchOperations.class), mapper, "http://127.0.0.1:1", coordinator));
+        var projection = mock(SearchProjectionStore.class);
+        var post = new PostSummary(1L, "TEXT", "one", "body", "author", List.of(), List.of(), 0, 0, 0,
+                "PUBLISHED", Instant.EPOCH).withAggregateVersion(1L);
+        doReturn(new SearchIndexService.ContentBatch(List.of(post), "", false)).when(source).loadContentBatch("");
+        doThrow(new IllegalStateException("connection lost after ES write")).doNothing().when(projection).upsert(any());
+        var jobs = new SearchReindexJobs(jdbc, manager, source, projection, mapper);
+        UUID id = UUID.randomUUID();
+        var initial = jobs.start(id, true);
+        assertThatThrownBy(() -> jobs.step(id, 0)).isInstanceOf(BusinessException.class);
+        var restarted = new SearchReindexJobs(jdbc, manager, source, projection, mapper);
+        assertThat(restarted.get(id)).isEqualTo(initial);
+        assertThat(restarted.step(id, 0).phase()).isEqualTo("VERIFYING");
+        verify(projection, times(2)).upsert(any());
     }
 
     private ValidatedEvent event(long postId) {

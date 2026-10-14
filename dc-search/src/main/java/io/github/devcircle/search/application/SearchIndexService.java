@@ -67,12 +67,11 @@ final class SearchIndexService {
 
     int reindexSeedPosts() {
         String cursor = "";
-        PostSummary previous = null;
         int indexed = 0;
         while (true) {
             ContentBatch batch;
             try {
-                batch = loadContentBatch(cursor, previous);
+                batch = loadContentBatch(cursor);
             } catch (RuntimeException ex) {
                 if (ex instanceof BusinessException) throw ex;
                 throw dependency("内容服务暂时不可用，无法重建搜索索引", ex);
@@ -91,7 +90,6 @@ final class SearchIndexService {
                 throw dependency("搜索索引暂时不可用，重建未完成", ex);
             }
             if (!batch.hasMore()) break;
-            previous = posts.getLast();
             cursor = batch.nextCursor();
         }
         try {
@@ -185,7 +183,8 @@ final class SearchIndexService {
         readFallbackEnabled = true;
     }
 
-    private ContentBatch loadContentBatch(String cursor, PostSummary previous) {
+    ContentBatch loadContentBatch(String cursor) {
+        CursorPosition previous = cursor.isEmpty() ? null : cursorPosition(cursor);
         ApiResponse<List<PostSummary>> response = contentClient.get()
                 .uri(uriBuilder -> uriBuilder.path("/api/posts")
                         .queryParam("cursor", cursor).queryParam("size", 20).build())
@@ -199,6 +198,9 @@ final class SearchIndexService {
         List<PostSummary> posts = response.data();
         boolean hasMore = (Boolean) response.meta().get("hasMore");
         String next = (String) response.meta().get("nextCursor");
+        if (previous != null && posts.isEmpty()) {
+            throw new IllegalStateException("Content disappeared after a continuation cursor");
+        }
         if (hasMore ? posts.size() != 20 || next.isBlank() || next.equals(cursor) : !next.isEmpty()) {
             throw new IllegalStateException("Content service returned inconsistent cursor metadata");
         }
@@ -213,21 +215,27 @@ final class SearchIndexService {
                     || post.createdAt().equals(previous.createdAt()) && post.id() >= previous.id())) {
                 throw new IllegalStateException("Content cursor did not advance in createdAt/id order");
             }
-            previous = post;
+            previous = new CursorPosition(post.createdAt(), post.id());
         }
         if (hasMore) {
-            String decoded = new String(Base64.getUrlDecoder().decode(next), StandardCharsets.UTF_8);
-            String[] parts = decoded.split("\\|", -1);
+            CursorPosition position = cursorPosition(next);
             PostSummary last = posts.getLast();
-            if (parts.length != 2 || !Instant.parse(parts[0]).equals(last.createdAt())
-                    || Long.parseLong(parts[1]) != last.id()) {
+            if (!position.createdAt().equals(last.createdAt()) || position.id() != last.id().longValue()) {
                 throw new IllegalStateException("Content cursor does not identify the last post");
             }
         }
         return new ContentBatch(posts, next, hasMore);
     }
 
-    private record ContentBatch(List<PostSummary> records, String nextCursor, boolean hasMore) { }
+    record ContentBatch(List<PostSummary> records, String nextCursor, boolean hasMore) { }
+
+    private CursorPosition cursorPosition(String cursor) {
+        String[] parts = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8).split("\\|", -1);
+        if (parts.length != 2) throw new IllegalArgumentException("Invalid content cursor");
+        return new CursorPosition(Instant.parse(parts[0]), Long.parseLong(parts[1]));
+    }
+
+    private record CursorPosition(Instant createdAt, long id) { }
 
     private long requiredPositiveLong(JsonNode payload, String field) {
         JsonNode value = payload.get(field);
@@ -250,7 +258,7 @@ final class SearchIndexService {
         return value.textValue();
     }
 
-    private PostSearchDocument document(PostSummary post, Instant occurredAt) {
+    PostSearchDocument document(PostSummary post, Instant occurredAt) {
         return document(post, occurredAt, "reindex-" + post.id());
     }
 

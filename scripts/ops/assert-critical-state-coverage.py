@@ -24,6 +24,7 @@ CRITICAL_CLASSES = (
     ("dc-recommend", "io/github/devcircle/recommend/application/InteractionChangedConsumer"),
     ("dc-recommend", "io/github/devcircle/recommend/application/FollowChangedConsumer"),
     ("dc-search", "io/github/devcircle/search/application/SearchEventCoordinator"),
+    ("dc-search", "io/github/devcircle/search/application/SearchReindexJobs"),
     ("dc-user", "io/github/devcircle/user/application/UserRegisteredConsumer"),
 )
 

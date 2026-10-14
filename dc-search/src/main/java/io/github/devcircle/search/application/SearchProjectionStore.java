@@ -10,6 +10,9 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.springframework.data.elasticsearch.core.query.Criteria;
+import org.springframework.data.elasticsearch.core.query.CriteriaQuery;
+import org.springframework.data.elasticsearch.core.query.Query;
 
 /** Owns the Elasticsearch projection write semantics and monotonic tombstones. */
 @Component
@@ -47,6 +50,37 @@ class SearchProjectionStore {
 
     void refresh() {
         operations.indexOps(PostSearchDocument.class).refresh();
+    }
+
+    PostSearchDocument get(long id) {
+        return operations.get(Long.toString(id), PostSearchDocument.class);
+    }
+
+    boolean countsMatch(long expectedPublished) {
+        long published = operations.count(new CriteriaQuery(new Criteria("status").is("PUBLISHED")), PostSearchDocument.class);
+        long tombstones = operations.count(new CriteriaQuery(new Criteria("status").is("DELETED")
+                .and("aggregateVersion").greaterThanEqual(0)), PostSearchDocument.class);
+        return published == expectedPublished
+                && operations.count(Query.findAll(), PostSearchDocument.class) == published + tombstones;
+    }
+
+    static Map<String, Object> businessState(PostSearchDocument document) {
+        Map<String, Object> state = new LinkedHashMap<>();
+        if (document == null) return state;
+        state.put("id", document.getId());
+        state.put("title", document.getTitle());
+        state.put("excerpt", document.getExcerpt());
+        state.put("author", document.getAuthor());
+        state.put("authorId", document.getAuthorId());
+        state.put("tags", document.getTags());
+        state.put("status", document.getStatus());
+        state.put("theme", document.getTheme());
+        state.put("contentKind", document.getContentKind());
+        state.put("difficulty", document.getDifficulty());
+        state.put("createdAt", document.getCreatedAt() == null ? null : document.getCreatedAt().toEpochMilli());
+        state.put("aggregateVersion", document.getAggregateVersion());
+        state.values().removeIf(java.util.Objects::isNull);
+        return state;
     }
 
     void upsert(PostSearchDocument document) {

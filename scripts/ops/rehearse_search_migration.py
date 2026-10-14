@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import time
 import urllib.request
+import urllib.error
 import uuid
 import zipfile
 
@@ -323,11 +324,50 @@ class Rehearsal:
         self.check("legacy_binary_V3_index_and_Kafka_readable")
         baseline = self.backup("baseline", [OLD_INDEX])
         self.start_search(self.new_image, False)
-        self.api("POST", "/api/search/admin/reindex", token=token)
+        # Add 19 isolated rows after the old baseline so the durable job must cross a batch boundary.
+        for post_id in range(900003, 900022):
+            self.sql("dc_content", f"INSERT INTO post(id,author_id,title,status,version) VALUES({post_id},42,'checkpoint-{post_id}','PUBLISHED',1); INSERT INTO post_content(post_id,markdown) VALUES({post_id},'checkpoint-body-{post_id}');")
+        job_id = str(uuid.uuid4())
+        endpoint = "/api/search/admin/reindex/jobs/" + job_id
+        self.api("PUT", endpoint + "?maintenanceConfirmed=true", token=token)
+        ordinary = self.api("POST", "/api/auth/register", {
+            "email": "reindex-reader@example.test", "password": "Reindex-Reader-2026!", "displayName": "Reader"})["accessToken"]
+        for method, path, auth, expected in (
+                ("GET", endpoint, None, 401), ("GET", endpoint, ordinary, 403),
+                ("POST", endpoint + "/step?revision=0", ordinary, 403),
+                ("POST", endpoint + "/cancel", ordinary, 403),
+                ("PUT", "/api/search/admin/reindex/jobs/" + str(uuid.uuid4()) + "?maintenanceConfirmed=true", ordinary, 403)):
+            try:
+                self.api(method, path, token=auth)
+                raise AssertionError("Non-admin reindex operation was accepted")
+            except urllib.error.HTTPError as error:
+                if error.code != expected:
+                    raise AssertionError("Unexpected reindex authorization result") from None
+        if self.sql("dc_search", "SELECT COUNT(*) FROM search_reindex_job WHERE revision=0 AND phase='COPYING'") != "1":
+            raise AssertionError("Rejected reindex requests changed job state")
+        self.check("reindex_job_gateway_permissions_no_side_effects")
+        checkpoint = self.api("POST", endpoint + "/step?revision=0", token=token)
+        if checkpoint["phase"] != "COPYING" or checkpoint["copied"] != 20 or not checkpoint["cursor"]:
+            raise AssertionError("Reindex did not persist the copy checkpoint")
+        # Kill only this isolated project's search process; DB/index volumes remain intact.
+        self.dc("kill", "-s", "SIGKILL", "dc-search")
+        self.start_search(self.new_image, False)
+        if self.api("GET", endpoint, token=token) != checkpoint:
+            raise AssertionError("Reindex checkpoint was lost across process termination")
+        if self.api("POST", endpoint + "/step?revision=0", token=token) != checkpoint:
+            raise AssertionError("Retry of an acknowledged batch advanced twice")
+        completed = checkpoint
+        for _ in range(6):
+            if completed["phase"] in {"COMPLETED", "FAILED", "CANCELLED"}:
+                break
+            completed = self.api("POST", endpoint + "/step?revision=" + str(completed["revision"]), token=token)
+        if completed["phase"] != "COMPLETED" or completed["copied"] != 21 or completed["verified"] != 21 or completed["copyHash"] != completed["verifyHash"]:
+            raise AssertionError("Reindex exact verification did not complete after restart")
+        self.receipt["reindexJob"] = completed
         compare_projection(self.rows(), self.docs(NEW_INDEX))
         if self.sql("dc_search", "SELECT COUNT(*) FROM search_event_watermark WHERE aggregate_version IS NOT NULL;") != "0":
             raise AssertionError("Migration fabricated versions from old watermarks")
-        self.check("V4_baseline_exact_business_versions")
+        self.check("V5_durable_reindex_restart_and_exact_verification")
         self.dc("stop", "dc-search")
         self.start_search(self.new_image, True)
         unversioned = self.event(title="legacy-must-not-overwrite")
