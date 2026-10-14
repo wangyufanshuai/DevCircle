@@ -244,6 +244,7 @@ jobs:
       - run: bash scripts/ops/test-verify-image-identity.sh
       - run: python -m unittest scripts/ops/test_ci_results.py
       - run: python -m unittest scripts/ops/test_local_workflow.py
+      - run: python -m unittest scripts/ops/test_search_migration_rehearsal.py
       - run: docker compose -p devcircle-local-core -f docker-compose.e2e.yml -f deploy/compose/docker-compose.local.yml --profile review config --quiet
       - run: python -m unittest scripts/ops/test_notification_cutover_contract.py
       - run: helm lint deploy/helm/devcircle -f deploy/helm/devcircle/values-dev.yaml
