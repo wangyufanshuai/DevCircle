@@ -1,0 +1,6 @@
+# Root context is used only by Dockerfile.service. Web/MinIO use their own contexts.
+**
+!Dockerfile.service
+!dc-*/
+!dc-*/target/
+!dc-*/target/*.jar

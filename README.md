@@ -202,6 +202,7 @@ docs/                    架构、SLO、安全、实验和运行手册
 - [推荐实验](./docs/recommendation-experiment.md) — 分桶、指标和实验生命周期。
 - [性能报告](./docs/performance-report.md) — 压测方法与结果边界。
 - [恢复演练](./docs/recovery-rehearsal.md) — 依赖故障和数据恢复。
+- [搜索索引迁移与回滚](./docs/search-migration-rehearsal.md) — 本机旧／新程序切换、快照恢复和只读回滚。
 
 ## 当前方向
 

@@ -382,7 +382,9 @@ watermark_action="$(sql dc_search "SELECT last_action FROM search_event_watermar
 }
 
 stale_event_id="$(node -e "process.stdout.write(require('crypto').randomUUID())")"
-stale_event="$(node -e "const [eventId,postId]=process.argv.slice(1); process.stdout.write(JSON.stringify({eventId,type:'content.rejected',version:1,occurredAt:'2020-01-01T00:00:00Z',producer:'dc-admin',aggregateId:postId,payload:{postId:Number(postId),status:'REJECTED',action:'STALE_RECOVERY_TEST'}}))" "${stale_event_id}" "${post_id}")"
+current_version="$(sql dc_content "SELECT version FROM post WHERE id = ${post_id};")"
+[[ "${current_version}" =~ ^[1-9][0-9]*$ ]] || { echo "Published post has no usable business version" >&2; exit 1; }
+stale_event="$(node -e "const [eventId,postId,version]=process.argv.slice(1); process.stdout.write(JSON.stringify({eventId,type:'content.rejected',version:1,occurredAt:'2020-01-01T00:00:00Z',producer:'dc-admin',aggregateId:postId,payload:{postId:Number(postId),aggregateVersion:Number(version)-1,status:'REJECTED',action:'STALE_RECOVERY_TEST'}}))" "${stale_event_id}" "${post_id}" "${current_version}")"
 printf '%s\n' "${stale_event}" | "${COMPOSE[@]}" exec -T kafka sh -c \
   '/opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic content.rejected' >/dev/null
 
