@@ -46,7 +46,7 @@ class SearchServiceEventTest {
         service.upsertPostFromEvent("""
                 {"eventId":"44444444-4444-4444-4444-444444444444","type":"content.rejected","version":1,
                  "occurredAt":"2026-07-30T12:00:00Z","producer":"dc-admin","aggregateId":"91",
-                 "payload":{"postId":91,"status":"REJECTED"}}
+                 "payload":{"aggregateVersion":1,"postId":91,"status":"REJECTED"}}
                 """);
 
         verify(operations).update(any(UpdateQuery.class), any(IndexCoordinates.class));
@@ -65,7 +65,7 @@ class SearchServiceEventTest {
         service.indexPostEvent("""
                 {"eventId":"41414141-4141-4414-8414-414141414141","type":"audit.completed","version":1,
                  "occurredAt":"2026-07-30T12:05:00Z","producer":"dc-admin","aggregateId":"912",
-                 "payload":{"postId":912,"status":"PUBLISHED","type":"TEXT","theme":"COSMOS",
+                 "payload":{"aggregateVersion":1,"postId":912,"status":"PUBLISHED","type":"TEXT","theme":"COSMOS",
                    "contentKind":"COSMIC_ARTICLE","difficulty":"HARD","solvable":true,
                    "title":"引力井回声","excerpt":"观测阵列收到延迟信号","author":"轨道记录员",
                    "authorId":27,"tags":["宇宙","观测"]}}
@@ -74,8 +74,8 @@ class SearchServiceEventTest {
         ArgumentCaptor<UpdateQuery> query = ArgumentCaptor.forClass(UpdateQuery.class);
         verify(operations).update(query.capture(), any(IndexCoordinates.class));
         assertThat(query.getValue().getId()).isEqualTo("912");
-        assertThat(query.getValue().getScript()).contains("projectionVersion", "projectionEventId");
-        assertThat(query.getValue().getParams().get("projectionVersion")).isEqualTo(occurredAt.toEpochMilli());
+        assertThat(query.getValue().getScript()).contains("aggregateVersion", "noop");
+        assertThat(query.getValue().getParams().get("aggregateVersion")).isEqualTo(1L);
         @SuppressWarnings("unchecked")
         var document = (java.util.Map<String, Object>) query.getValue().getParams().get("document");
         assertThat(document).containsEntry("title", "引力井回声")
@@ -99,7 +99,7 @@ class SearchServiceEventTest {
         service.upsertPostFromEvent("""
                 {"eventId":"42424242-4242-4424-8424-424242424242","type":"post.updated","version":1,
                  "occurredAt":"2026-07-30T12:10:00Z","producer":"dc-content","aggregateId":"913",
-                 "payload":{"postId":913,"status":"CHANGES_REQUIRED"}}
+                 "payload":{"aggregateVersion":1,"postId":913,"status":"CHANGES_REQUIRED"}}
                 """);
 
         verify(operations).update(any(UpdateQuery.class), any(IndexCoordinates.class));
@@ -116,7 +116,7 @@ class SearchServiceEventTest {
         service.upsertPostFromEvent("""
                 {"eventId":"43434343-4343-4434-8434-434343434343","type":"post.updated","version":1,
                  "occurredAt":"2026-07-30T12:12:00Z","producer":"dc-content","aggregateId":"914",
-                 "payload":{"postId":914}}
+                 "payload":{"aggregateVersion":1,"postId":914}}
                 """);
 
         verifyNoInteractions(operations);
@@ -137,7 +137,7 @@ class SearchServiceEventTest {
         assertThatThrownBy(() -> service.upsertPostFromEvent("""
                 {"eventId":"4e444444-4444-4444-4444-444444444444","type":"content.rejected","version":1,
                  "occurredAt":"2026-07-30T12:15:00Z","producer":"dc-admin","aggregateId":"911",
-                 "payload":{"postId":911,"status":"REJECTED"}}
+                 "payload":{"aggregateVersion":1,"postId":911,"status":"REJECTED"}}
                 """))
                 .isSameAs(refreshFailure);
 
@@ -155,7 +155,7 @@ class SearchServiceEventTest {
         service.deletePostEvent("""
                 {"eventId":"55555555-5555-5555-5555-555555555555","type":"post.deleted","version":1,
                  "occurredAt":"2026-07-30T12:30:00Z","producer":"dc-content","aggregateId":"92",
-                 "payload":{"postId":92}}
+                 "payload":{"aggregateVersion":1,"postId":92}}
                 """);
 
         verifyNoInteractions(operations);
@@ -173,7 +173,7 @@ class SearchServiceEventTest {
         assertThatThrownBy(() -> service.upsertPostFromEvent("""
                 {"eventId":"66666666-6666-6666-6666-666666666666","type":"post.created","version":1,
                  "occurredAt":"2026-07-30T13:00:00Z","producer":"dc-content","aggregateId":"93",
-                 "payload":{"postId":93,"title":"深空回声","tags":["宇宙"],"status":"PUBLISHED"}}
+                 "payload":{"aggregateVersion":1,"postId":93,"title":"深空回声","tags":["宇宙"],"status":"PUBLISHED"}}
                 """))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("elasticsearch unavailable");
@@ -195,7 +195,7 @@ class SearchServiceEventTest {
         assertThatThrownBy(() -> service.upsertPostFromEvent("""
                 {"eventId":"67676767-6767-4676-8676-676767676767","type":"post.created","version":1,
                  "occurredAt":"2026-07-30T13:05:00Z","producer":"dc-content","aggregateId":"931",
-                 "payload":{"postId":931,"title":"失联观测站","tags":["宇宙"],"status":"PUBLISHED"}}
+                 "payload":{"aggregateVersion":1,"postId":931,"title":"失联观测站","tags":["宇宙"],"status":"PUBLISHED"}}
                 """))
                 .isSameAs(indexFailure)
                 .satisfies(error -> assertThat(error.getSuppressed()).containsExactly(stateFailure));
@@ -208,14 +208,14 @@ class SearchServiceEventTest {
         assertThatThrownBy(() -> service.upsertPostFromEvent("""
                 {"eventId":"77777777-7777-4777-8777-777777777777","type":"content.rejected","version":1,
                  "occurredAt":"2026-07-30T13:30:00Z","producer":"dc-content","aggregateId":"94",
-                 "payload":{"postId":94,"status":"REJECTED"}}
+                 "payload":{"aggregateVersion":1,"postId":94,"status":"REJECTED"}}
                 """))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Unsupported event producer dc-content for type content.rejected");
         assertThatThrownBy(() -> service.deletePostEvent("""
                 {"eventId":"88888888-8888-4888-8888-888888888888","type":"post.deleted","version":1,
                  "occurredAt":"2026-07-30T13:30:00Z","producer":"dc-content","aggregateId":"95",
-                 "payload":{"postId":96}}
+                 "payload":{"aggregateVersion":1,"postId":96}}
                 """))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Search aggregateId does not match postId");
@@ -232,7 +232,7 @@ class SearchServiceEventTest {
         assertThatThrownBy(() -> service.upsertPostFromEvent("""
                 {"eventId":"9e45e6c2-3020-43bd-818d-f61b629d6ce1","type":"post.updated","version":1,
                  "occurredAt":"2026-07-30T14:00:00Z","producer":"dc-content","aggregateId":"97",
-                 "payload":{"postId":97,"status":7}}
+                 "payload":{"aggregateVersion":1,"postId":97,"status":7}}
                 """))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Search payload status must be a string");

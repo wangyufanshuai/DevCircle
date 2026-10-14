@@ -36,7 +36,7 @@ public class PostDetailReadRepository {
         PostSummary row = jdbcClient.sql("""
                         SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
                                p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
-                               p.like_count, p.comment_count, p.view_count, p.created_at,
+                               p.like_count, p.comment_count, p.view_count, p.version, p.created_at,
                                pc.clues, pc.suspects, pc.timeline, pc.question, pc.answer_keywords,
                                pc.explanation, pc.worldbuilding, pc.cosmic_facts, pc.related_post_ids,
                                GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR ',') AS tags
@@ -46,7 +46,7 @@ public class PostDetailReadRepository {
                         LEFT JOIN tag t ON t.id = pt.tag_id
                         WHERE p.id = :id
                         GROUP BY p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
-                                 p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count, p.view_count, p.created_at,
+                                 p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count, p.view_count, p.version, p.created_at,
                                  pc.clues, pc.suspects, pc.timeline, pc.question, pc.answer_keywords,
                                  pc.explanation, pc.worldbuilding, pc.cosmic_facts, pc.related_post_ids
                         """)
@@ -62,7 +62,7 @@ public class PostDetailReadRepository {
                         readStringList(rs.getString("timeline")), Optional.ofNullable(rs.getString("question")).orElse(""),
                         readStringList(rs.getString("answer_keywords")), Optional.ofNullable(rs.getString("explanation")).orElse(""),
                         readStringList(rs.getString("worldbuilding")), readStringList(rs.getString("cosmic_facts")),
-                        readLongList(rs.getString("related_post_ids"))))
+                        readLongList(rs.getString("related_post_ids"))).withAggregateVersion(rs.getLong("version")))
                 .single();
         return mediaReadRepository.attachMediaAssets(List.of(row)).getFirst();
     }
@@ -74,7 +74,7 @@ public class PostDetailReadRepository {
         PostDetailView detail = jdbcClient.sql("""
                         SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
                                p.title, pc.markdown, pc.solution, p.author_id, p.status,
-                               p.like_count, p.comment_count, p.view_count, p.created_at,
+                               p.like_count, p.comment_count, p.view_count, p.version, p.created_at,
                                pc.clues, pc.suspects, pc.timeline, pc.question,
                                pc.worldbuilding, pc.cosmic_facts, pc.related_post_ids,
                                GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR ',') AS tags
@@ -85,7 +85,7 @@ public class PostDetailReadRepository {
                         WHERE p.id = :id AND p.status = 'PUBLISHED'
                         GROUP BY p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
                                  p.title, pc.markdown, pc.solution, p.author_id, p.status,
-                                 p.like_count, p.comment_count, p.view_count, p.created_at,
+                                 p.like_count, p.comment_count, p.view_count, p.version, p.created_at,
                                  pc.clues, pc.suspects, pc.timeline, pc.question,
                                  pc.worldbuilding, pc.cosmic_facts, pc.related_post_ids
                         """)

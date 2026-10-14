@@ -57,64 +57,26 @@ class SearchServiceProjectionContractTest {
     }
 
     @Test
-    void sparsePublishedEventHydratesTheCanonicalDetailBeforeIndexing() throws Exception {
-        detailResponse.set("""
-                {"code":"OK","data":{"id":101,"type":"TEXT","theme":"COSMOS",
-                  "contentKind":"COSMIC_ARTICLE","difficulty":"HARD","solvable":true,
-                  "title":"引力井中的旧信号","excerpt":"来自观测阵列的延迟回声",
-                  "author":{"id":17,"username":"轨道记录员"},"tags":["宇宙","观测"],
-                  "likes":8,"comments":3,"views":144,"status":"PUBLISHED",
-                  "createdAt":"2026-07-30T10:00:00Z"}}
-                """);
-        String eventId = "11111111-2222-4333-8444-555555555555";
-        Instant occurredAt = Instant.parse("2026-07-30T11:00:00Z");
-        when(coordinator.claim(any(ValidatedEvent.class), eq(101L))).thenReturn(acquired());
-        when(operations.indexOps(PostSearchDocument.class)).thenReturn(mock(IndexOperations.class));
-
-        service.upsertPostFromEvent("""
+    void unversionedLegacyEventsAreRejectedBeforeAnySideEffects() {
+        assertThatThrownBy(() -> service.upsertPostFromEvent("""
                 {"eventId":"11111111-2222-4333-8444-555555555555","type":"post.updated","version":1,
                  "occurredAt":"2026-07-30T11:00:00Z","producer":"dc-content","aggregateId":"101",
-                 "payload":{"postId":101}}
-                """);
-
-        ArgumentCaptor<UpdateQuery> query = ArgumentCaptor.forClass(UpdateQuery.class);
-        verify(operations).update(query.capture(), any(IndexCoordinates.class));
-        assertThat(query.getValue().getId()).isEqualTo("101");
-        @SuppressWarnings("unchecked")
-        var document = (java.util.Map<String, Object>) query.getValue().getParams().get("document");
-        assertThat(document).containsEntry("title", "引力井中的旧信号")
-                .containsEntry("author", "轨道记录员")
-                .containsEntry("authorId", 17L)
-                .containsEntry("theme", "COSMOS")
-                .containsEntry("contentKind", "COSMIC_ARTICLE")
-                .containsEntry("difficulty", "HARD")
-                .containsEntry("eventOccurredAt", occurredAt.toEpochMilli());
-        verify(coordinator).complete(eventId, 101L, occurredAt, "UPSERT", LEASE_TOKEN);
+                 "payload":{"postId":101,"title":"legacy","status":"PUBLISHED"}}
+                """))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("aggregateVersion");
+        org.mockito.Mockito.verifyNoInteractions(coordinator, operations);
     }
 
     @Test
-    void canonicalDetailThatIsNoLongerPublishedIsRemovedInsteadOfIndexed() throws Exception {
-        detailResponse.set("""
-                {"code":"OK","data":{"id":102,"theme":"DEDUCTION","contentKind":"CASE_FILE",
-                  "difficulty":"MEDIUM","title":"已撤回的案件","author":"记录员","tags":[],
-                  "status":"CHANGES_REQUIRED","createdAt":"2026-07-30T10:00:00Z"}}
-                """);
-        String eventId = "22222222-3333-4444-8555-666666666666";
-        Instant occurredAt = Instant.parse("2026-07-30T12:00:00Z");
+    void sparseVersionedEventCannotHydrateUnrelatedNewerState() {
         when(coordinator.claim(any(ValidatedEvent.class), eq(102L))).thenReturn(acquired());
-        IndexOperations indexOperations = mock(IndexOperations.class);
-        when(operations.indexOps(PostSearchDocument.class)).thenReturn(indexOperations);
-
-        service.upsertPostFromEvent("""
+        assertThatThrownBy(() -> service.upsertPostFromEvent("""
                 {"eventId":"22222222-3333-4444-8555-666666666666","type":"post.updated","version":1,
                  "occurredAt":"2026-07-30T12:00:00Z","producer":"dc-content","aggregateId":"102",
-                 "payload":{"postId":102}}
-                """);
-
-        verify(operations).update(any(UpdateQuery.class), any(IndexCoordinates.class));
-        verify(indexOperations).refresh();
-        verify(operations, never()).save(any(PostSearchDocument.class));
-        verify(coordinator).complete(eventId, 102L, occurredAt, "REMOVE", LEASE_TOKEN);
+                 "payload":{"postId":102,"aggregateVersion":3,"status":"PUBLISHED"}}
+                """))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("snapshot");
+        org.mockito.Mockito.verifyNoInteractions(operations);
     }
 
     @Test
@@ -132,7 +94,7 @@ class SearchServiceProjectionContractTest {
         assertThatThrownBy(() -> service.deletePostEvent("""
                 {"eventId":"33333333-4444-4555-8666-777777777777","type":"post.deleted","version":1,
                  "occurredAt":"2026-07-30T13:00:00Z","producer":"dc-content","aggregateId":"103",
-                 "payload":{"postId":103}}
+                 "payload":{"aggregateVersion":1,"postId":103}}
                 """))
                 .isSameAs(indexFailure)
                 .satisfies(error -> assertThat(error.getSuppressed()).containsExactly(stateFailure));

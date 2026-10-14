@@ -65,6 +65,7 @@ class PostRepositoryConnectionPoolTest {
         jdbc.execute("""
                 CREATE TABLE post (
                     id BIGINT PRIMARY KEY,
+                    version BIGINT NOT NULL DEFAULT 0,
                     author_id BIGINT NOT NULL,
                     title VARCHAR(160) NOT NULL,
                     type VARCHAR(32) NOT NULL DEFAULT 'TEXT',

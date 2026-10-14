@@ -41,6 +41,7 @@ public class SearchIndexInitializer implements ApplicationRunner {
         // empty, otherwise healthy index rejects every query that sorts by id.
         Document properties = Document.create();
         properties.put("id", Map.of("type", "long"));
+        properties.put("aggregateVersion", Map.of("type", "long"));
         Document mapping = Document.create();
         mapping.put("properties", properties);
         index.putMapping(mapping);

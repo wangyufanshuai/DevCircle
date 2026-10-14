@@ -38,8 +38,9 @@ case "${command_line}" in
       printf '1\trow-hash-one\n2\trow-hash-two\n'
     fi
     ;;
-  *'devcircle-posts/_count?q=-status'*) printf '{"count":%s,"_shards":{"total":1}}\n' "${FAKE_ES_COUNT:-0}" ;;
-  *'devcircle-posts/_count'*) printf '{"count":%s,"_shards":{"total":1}}\n' "${FAKE_ES_INDEXED_COUNT:-180}" ;;
+  *'devcircle-posts-v2/_count?q=-_exists_'*) printf '{"count":%s}\n' "${FAKE_ES_UNVERSIONED:-0}" ;;
+  *'devcircle-posts-v2/_count?q=-status'*) printf '{"count":%s,"_shards":{"total":1}}\n' "${FAKE_ES_COUNT:-0}" ;;
+  *'devcircle-posts-v2/_count'*) printf '{"count":%s,"_shards":{"total":1}}\n' "${FAKE_ES_INDEXED_COUNT:-180}" ;;
   *'exec mysql '*|*'tar -C /minio-data -xzf -'*) cat >/dev/null ;;
 esac
 EOF
@@ -96,6 +97,12 @@ verification="$(ENV_FILE="${ENV_FILE}" EXPECTED_POST_COUNT=180 FAKE_ES_COUNT=0 \
   bash "${ROOT_DIR}/scripts/ops/verify-migration.sh")"
 [[ "${verification}" == *'"postCount":180'* && "${verification}" == *'"unexpectedSearchDocuments":0'* ]]
 [[ "${verification}" == *'"publishedPostCount":180'* && "${verification}" == *'"indexedSearchDocuments":180'* ]]
+
+if ENV_FILE="${ENV_FILE}" EXPECTED_POST_COUNT=180 FAKE_ES_UNVERSIONED=1 \
+  bash "${ROOT_DIR}/scripts/ops/verify-migration.sh" >/dev/null 2>&1; then
+  echo "Expected unversioned search documents to block migration verification" >&2
+  exit 1
+fi
 
 manifest_verification="$(ENV_FILE="${ENV_FILE}" BACKUP_MANIFEST="${BACKUP_DIR}/backup-manifest.json" FAKE_ES_COUNT=0 \
   bash "${ROOT_DIR}/scripts/ops/verify-migration.sh")"

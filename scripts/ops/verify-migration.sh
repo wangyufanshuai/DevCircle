@@ -47,7 +47,7 @@ if [[ -n "${BACKUP_MANIFEST}" ]]; then
 fi
 
 INDEX_RESPONSE="$("${COMPOSE[@]}" exec -T elasticsearch sh -c \
-  "curl --fail --silent --show-error 'http://localhost:9200/devcircle-posts/_count'")"
+  "curl --fail --silent --show-error 'http://localhost:9200/devcircle-posts-v2/_count?q=status%3APUBLISHED'")"
 INDEXED_DOCUMENTS="$(printf '%s' "${INDEX_RESPONSE}" | sed -n 's/.*"count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
 [[ "${INDEXED_DOCUMENTS}" =~ ^[0-9]+$ ]] || {
   echo "Could not parse Elasticsearch document count" >&2
@@ -59,14 +59,22 @@ test "${INDEXED_DOCUMENTS}" = "${PUBLISHED_COUNT}" || {
 }
 
 SEARCH_RESPONSE="$("${COMPOSE[@]}" exec -T elasticsearch sh -c \
-  "curl --fail --silent --show-error 'http://localhost:9200/devcircle-posts/_count?q=-status%3APUBLISHED'")"
+  "curl --fail --silent --show-error 'http://localhost:9200/devcircle-posts-v2/_count?q=-status%3APUBLISHED%20AND%20-status%3ADELETED'")"
 UNPUBLISHED_INDEXED="$(printf '%s' "${SEARCH_RESPONSE}" | sed -n 's/.*"count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
 [[ "${UNPUBLISHED_INDEXED}" =~ ^[0-9]+$ ]] || {
   echo "Could not parse Elasticsearch verification response" >&2
   exit 1
 }
 test "${UNPUBLISHED_INDEXED}" = "0" || {
-  echo "Elasticsearch contains ${UNPUBLISHED_INDEXED} non-published documents" >&2
+  echo "Elasticsearch contains ${UNPUBLISHED_INDEXED} unexpected non-published documents (excluding versioned tombstones)" >&2
+  exit 1
+}
+
+VERSION_RESPONSE="$("${COMPOSE[@]}" exec -T elasticsearch sh -c \
+  "curl --fail --silent --show-error 'http://localhost:9200/devcircle-posts-v2/_count?q=-_exists_%3AaggregateVersion'")"
+UNVERSIONED="$(printf '%s' "${VERSION_RESPONSE}" | sed -n 's/.*"count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
+[[ "${UNVERSIONED}" == "0" ]] || {
+  echo "Elasticsearch contains unversioned documents or returned an invalid count" >&2
   exit 1
 }
 

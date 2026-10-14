@@ -42,6 +42,7 @@ class SearchEventCoordinatorTest {
                     event_id CHAR(36) PRIMARY KEY,
                     topic VARCHAR(128) NOT NULL,
                     post_id BIGINT NOT NULL,
+                    aggregate_version BIGINT,
                     event_fingerprint CHAR(64) NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
                     status VARCHAR(16) NOT NULL DEFAULT 'PROCESSING',
                     attempts INT NOT NULL DEFAULT 1,
@@ -54,6 +55,7 @@ class SearchEventCoordinatorTest {
         jdbcClient.sql("""
                 CREATE TABLE search_event_watermark (
                     post_id BIGINT PRIMARY KEY,
+                    aggregate_version BIGINT,
                     occurred_at TIMESTAMP,
                     last_event_id CHAR(36),
                     last_action VARCHAR(16),
@@ -94,23 +96,23 @@ class SearchEventCoordinatorTest {
     }
 
     @Test
-    void equalProjectionMillisecondUsesEventIdAsTheDeterministicTieBreaker() {
+    void businessVersionOrdersSameMillisecondRegardlessOfRandomEventId() {
         Instant firstOccurredAt = Instant.parse("2026-07-30T10:30:00.000900Z");
         Instant newerOccurredAt = Instant.parse("2026-07-30T10:30:00.000100Z");
         Instant olderOccurredAt = Instant.parse("2026-07-30T10:30:00.000800Z");
         String firstId = "55555555-5555-4555-8555-555555555555";
-        String newerId = "66666666-6666-4666-8666-666666666666";
+        String newerId = "11111111-1111-4111-8111-111111111111";
         String olderId = "44444444-4444-4444-8444-444444444444";
 
         SearchEventCoordinator.ClaimResult firstClaim = acquire(
-                event(firstId, "post.updated", 43L, firstOccurredAt), 43L);
+                versioned(event(firstId, "post.updated", 43L, firstOccurredAt), 1), 43L);
         coordinator.complete(firstId, 43L, firstOccurredAt, "UPSERT", firstClaim.leaseToken());
 
         SearchEventCoordinator.ClaimResult newerClaim = acquire(
-                event(newerId, "content.rejected", 43L, newerOccurredAt), 43L);
+                versioned(event(newerId, "content.rejected", 43L, newerOccurredAt), 2), 43L);
         coordinator.complete(newerId, 43L, newerOccurredAt, "REMOVE", newerClaim.leaseToken());
 
-        assertDuplicate(event(olderId, "post.updated", 43L, olderOccurredAt), 43L);
+        assertDuplicate(versioned(event(olderId, "post.updated", 43L, olderOccurredAt), 1), 43L);
 
         String lastEventId = jdbcClient.sql("""
                         SELECT last_event_id FROM search_event_watermark WHERE post_id = 43
@@ -325,6 +327,11 @@ class SearchEventCoordinatorTest {
         assertPayloadConflict(original, 97L);
     }
 
+    private ValidatedEvent versioned(ValidatedEvent event, long version) {
+        ((ObjectNode) event.payload()).put("aggregateVersion", version);
+        return event;
+    }
+
     private void assertPayloadConflict(ValidatedEvent event, long postId) {
         assertThatThrownBy(() -> coordinator.claim(event, postId))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -353,6 +360,7 @@ class SearchEventCoordinatorTest {
 
     private ValidatedEvent event(String eventId, String topic, long postId, Instant occurredAt,
                                  String producer, String aggregateId, ObjectNode payload) {
+        if (!payload.has("aggregateVersion")) payload.put("aggregateVersion", occurredAt.getEpochSecond());
         return new ValidatedEvent(UUID.fromString(eventId), topic, 1, occurredAt, producer, aggregateId, payload);
     }
 

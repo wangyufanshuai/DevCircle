@@ -74,7 +74,9 @@ class SearchServiceDependencyFailureTest {
                 """);
         ElasticsearchOperations operations = mock(ElasticsearchOperations.class);
         IllegalStateException outage = new IllegalStateException("cluster 10.0.0.9 rejected the bulk request");
-        when(operations.save(any(Iterable.class))).thenThrow(outage);
+        IndexOperations index = mock(IndexOperations.class);
+        when(operations.indexOps(PostSearchDocument.class)).thenReturn(index);
+        org.mockito.Mockito.doThrow(outage).when(index).refresh();
         SearchService service = service(operations,
                 "http://127.0.0.1:" + contentServer.getAddress().getPort());
 
@@ -102,10 +104,7 @@ class SearchServiceDependencyFailureTest {
 
         assertThat(service.reindexSeedPosts()).isEqualTo(21);
 
-        @SuppressWarnings("rawtypes")
-        ArgumentCaptor<Iterable> documents = ArgumentCaptor.forClass(Iterable.class);
-        verify(operations).save(documents.capture());
-        assertThat(StreamSupport.stream(documents.getValue().spliterator(), false)).hasSize(21);
+        verify(operations, org.mockito.Mockito.times(21)).update(any(org.springframework.data.elasticsearch.core.query.UpdateQuery.class), any(org.springframework.data.elasticsearch.core.mapping.IndexCoordinates.class));
         verify(indexOperations).refresh();
     }
 
@@ -123,7 +122,7 @@ class SearchServiceDependencyFailureTest {
 
         assertThat(service.reindexSeedPosts()).isEqualTo(180);
 
-        verify(operations).save(any(Iterable.class));
+        verify(operations, org.mockito.Mockito.times(180)).update(any(org.springframework.data.elasticsearch.core.query.UpdateQuery.class), any(org.springframework.data.elasticsearch.core.mapping.IndexCoordinates.class));
         verify(indexOperations).refresh();
     }
 
@@ -151,7 +150,7 @@ class SearchServiceDependencyFailureTest {
 
     private String postJson(int id) {
         return """
-                {"id":%d,"type":"TEXT","theme":"DEDUCTION","contentKind":"CASE_FILE",
+                {"aggregateVersion":2,"id":%d,"type":"TEXT","theme":"DEDUCTION","contentKind":"CASE_FILE",
                  "difficulty":"MEDIUM","solvable":false,"solvedCount":0,"title":"恢复内容 %d",
                  "excerpt":"用于索引恢复的内容","author":"恢复验证员","authorId":7,"tags":["恢复"],
                  "mediaAssets":[],"likes":0,"comments":0,"views":0,"status":"PUBLISHED",

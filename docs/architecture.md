@@ -50,7 +50,7 @@ Admin 不再以自身连接的内容库代表全局 Outbox。Auth、User、Conte
 
 搜索服务只依赖事件，不直接跨库读取内容库。`dc-search` 的代码模块在第一阶段由 `dc-discovery` 进程承载；`post.created` 和 `post.updated` 更新索引，`post.deleted` 删除索引。Elasticsearch 短暂不可用时，消费者保留失败状态并由补偿任务重放。独立 `dc-search` 可执行镜像仅在 `legacy-search rollback Compose` 中启用。
 
-搜索投影以 `(occurredAtMillis, eventId)` 作为统一的单调版本。协调器和 Elasticsearch 脚本使用相同的字典序规则：较新的事件毫秒时间优先；同一毫秒内 eventId 较大的事件优先。这样同一时刻产生的审核、更新或删除事件不会被协调器误判为重复，也不会由旧事件覆盖较新投影。
+搜索投影以内容表 `post.version` 派生的 `payload.aggregateVersion` 作为业务顺序。审核状态变更递增版本并在同一事务写入完整公开字段快照；数据库水位与 Elasticsearch `devcircle-posts-v2` 条件更新仅接受更高业务版本，相同或旧版本不修改投影。删除留下持久墓碑，重建同样受版本约束。时间戳只保留作审计信息，UUID 只作事件身份。旧无版本事件明确拒绝，迁移需受控停写并重建新索引，见 [迁移步骤](search-version-migration.md)。
 
 评论服务和互动服务分别在本地事务中维护文章级权威计数与单调 `counterVersion`，并把计数快照写入 Outbox 事件。内容服务按生产者版本更新 `comment_count` 和 `like_count`，乱序旧版本只能写消费去重记录，不能回退计数；一旦接收带版本快照的事件，无版本旧事件也不能覆盖它。升级期间遗留事件仍可使用 `(occurredAtMillis, eventId)` 增量兼容路径。
 

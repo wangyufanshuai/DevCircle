@@ -14,29 +14,24 @@ import java.util.Map;
 /** Owns the Elasticsearch projection write semantics and monotonic tombstones. */
 @Component
 class SearchProjectionStore {
-    private static final IndexCoordinates POST_INDEX = IndexCoordinates.of("devcircle-posts");
+    private static final IndexCoordinates POST_INDEX = IndexCoordinates.of("devcircle-posts-v2");
     private static final String MONOTONIC_UPSERT_SCRIPT = """
-            long incoming = params.projectionVersion;
-            long current = ctx._source.projectionVersion == null ? Long.MIN_VALUE : ctx._source.projectionVersion;
-            String currentEventId = ctx._source.projectionEventId;
-            boolean newer = incoming > current
-                    || (incoming == current && (currentEventId == null
-                        || params.projectionEventId.compareTo(currentEventId) > 0));
+            long incoming = params.aggregateVersion;
+            long current = ctx._source.aggregateVersion == null ? -1L : ctx._source.aggregateVersion;
+            boolean newer = incoming > current;
             if (newer) {
+                ctx._source.clear();
                 ctx._source.putAll(params.document);
-            }
+            } else { ctx.op = 'noop'; }
             """;
     private static final String MONOTONIC_REMOVE_SCRIPT = """
-            long incoming = params.projectionVersion;
-            long current = ctx._source.projectionVersion == null ? Long.MIN_VALUE : ctx._source.projectionVersion;
-            String currentEventId = ctx._source.projectionEventId;
-            boolean newer = incoming > current
-                    || (incoming == current && (currentEventId == null
-                        || params.projectionEventId.compareTo(currentEventId) > 0));
+            long incoming = params.aggregateVersion;
+            long current = ctx._source.aggregateVersion == null ? -1L : ctx._source.aggregateVersion;
+            boolean newer = incoming > current;
             if (newer) {
                 ctx._source.clear();
                 ctx._source.putAll(params.tombstone);
-            }
+            } else { ctx.op = 'noop'; }
             """;
 
     private final ElasticsearchOperations operations;
@@ -46,7 +41,7 @@ class SearchProjectionStore {
     }
 
     void save(Iterable<PostSearchDocument> documents) {
-        operations.save(documents);
+        documents.forEach(this::upsert);
         refresh();
     }
 
@@ -55,14 +50,14 @@ class SearchProjectionStore {
     }
 
     void upsert(PostSearchDocument document) {
-        if (document.getProjectionVersion() == null || document.getProjectionEventId() == null) {
+        if (document.getAggregateVersion() == null || document.getAggregateVersion() < 0 || document.getProjectionEventId() == null) {
             throw new IllegalArgumentException("Search projection document is missing its ordering metadata");
         }
         UpdateQuery query = UpdateQuery.builder(String.valueOf(document.getId()))
                 .withScript(MONOTONIC_UPSERT_SCRIPT)
                 .withLang("painless")
                 .withParams(Map.of(
-                        "projectionVersion", document.getProjectionVersion(),
+                        "aggregateVersion", document.getAggregateVersion(),
                         "projectionEventId", document.getProjectionEventId(),
                         "document", source(document)))
                 .withUpsert(Document.create())
@@ -72,8 +67,8 @@ class SearchProjectionStore {
         operations.update(query, POST_INDEX);
     }
 
-    void remove(long postId, Instant occurredAt, String eventId) {
-        if (occurredAt == null || eventId == null || eventId.isBlank()) {
+    void remove(long postId, Instant occurredAt, String eventId, long aggregateVersion) {
+        if (aggregateVersion < 0 || occurredAt == null || eventId == null || eventId.isBlank()) {
             throw new IllegalArgumentException("Search removal is missing its ordering metadata");
         }
         Map<String, Object> tombstone = new LinkedHashMap<>();
@@ -81,12 +76,13 @@ class SearchProjectionStore {
         tombstone.put("status", "DELETED");
         tombstone.put("eventOccurredAt", occurredAt.toEpochMilli());
         tombstone.put("projectionVersion", occurredAt.toEpochMilli());
+        tombstone.put("aggregateVersion", aggregateVersion);
         tombstone.put("projectionEventId", eventId);
         UpdateQuery query = UpdateQuery.builder(String.valueOf(postId))
                 .withScript(MONOTONIC_REMOVE_SCRIPT)
                 .withLang("painless")
                 .withParams(Map.of(
-                        "projectionVersion", occurredAt.toEpochMilli(),
+                        "aggregateVersion", aggregateVersion,
                         "projectionEventId", eventId,
                         "tombstone", tombstone))
                 .withUpsert(Document.create())
@@ -111,6 +107,7 @@ class SearchProjectionStore {
         source.put("createdAt", document.getCreatedAt() == null ? null : document.getCreatedAt().toEpochMilli());
         source.put("eventOccurredAt", document.getEventOccurredAt() == null ? null : document.getEventOccurredAt().toEpochMilli());
         source.put("projectionVersion", document.getProjectionVersion());
+        source.put("aggregateVersion", document.getAggregateVersion());
         source.put("projectionEventId", document.getProjectionEventId());
         source.values().removeIf(java.util.Objects::isNull);
         return source;

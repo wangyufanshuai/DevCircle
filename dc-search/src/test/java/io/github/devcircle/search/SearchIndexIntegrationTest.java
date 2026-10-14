@@ -61,7 +61,7 @@ class SearchIndexIntegrationTest {
         searchService.upsertPostFromEvent("""
                 {"eventId":"ab093343-47bb-4b59-902c-260ece9e80ff","type":"post.created","version":1,
                  "occurredAt":"2026-07-28T10:00:00Z","producer":"dc-content","aggregateId":"8801",
-                 "payload":{"postId":8801,"authorId":42,"title":"Kafka Outbox integration",
+                 "payload":{"aggregateVersion":1,"postId":8801,"authorId":42,"title":"Kafka Outbox integration",
                  "tags":["Kafka","MySQL"],"status":"PUBLISHED"}}
                 """);
 
@@ -76,12 +76,12 @@ class SearchIndexIntegrationTest {
         searchService.upsertPostFromEvent("""
                 {"eventId":"bc093343-47bb-4b59-902c-260ece9e80ff","type":"post.updated","version":1,
                  "occurredAt":"2026-07-29T12:00:00Z","producer":"dc-content","aggregateId":"8811",
-                 "payload":{"postId":8811,"title":"neweralpha","excerpt":"newversionalpha","tags":["宇宙"],"status":"PUBLISHED"}}
+                 "payload":{"aggregateVersion":2,"postId":8811,"title":"neweralpha","excerpt":"newversionalpha","tags":["宇宙"],"status":"PUBLISHED"}}
                 """);
         searchService.upsertPostFromEvent("""
                 {"eventId":"cc093343-47bb-4b59-902c-260ece9e80ff","type":"post.updated","version":1,
                  "occurredAt":"2026-07-29T11:00:00Z","producer":"dc-content","aggregateId":"8811",
-                 "payload":{"postId":8811,"title":"olderbeta","excerpt":"oldversionbeta","tags":["宇宙"],"status":"PUBLISHED"}}
+                 "payload":{"aggregateVersion":1,"postId":8811,"title":"olderbeta","excerpt":"oldversionbeta","tags":["宇宙"],"status":"PUBLISHED"}}
                 """);
 
         PostSearchDocument document = elasticsearchOperations.get("8811", PostSearchDocument.class);
@@ -92,7 +92,7 @@ class SearchIndexIntegrationTest {
         searchService.upsertPostFromEvent("""
                 {"eventId":"dc093343-47bb-4b59-902c-260ece9e80ff","type":"content.rejected","version":1,
                  "occurredAt":"2026-07-29T13:00:00Z","producer":"dc-admin","aggregateId":"8811",
-                 "payload":{"postId":8811,"status":"REJECTED"}}
+                 "payload":{"aggregateVersion":3,"postId":8811,"status":"REJECTED"}}
                 """);
 
         PostSearchDocument tombstone = elasticsearchOperations.get("8811", PostSearchDocument.class);
@@ -104,7 +104,7 @@ class SearchIndexIntegrationTest {
         searchService.upsertPostFromEvent("""
                 {"eventId":"dd093343-47bb-4b59-902c-260ece9e80ff","type":"post.updated","version":1,
                  "occurredAt":"2026-07-29T12:30:00Z","producer":"dc-content","aggregateId":"8811",
-                 "payload":{"postId":8811,"title":"resurrectedstale","excerpt":"resurrectedstale","tags":[],"status":"PUBLISHED"}}
+                 "payload":{"aggregateVersion":2,"postId":8811,"title":"resurrectedstale","excerpt":"resurrectedstale","tags":[],"status":"PUBLISHED"}}
                 """);
 
         assertThat(elasticsearchOperations.get("8811", PostSearchDocument.class).getStatus()).isEqualTo("DELETED");
@@ -117,13 +117,13 @@ class SearchIndexIntegrationTest {
         Instant newerEvent = Instant.parse("2026-07-29T14:00:00Z");
         elasticsearchOperations.save(new PostSearchDocument(8841L, "authoritative", "authoritative", "event",
                 7L, List.of(), "PUBLISHED", "COSMOS", "COSMIC_ARTICLE", "MEDIUM",
-                createdAt, newerEvent, newerEvent.toEpochMilli(), "newer-event"));
+                createdAt, newerEvent, newerEvent.toEpochMilli(), "newer-event").withAggregateVersion(3L));
         elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
 
         searchService.upsertPostFromEvent("""
                 {"eventId":"ee093343-47bb-4b59-902c-260ece9e80ff","type":"post.updated","version":1,
                  "occurredAt":"2026-07-29T13:00:00Z","producer":"dc-content","aggregateId":"8841",
-                 "payload":{"postId":8841,"title":"stale-overwrite","excerpt":"stale-overwrite","tags":[],"status":"PUBLISHED"}}
+                 "payload":{"aggregateVersion":1,"postId":8841,"title":"stale-overwrite","excerpt":"stale-overwrite","tags":[],"status":"PUBLISHED"}}
                 """);
 
         assertThat(elasticsearchOperations.get("8841", PostSearchDocument.class).getTitle()).isEqualTo("authoritative");
@@ -135,13 +135,13 @@ class SearchIndexIntegrationTest {
         Instant newerEvent = Instant.parse("2026-07-29T14:00:00Z");
         elasticsearchOperations.save(new PostSearchDocument(8842L, "authoritative-delete", "authoritative-delete", "event",
                 7L, List.of(), "PUBLISHED", "COSMOS", "COSMIC_ARTICLE", "MEDIUM",
-                createdAt, newerEvent, newerEvent.toEpochMilli(), "newer-delete-event"));
+                createdAt, newerEvent, newerEvent.toEpochMilli(), "newer-delete-event").withAggregateVersion(3L));
         elasticsearchOperations.indexOps(PostSearchDocument.class).refresh();
 
         searchService.deletePostEvent("""
                 {"eventId":"fe093343-47bb-4b59-902c-260ece9e80ff","type":"post.deleted","version":1,
                  "occurredAt":"2026-07-29T13:00:00Z","producer":"dc-content","aggregateId":"8842",
-                 "payload":{"postId":8842}}
+                 "payload":{"aggregateVersion":1,"postId":8842}}
                 """);
 
         assertThat(elasticsearchOperations.get("8842", PostSearchDocument.class).getStatus()).isEqualTo("PUBLISHED");
@@ -152,12 +152,12 @@ class SearchIndexIntegrationTest {
         searchService.upsertPostFromEvent("""
                 {"eventId":"ec093343-47bb-4b59-902c-260ece9e80ff","type":"post.updated","version":1,
                  "occurredAt":"2099-01-01T10:00:00Z","producer":"dc-content","aggregateId":"8821",
-                 "payload":{"postId":8821,"title":"cursorfirst","excerpt":"cursorfirst","tags":[],"status":"PUBLISHED"}}
+                 "payload":{"aggregateVersion":1,"postId":8821,"title":"cursorfirst","excerpt":"cursorfirst","tags":[],"status":"PUBLISHED"}}
                 """);
         searchService.upsertPostFromEvent("""
                 {"eventId":"fc093343-47bb-4b59-902c-260ece9e80ff","type":"post.updated","version":1,
                  "occurredAt":"2099-01-01T09:00:00Z","producer":"dc-content","aggregateId":"8822",
-                 "payload":{"postId":8822,"title":"cursorsecond","excerpt":"cursorsecond","tags":[],"status":"PUBLISHED"}}
+                 "payload":{"aggregateVersion":1,"postId":8822,"title":"cursorsecond","excerpt":"cursorsecond","tags":[],"status":"PUBLISHED"}}
                 """);
 
         var first = searchService.searchCursor("", null, "latest", null, null, null, null, 1);
@@ -167,7 +167,7 @@ class SearchIndexIntegrationTest {
         searchService.upsertPostFromEvent("""
                 {"eventId":"ac093343-47bb-4b59-902c-260ece9e80ff","type":"post.updated","version":1,
                  "occurredAt":"2099-01-01T11:00:00Z","producer":"dc-content","aggregateId":"8823",
-                 "payload":{"postId":8823,"title":"cursornew","excerpt":"cursornew","tags":[],"status":"PUBLISHED"}}
+                 "payload":{"aggregateVersion":1,"postId":8823,"title":"cursornew","excerpt":"cursornew","tags":[],"status":"PUBLISHED"}}
                 """);
 
         var second = searchService.searchCursor("", null, "latest", null, null, null, first.nextCursor(), 1);
@@ -183,12 +183,12 @@ class SearchIndexIntegrationTest {
         searchService.upsertPostFromEvent("""
                 {"eventId":"bc093343-47bb-4b59-902c-260ece9e80aa","type":"post.updated","version":1,
                  "occurredAt":"2098-01-01T10:00:00Z","producer":"dc-content","aggregateId":"8831",
-                 "payload":{"postId":8831,"title":"relevance signal","excerpt":"relevance signal","tags":[],"status":"PUBLISHED"}}
+                 "payload":{"aggregateVersion":1,"postId":8831,"title":"relevance signal","excerpt":"relevance signal","tags":[],"status":"PUBLISHED"}}
                 """);
         searchService.upsertPostFromEvent("""
                 {"eventId":"cc093343-47bb-4b59-902c-260ece9e80aa","type":"post.updated","version":1,
                  "occurredAt":"2098-01-01T09:00:00Z","producer":"dc-content","aggregateId":"8832",
-                 "payload":{"postId":8832,"title":"relevance signal","excerpt":"relevance signal","tags":[],"status":"PUBLISHED"}}
+                 "payload":{"aggregateVersion":1,"postId":8832,"title":"relevance signal","excerpt":"relevance signal","tags":[],"status":"PUBLISHED"}}
                 """);
 
         var first = searchService.searchCursor("relevance", null, "relevance", null, null, null, null, 1);

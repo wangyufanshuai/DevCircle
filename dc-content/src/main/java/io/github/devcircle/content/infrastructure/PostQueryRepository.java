@@ -52,7 +52,7 @@ public class PostQueryRepository {
         List<PostSummary> rows = jdbcClient.sql("""
                         SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
                                p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
-                               p.like_count, p.comment_count, p.view_count, p.created_at,
+                               p.like_count, p.comment_count, p.view_count, p.version, p.created_at,
                                GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR ',') AS tags
                         FROM post p
                         JOIN post_content pc ON pc.post_id = p.id
@@ -63,7 +63,7 @@ public class PostQueryRepository {
                           AND (:contentKind IS NULL OR p.content_kind = :contentKind)
                           AND (:difficulty IS NULL OR p.difficulty = :difficulty)
                         GROUP BY p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
-                                 p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count, p.view_count, p.created_at
+                                 p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count, p.view_count, p.version, p.created_at
                         ORDER BY p.created_at DESC
                         LIMIT :size OFFSET :offset
                         """)
@@ -115,7 +115,7 @@ public class PostQueryRepository {
         List<PostSummary> rows = jdbcClient.sql("""
                         SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
                                p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
-                               p.like_count, p.comment_count, p.view_count, p.created_at,
+                               p.like_count, p.comment_count, p.view_count, p.version, p.created_at,
                                GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR ',') AS tags
                         FROM post p
                         JOIN post_content pc ON pc.post_id = p.id
@@ -130,7 +130,7 @@ public class PostQueryRepository {
                                OR (p.created_at = :cursorTime AND p.id < :cursorId))
                         GROUP BY p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
                                  p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count,
-                                 p.view_count, p.created_at
+                                 p.view_count, p.version, p.created_at
                         ORDER BY p.created_at DESC, p.id DESC
                         LIMIT :limit
                         """)
@@ -155,7 +155,7 @@ public class PostQueryRepository {
         List<PostSummary> rows = jdbcClient.sql("""
                         SELECT p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
                                p.title, LEFT(pc.markdown, 140) AS excerpt, p.author_id, p.status,
-                               p.like_count, p.comment_count, p.view_count, p.created_at,
+                               p.like_count, p.comment_count, p.view_count, p.version, p.created_at,
                                GROUP_CONCAT(t.name ORDER BY t.name SEPARATOR ',') AS tags
                         FROM post p
                         JOIN post_content pc ON pc.post_id = p.id
@@ -163,7 +163,7 @@ public class PostQueryRepository {
                         LEFT JOIN tag t ON t.id = pt.tag_id
                         WHERE p.id <> :id AND p.theme = :theme AND p.status = 'PUBLISHED'
                         GROUP BY p.id, p.type, p.theme, p.content_kind, p.difficulty, p.solvable, p.solved_count,
-                                 p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count, p.view_count, p.created_at
+                                 p.title, pc.markdown, p.author_id, p.status, p.like_count, p.comment_count, p.view_count, p.version, p.created_at
                         ORDER BY p.like_count DESC, p.created_at DESC
                         LIMIT :size
                         """)
@@ -196,7 +196,7 @@ public class PostQueryRepository {
                 rs.getString("title"), rs.getString("excerpt"), "user-" + rs.getLong("author_id"),
                 rs.getLong("author_id"), splitTags(rs.getString("tags")), List.of(), rs.getLong("like_count"),
                 rs.getLong("comment_count"), rs.getLong("view_count"), rs.getString("status"),
-                rs.getTimestamp("created_at").toInstant());
+                rs.getTimestamp("created_at").toInstant()).withAggregateVersion(rs.getLong("version"));
     }
 
     private CursorValue decodeCursor(String cursor) {

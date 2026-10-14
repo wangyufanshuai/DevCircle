@@ -186,7 +186,7 @@ public class AdminMutationSupport {
                     .query(Long.class)
                     .single();
             EventEnvelope event = EventEnvelope.now(topic, "dc-admin", String.valueOf(postId),
-                    Map.of("postId", postId, "receiverId", receiverId, "action", action, "status", status));
+                    searchPayload(postId, receiverId, action, status));
             String payload = objectMapper.writeValueAsString(event);
             jdbcClient.sql("""
                             INSERT INTO outbox_event(event_id, topic, aggregate_type, aggregate_id, payload)
@@ -200,6 +200,34 @@ public class AdminMutationSupport {
         } catch (JsonProcessingException ex) {
             throw new IllegalStateException("Failed to serialize moderation event", ex);
         }
+    }
+
+    private Map<String, Object> searchPayload(Long postId, Long receiverId, String action, String status) {
+        Map<String, Object> payload = jdbcClient.sql("""
+                SELECT p.version, p.title, p.type, p.theme, p.content_kind, p.difficulty,
+                       p.created_at, LEFT(pc.markdown, 140) AS excerpt
+                FROM post p JOIN post_content pc ON pc.post_id = p.id WHERE p.id = :postId FOR UPDATE
+                """).param("postId", postId).query((rs, row) -> {
+            Map<String, Object> result = new java.util.LinkedHashMap<>();
+            result.put("aggregateVersion", rs.getLong("version"));
+            result.put("title", rs.getString("title"));
+            result.put("type", rs.getString("type"));
+            result.put("theme", rs.getString("theme"));
+            result.put("contentKind", rs.getString("content_kind"));
+            result.put("difficulty", rs.getString("difficulty"));
+            result.put("excerpt", rs.getString("excerpt"));
+            result.put("createdAt", rs.getTimestamp("created_at").toInstant().toString());
+            return result;
+        }).single();
+        payload.put("postId", postId);
+        payload.put("authorId", receiverId);
+        payload.put("author", "user-" + receiverId);
+        payload.put("receiverId", receiverId);
+        payload.put("action", action);
+        payload.put("status", status);
+        payload.put("tags", jdbcClient.sql("SELECT t.name FROM tag t JOIN post_tag pt ON pt.tag_id=t.id WHERE pt.post_id=:id ORDER BY t.name FOR UPDATE")
+                .param("id", postId).query(String.class).list());
+        return payload;
     }
 
     public JdbcClient jdbcClient() {

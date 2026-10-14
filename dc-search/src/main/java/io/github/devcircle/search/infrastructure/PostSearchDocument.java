@@ -8,7 +8,7 @@ import org.springframework.data.elasticsearch.annotations.FieldType;
 import java.time.Instant;
 import java.util.List;
 
-@Document(indexName = "devcircle-posts")
+@Document(indexName = "devcircle-posts-v2")
 public class PostSearchDocument {
     @Id
     private Long id;
@@ -35,11 +35,20 @@ public class PostSearchDocument {
     @Field(type = FieldType.Date)
     private Instant eventOccurredAt;
     /**
-     * Monotonic projection watermark used by the Elasticsearch update script.
-     * This is intentionally separate from the event envelope schema version.
+     * Legacy timestamp metadata retained for diagnostics only.
+     * Ordering is exclusively determined by aggregateVersion, never this timestamp.
      */
     @Field(type = FieldType.Long)
     private Long projectionVersion;
+    @Field(type = FieldType.Long)
+    private Long aggregateVersion;
+
+    public Long getAggregateVersion() { return aggregateVersion; }
+
+    public PostSearchDocument withAggregateVersion(Long value) {
+        this.aggregateVersion = value;
+        return this;
+    }
     @Field(type = FieldType.Keyword)
     private String projectionEventId;
 

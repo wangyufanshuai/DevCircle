@@ -96,7 +96,7 @@ public class PostMediaReadRepository {
                 post.solvedCount(), post.title(), post.excerpt(), post.author(), post.authorId(), post.tags(), media,
                 post.likes(), post.comments(), post.views(), post.status(), post.createdAt(), post.clues(),
                 post.suspects(), post.timeline(), post.question(), post.answerKeywords(), post.explanation(),
-                post.worldbuilding(), post.cosmicFacts(), post.relatedPostIds());
+                post.worldbuilding(), post.cosmicFacts(), post.relatedPostIds()).withAggregateVersion(post.aggregateVersion());
     }
 
     private record PostMediaAsset(Long postId, MediaAssetView media) {

@@ -85,6 +85,7 @@ public class PostRepository {
                 new PostAppealRepository(jdbcTemplate, idempotencyStore, eventStore));
     }
 
+    @Transactional
     public PostSummary create(Long authorId, CreatePostRequest request) {
         return create(authorId, request, "internal-" + UUID.randomUUID());
     }

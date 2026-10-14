@@ -53,6 +53,45 @@ class DraftPersistenceIntegrationTest {
     @Autowired
     JdbcClient jdbcClient;
 
+    @Autowired io.github.devcircle.content.infrastructure.ContentEventStore eventStore;
+    @Autowired org.springframework.transaction.PlatformTransactionManager transactions;
+
+    @Test
+    void concurrentSearchEventsAllocateVersionsAtomicallyAndRollbackWithOutbox() throws Exception {
+        long id = postRepository.createDraft(42L, draft("Version snapshot", "canonical body", null), "version-create").id();
+        var tx = new org.springframework.transaction.support.TransactionTemplate(transactions);
+        var barrier = new java.util.concurrent.CyclicBarrier(8);
+        try (var pool = java.util.concurrent.Executors.newFixedThreadPool(8)) {
+            var futures = new java.util.ArrayList<java.util.concurrent.Future<?>>();
+            for (int i = 0; i < 8; i++) futures.add(pool.submit(() -> {
+                barrier.await(20, java.util.concurrent.TimeUnit.SECONDS);
+                tx.executeWithoutResult(status -> eventStore.append("post.updated", "POST", Long.toString(id), java.util.Map.of("title", "untrusted snapshot")));
+                return null;
+            }));
+            for (var future : futures) future.get(30, java.util.concurrent.TimeUnit.SECONDS);
+        }
+        assertThat(jdbcClient.sql("SELECT version FROM post WHERE id=:id").param("id", id).query(Long.class).single()).isEqualTo(8);
+        var payloads = jdbcClient.sql("SELECT payload FROM outbox_event WHERE aggregate_id=:id AND topic='post.updated'")
+                .param("id", Long.toString(id)).query(String.class).list();
+        var versions = new java.util.TreeSet<Long>();
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        for (String payload : payloads) {
+            var value = mapper.readTree(payload).path("payload");
+            versions.add(value.path("aggregateVersion").longValue());
+            assertThat(value.path("title").asText()).isEqualTo("Version snapshot");
+            assertThat(value.path("excerpt").asText()).isEqualTo("canonical body");
+        }
+        assertThat(versions).containsExactly(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L);
+        assertThatThrownBy(() -> tx.executeWithoutResult(status -> {
+            eventStore.append("post.updated", "POST", Long.toString(id), java.util.Map.of());
+            throw new IllegalStateException("rollback");
+        })).isInstanceOf(IllegalStateException.class);
+        assertThat(jdbcClient.sql("SELECT version FROM post WHERE id=:id").param("id", id).query(Long.class).single()).isEqualTo(8);
+        assertThat(jdbcClient.sql("SELECT COUNT(*) FROM outbox_event WHERE aggregate_id=:id AND topic='post.updated'")
+                .param("id", Long.toString(id)).query(Long.class).single()).isEqualTo(8);
+        assertThat(postQueryRepository.detail(id).aggregateVersion()).isEqualTo(8);
+    }
+
     @Test
     void draftRoundTripPersistsContentAndRejectsAStaleVersion() {
         var created = postRepository.createDraft(42L, draft("钟楼记录", "原始正文", null), "create-draft");

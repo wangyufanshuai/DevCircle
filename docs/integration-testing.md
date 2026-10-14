@@ -255,3 +255,7 @@ CI 使用完整 `verify -Pcoverage`，当前全局回归下限为行覆盖率 75
 - Elasticsearch 启动慢：确认 Docker 可用内存不低于 4GB。
 - MinIO 上传失败：确认 endpoint、access key、secret key 和 bucket 配置一致。
 - Windows 路径问题：优先在仓库根目录执行 Maven 命令。
+
+2026-10-14：此前时间戳＋UUID 的确定性顺序不构成业务因果顺序，当前实现已改用 aggregateVersion；参见 [搜索版本迁移及反例](search-version-migration.md)。历史测试数字不作为本次变更的验证结果。
+
+本次 Windows 本机验证：全仓 `clean verify -Pcoverage` 通过；随后对最终事务入口重跑 `dc-content -am verify -Pcoverage` 通过。最终报告共 610 个 Java 测试，0 failures/errors/skipped，17 份 JaCoCo 报告聚合行/分支覆盖率 85.43%/74.17%，搜索协调器分支 91.67%，全部 14 个关键状态类通过 85% 门禁。真实审核 Compose + Chromium 流程 1/1 通过；运维 Python 测试 94 项和备份/恢复脚本测试通过。该记录是本机验证，不代表生产升级完成。

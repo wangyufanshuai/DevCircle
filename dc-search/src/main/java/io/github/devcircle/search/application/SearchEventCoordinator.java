@@ -20,20 +20,21 @@ class SearchEventCoordinator {
         this.jdbcClient = jdbcClient;
     }
 
-    @Transactional(noRollbackFor = SearchAggregateBusyException.class)
+    @Transactional(isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED, noRollbackFor = SearchAggregateBusyException.class)
     public ClaimResult claim(ValidatedEvent event, long postId) {
+        long aggregateVersion = aggregateVersion(event);
         String eventId = event.eventId().toString();
         String topic = event.type();
-        Instant occurredAt = event.occurredAt();
         String eventFingerprint = EventFingerprint.sha256(event);
         String leaseToken = UUID.randomUUID().toString();
         int inserted = jdbcClient.sql("""
                         INSERT IGNORE INTO search_consumer_dedup(
-                            event_id, topic, post_id, event_fingerprint, status, attempts, lease_token)
-                        VALUES (:eventId, :topic, :postId, :eventFingerprint, 'PROCESSING', 1, :leaseToken)
+                            event_id, topic, post_id, event_fingerprint, aggregate_version, status, attempts, lease_token)
+                        VALUES (:eventId, :topic, :postId, :eventFingerprint, :aggregateVersion, 'PROCESSING', 1, :leaseToken)
                         """)
                 .param("eventId", eventId)
                 .param("topic", topic)
+                .param("aggregateVersion", aggregateVersion)
                 .param("postId", postId)
                 .param("eventFingerprint", eventFingerprint)
                 .param("leaseToken", leaseToken)
@@ -43,7 +44,7 @@ class SearchEventCoordinator {
             int reclaimed = jdbcClient.sql("""
                             UPDATE search_consumer_dedup
                             SET status = 'PROCESSING', attempts = attempts + 1, last_error = NULL,
-                                event_fingerprint = :eventFingerprint, lease_token = :leaseToken
+                                event_fingerprint = :eventFingerprint, lease_token = :leaseToken, aggregate_version = :aggregateVersion
                             WHERE event_id = :eventId
                               AND event_fingerprint IN (:eventFingerprint, :legacyFingerprint)
                               AND (status = 'FAILED'
@@ -52,6 +53,7 @@ class SearchEventCoordinator {
                     .param("eventId", eventId)
                     .param("eventFingerprint", eventFingerprint)
                     .param("legacyFingerprint", LEGACY_FINGERPRINT)
+                    .param("aggregateVersion", aggregateVersion)
                     .param("leaseToken", leaseToken)
                     .update();
             if (reclaimed == 0) {
@@ -83,20 +85,9 @@ class SearchEventCoordinator {
                     "Search event for post " + postId + " is already being processed");
         }
 
-        EventWatermark watermark = jdbcClient.sql("""
-                        SELECT occurred_at, last_event_id
-                        FROM search_event_watermark
-                        WHERE post_id = :postId
-                        """)
-                .param("postId", postId)
-                .query((rs, rowNum) -> {
-                    Timestamp value = rs.getTimestamp("occurred_at");
-                    return new EventWatermark(
-                            value == null ? null : value.toInstant(),
-                            rs.getString("last_event_id"));
-                })
-                .single();
-        if (!isNewerThanWatermark(occurredAt, eventId, watermark)) {
+        Long watermark = jdbcClient.sql("SELECT COALESCE(aggregate_version, -1) FROM search_event_watermark WHERE post_id = :postId")
+                .param("postId", postId).query((rs, row) -> (Long) rs.getObject(1)).single();
+        if (aggregateVersion <= watermark) {
             markCompletedRecord(eventId, leaseToken);
             releaseLease(leaseToken, postId);
             return ClaimResult.duplicate();
@@ -133,7 +124,9 @@ class SearchEventCoordinator {
     public void complete(String eventId, long postId, Instant occurredAt, String action, String leaseToken) {
         int updated = jdbcClient.sql("""
                         UPDATE search_event_watermark
-                        SET occurred_at = :occurredAt,
+                        SET aggregate_version = (SELECT aggregate_version FROM search_consumer_dedup
+                                WHERE event_id = :eventId AND lease_token = :leaseToken),
+                            occurred_at = :occurredAt,
                             last_event_id = :eventId,
                             last_action = :action,
                             lease_owner = NULL,
@@ -209,14 +202,12 @@ class SearchEventCoordinator {
         }
     }
 
-    private boolean isNewerThanWatermark(Instant occurredAt, String eventId, EventWatermark watermark) {
-        if (watermark.occurredAt() == null) return true;
-        int timeOrder = Long.compare(occurredAt.toEpochMilli(), watermark.occurredAt().toEpochMilli());
-        if (timeOrder != 0) return timeOrder > 0;
-        return watermark.lastEventId() == null || eventId.compareTo(watermark.lastEventId()) > 0;
-    }
-
-    private record EventWatermark(Instant occurredAt, String lastEventId) {
+    static long aggregateVersion(ValidatedEvent event) {
+        var value = event.payload().get("aggregateVersion");
+        if (value == null || !value.isIntegralNumber() || !value.canConvertToLong() || value.longValue() < 0) {
+            throw new IllegalArgumentException("Search event requires a non-negative aggregateVersion; legacy events require migration");
+        }
+        return value.longValue();
     }
 
     private record EventIdentity(String topic, long postId, String eventFingerprint) {

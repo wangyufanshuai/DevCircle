@@ -31,8 +31,44 @@ public record PostSummary(
         @JsonIgnore String explanation,
         List<String> worldbuilding,
         List<String> cosmicFacts,
-        List<Long> relatedPostIds
+        List<Long> relatedPostIds,
+        Long aggregateVersion
 ) {
+    public PostSummary(
+        Long id,
+        String type,
+        String theme,
+        String contentKind,
+        String difficulty,
+        boolean solvable,
+        long solvedCount,
+        String title,
+        String excerpt,
+        String author,
+        Long authorId,
+        List<String> tags,
+        List<MediaAssetView> mediaAssets,
+        long likes,
+        long comments,
+        long views,
+        String status,
+        Instant createdAt,
+        List<String> clues,
+        List<String> suspects,
+        List<String> timeline,
+        String question,
+        List<String> answerKeywords,
+        String explanation,
+        List<String> worldbuilding,
+        List<String> cosmicFacts,
+        List<Long> relatedPostIds) {
+        this(id, type, theme, contentKind, difficulty, solvable, solvedCount, title, excerpt, author, authorId, tags, mediaAssets, likes, comments, views, status, createdAt, clues, suspects, timeline, question, answerKeywords, explanation, worldbuilding, cosmicFacts, relatedPostIds, null);
+    }
+
+    public PostSummary withAggregateVersion(Long version) {
+        return new PostSummary(id, type, theme, contentKind, difficulty, solvable, solvedCount, title, excerpt, author, authorId, tags, mediaAssets, likes, comments, views, status, createdAt, clues, suspects, timeline, question, answerKeywords, explanation, worldbuilding, cosmicFacts, relatedPostIds, version);
+    }
+
     /**
      * Compatibility constructor for one release while callers migrate to the
      * stable author id carried by the canonical record constructor.

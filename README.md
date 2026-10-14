@@ -77,7 +77,7 @@ Maven 领域模块与生产 JVM 不是一一对应：
 ### 故障不是一句“最终一致”
 
 - Outbox 有租约、退避、最大尝试、`DEAD` 状态和受控 replay。
-- 搜索投影按 `(occurredAtMillis, eventId)` 拒绝较旧排序键；同毫秒随机 UUID 的排序不等于业务因果顺序，仍需迁移到聚合版本。
+- 搜索事件携带内容业务 `aggregateVersion`；数据库水位、ES 更新和重建都只接受更高版本，删除保留版本墓碑。旧无版本事件拒绝消费；升级步骤见 [搜索版本迁移](docs/search-version-migration.md)。
 - 评论、点赞等计数带生产者版本，乱序消息不会让计数倒退。
 - 同步依赖使用有界连接/读取超时，失败交给错误响应、重试或 DLT，而不是无限占用线程。
 - Notification cutover 明确保证 Flyway、consumer、topic admin、API 与 WebSocket 的 exactly-one ownership。

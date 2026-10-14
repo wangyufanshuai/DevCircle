@@ -113,7 +113,7 @@ public class AdminModerationService {
         support.requireReason(reason);
         try {
             Long taskId = activeTaskId(postId, requestedTaskId);
-            int postRows = jdbcClient.sql("UPDATE post SET status = :status, review_reason = :reason WHERE id = :postId AND status = 'PENDING'")
+            int postRows = jdbcClient.sql("UPDATE post SET version = version + 1, status = :status, review_reason = :reason WHERE id = :postId AND status = 'PENDING'")
                     .param("status", postStatus).param("reason", reason.trim()).param("postId", postId).update();
             if (postRows == 0) {
                 throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "待审核内容不存在或状态已变化");
@@ -211,7 +211,7 @@ public class AdminModerationService {
                             """).param("taskId", taskId).param("postId", postId).param("auditorId", auditorId)
                     .param("action", action).param("reason", normalizedReason).update();
             if ("CHANGES_REQUIRED".equals(status)) {
-                int postRows = jdbcClient.sql("UPDATE post SET status = 'CHANGES_REQUIRED', review_reason = :reason WHERE id = :postId AND status = 'PENDING'")
+                int postRows = jdbcClient.sql("UPDATE post SET version = version + 1, status = 'CHANGES_REQUIRED', review_reason = :reason WHERE id = :postId AND status = 'PENDING'")
                         .param("reason", normalizedReason).param("postId", postId).update();
                 if (postRows == 0) {
                     throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "待审核内容不存在或状态已变化");

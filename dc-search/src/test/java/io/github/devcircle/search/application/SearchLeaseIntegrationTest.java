@@ -104,7 +104,7 @@ class SearchLeaseIntegrationTest {
 
     private ValidatedEvent event(long postId) {
         return new ValidatedEvent(UUID.randomUUID(), "post.updated", 1, Instant.parse("2026-10-12T00:00:00Z"),
-                "dc-content", Long.toString(postId), new ObjectMapper().createObjectNode().put("postId", postId));
+                "dc-content", Long.toString(postId), new ObjectMapper().createObjectNode().put("postId", postId).put("aggregateVersion", 1));
     }
 
     @Configuration

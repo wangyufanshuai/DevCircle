@@ -91,3 +91,5 @@
    ```
 
 该校验器只验证证据，不会启动、停止或恢复任何服务。它要求 `host.json`、前后 Compose 状态、备份 Manifest、迁移校验、ES 重建、Kafka 追平、DLT 重放、服务健康、公网探测和 `recovery-timeline.json` 全部为 `PASS`，并重新生成 `recovery-summary.json` 与 `SHA256SUMS`。在该命令成功前，不能宣称正式 RTO/RPO 已达标。
+
+当前搜索版本升级使用 `devcircle-posts-v2`：迁移校验比较 PUBLISHED 文档数，允许 DELETED 墓碑，并拒绝任何缺少 aggregateVersion 的文档。上文 devcircle-posts 的记录属于历史版本。详见 [搜索版本迁移](search-version-migration.md)。

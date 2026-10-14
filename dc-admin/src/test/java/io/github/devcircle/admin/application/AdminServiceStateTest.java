@@ -57,12 +57,16 @@ class AdminServiceStateTest {
                     id BIGINT AUTO_INCREMENT PRIMARY KEY,
                     author_id BIGINT NOT NULL,
                     title VARCHAR(160) NOT NULL,
+                    type VARCHAR(16) DEFAULT 'TEXT', theme VARCHAR(32) DEFAULT 'DEDUCTION',
+                    content_kind VARCHAR(32) DEFAULT 'CASE_FILE', difficulty VARCHAR(16) DEFAULT 'MEDIUM',
                     status VARCHAR(32) NOT NULL,
                     version BIGINT NOT NULL DEFAULT 0,
                     review_reason VARCHAR(512) NULL,
                     submitted_at TIMESTAMP NULL,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)
                 """).update();
+        jdbcClient.sql("CREATE TABLE post_content(post_id BIGINT PRIMARY KEY, markdown VARCHAR(1000))").update();
+        jdbcClient.sql("CREATE TABLE post_tag(post_id BIGINT, tag_id BIGINT)").update();
         jdbcClient.sql("""
                 CREATE TABLE moderation_task (
                     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -272,6 +276,15 @@ class AdminServiceStateTest {
         var replay = service.approveModerationTask(requested, 9L, "trace-approve",
                 "证据与媒体均符合发布要求", "approve-task");
 
+        assertThat(jdbcClient.sql("SELECT version FROM post WHERE id=:id").param("id", postId).query(Long.class).single()).isEqualTo(1L);
+        String envelope = jdbcClient.sql("SELECT payload FROM outbox_event WHERE topic='audit.completed'").query(String.class).single();
+        try {
+            var payload = new ObjectMapper().readTree(envelope);
+            if (payload.isTextual()) payload = new ObjectMapper().readTree(payload.asText());
+            assertThat(payload.path("payload").path("aggregateVersion").asLong()).isEqualTo(1L);
+            assertThat(payload.path("payload").path("title").asText()).isEqualTo("待审核档案");
+            assertThat(payload.path("payload").path("excerpt").asText()).isEqualTo("snapshot body");
+        } catch (java.io.IOException error) { throw new AssertionError(error); }
         assertThat(result.action()).isEqualTo("APPROVE_POST");
         assertThat(replay.attributes()).containsEntry("duplicateRequest", true)
                 .containsEntry("resourceId", requested);
@@ -823,7 +836,9 @@ class AdminServiceStateTest {
     private long post(long authorId, String title, String status) {
         jdbcClient.sql("INSERT INTO post(author_id, title, status) VALUES (:authorId, :title, :status)")
                 .param("authorId", authorId).param("title", title).param("status", status).update();
-        return jdbcClient.sql("SELECT MAX(id) FROM post").query(Long.class).single();
+        long id = jdbcClient.sql("SELECT MAX(id) FROM post").query(Long.class).single();
+        jdbcClient.sql("INSERT INTO post_content(post_id, markdown) VALUES (:id, 'snapshot body')").param("id", id).update();
+        return id;
     }
 
     private long task(long postId, long authorId, String status) {

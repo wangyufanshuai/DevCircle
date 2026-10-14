@@ -74,7 +74,7 @@ final class SearchIndexService {
             throw dependency("内容服务暂时不可用，无法重建搜索索引", ex);
         }
         if (posts.isEmpty() && readFallbackEnabled) {
-            posts = ThemeContentLibrary.summaries();
+            posts = ThemeContentLibrary.summaries().stream().map(p -> p.withAggregateVersion(0L)).toList();
         }
         try {
             projectionStore.save(posts.stream()
@@ -97,6 +97,7 @@ final class SearchIndexService {
             throw new IllegalArgumentException("Search aggregateId does not match postId");
         }
         Instant occurredAt = event.occurredAt();
+        long aggregateVersion = SearchEventCoordinator.aggregateVersion(event);
         SearchEventCoordinator.ClaimResult claim = eventCoordinator.claim(event, postId);
         if (!claim.claimed()) {
             return;
@@ -105,7 +106,7 @@ final class SearchIndexService {
             String eventStatus = optionalText(payload, "status", "");
             if (EventTopics.CONTENT_REJECTED.equals(topic)
                     || (!eventStatus.isBlank() && !"PUBLISHED".equals(eventStatus))) {
-                projectionStore.remove(postId, occurredAt, eventId);
+                projectionStore.remove(postId, occurredAt, eventId, aggregateVersion);
                 projectionStore.refresh();
                 eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE", claim.leaseToken());
                 return;
@@ -119,17 +120,12 @@ final class SearchIndexService {
                         payload.path("solvable").asBoolean(false), 0, payload.path("title").asText(),
                         payload.path("excerpt").asText(payload.path("title").asText()), payload.path("author").asText("event"),
                         payload.path("authorId").isNumber() ? payload.path("authorId").asLong() : null,
-                        tags, List.of(), 0, 0, 0, "PUBLISHED", occurredAt);
+                        tags, List.of(), 0, 0, 0, "PUBLISHED", payload.hasNonNull("createdAt")
+                                ? Instant.parse(requiredText(payload, "createdAt")) : occurredAt);
             } else {
-                post = loadPost(postId);
+                throw new IllegalArgumentException("Versioned search event requires status and a complete published snapshot");
             }
-            if (!"PUBLISHED".equals(post.status())) {
-                projectionStore.remove(postId, occurredAt, eventId);
-                projectionStore.refresh();
-                eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE", claim.leaseToken());
-                return;
-            }
-            projectionStore.upsert(document(post, occurredAt, eventId));
+            projectionStore.upsert(document(post.withAggregateVersion(aggregateVersion), occurredAt, eventId));
             projectionStore.refresh();
             eventCoordinator.complete(eventId, postId, occurredAt, "UPSERT", claim.leaseToken());
         } catch (Exception ex) {
@@ -146,6 +142,7 @@ final class SearchIndexService {
         ValidatedEvent event = envelopeValidator.parse(message, DELETE_EVENT_CONTRACT);
         String eventId = event.eventId().toString();
         Instant occurredAt = event.occurredAt();
+        long aggregateVersion = SearchEventCoordinator.aggregateVersion(event);
         long postId = requiredPositiveLong(event.payload(), "postId");
         if (!event.aggregateId().equals(Long.toString(postId))) {
             throw new IllegalArgumentException("Search aggregateId does not match postId");
@@ -155,7 +152,7 @@ final class SearchIndexService {
             return;
         }
         try {
-            projectionStore.remove(postId, occurredAt, eventId);
+            projectionStore.remove(postId, occurredAt, eventId, aggregateVersion);
             projectionStore.refresh();
             eventCoordinator.complete(eventId, postId, occurredAt, "REMOVE", claim.leaseToken());
         } catch (RuntimeException ex) {
@@ -196,28 +193,6 @@ final class SearchIndexService {
         return posts;
     }
 
-    private PostSummary loadPost(Long postId) throws Exception {
-        String body = contentClient.get()
-                .uri("/api/posts/{id}", postId)
-                .retrieve()
-                .body(String.class);
-        JsonNode response = objectMapper.readTree(body);
-        JsonNode data = response.path("data");
-        if (!"OK".equals(response.path("code").asText()) || !data.isObject()) {
-            throw new IllegalStateException("Content service returned no post for " + postId);
-        }
-        JsonNode authorNode = data.path("author");
-        String author = authorNode.isObject() ? authorNode.path("username").asText("") : authorNode.asText("");
-        Long authorId = authorNode.isObject() && authorNode.path("id").isNumber() ? authorNode.path("id").asLong() : null;
-        List<String> tags = objectMapper.convertValue(data.path("tags"),
-                objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
-        return new PostSummary(postId, data.path("type").asText("TEXT"), requiredText(data, "theme"),
-                requiredText(data, "contentKind"), requiredText(data, "difficulty"), data.path("solvable").asBoolean(false),
-                data.path("solvedCount").asLong(0), requiredText(data, "title"), data.path("excerpt").asText(""), author,
-                authorId, tags, List.of(), data.path("likes").asLong(0), data.path("comments").asLong(0),
-                data.path("views").asLong(0), requiredText(data, "status"), Instant.parse(requiredText(data, "createdAt")));
-    }
-
     private long requiredPositiveLong(JsonNode payload, String field) {
         JsonNode value = payload.get(field);
         if (value == null || !value.isIntegralNumber() || !value.canConvertToLong() || value.longValue() <= 0) {
@@ -246,7 +221,7 @@ final class SearchIndexService {
     private PostSearchDocument document(PostSummary post, Instant occurredAt, String eventId) {
         return new PostSearchDocument(post.id(), post.title(), post.excerpt(), post.author(), post.authorId(), post.tags(),
                 post.status(), post.theme(), post.contentKind(), post.difficulty(), post.createdAt(), occurredAt,
-                occurredAt == null ? null : occurredAt.toEpochMilli(), eventId);
+                occurredAt == null ? null : occurredAt.toEpochMilli(), eventId).withAggregateVersion(post.aggregateVersion());
     }
 
     private BusinessException dependency(String message, RuntimeException cause) {
